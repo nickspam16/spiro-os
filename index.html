@@ -534,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.116.0';
+var APP_VERSION = 'v5.117.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1352,7 +1352,7 @@ var FORM_SPECS = {
   offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
   buyers: [['name','Client name',null,'Kevin & Mike'],['contact','Email or phone',null,'kevin@gmail.com or 310-555-1212','Either or both — so you can reach them from here'],['budget_min','Budget — from',null,'2.5M','Type it any way — 2.5M, 2,500,000, 900k'],['budget_max','Budget — up to',null,'5M'],['areas','Neighborhoods',null,'Brentwood, Santa Monica'],['timeline','How soon',null,'ASAP · 3–6 months · just looking'],['must_haves','Must-haves',null,'pool, view, room for an office'],['notes','Notes','textarea','Anything worth remembering']],
   prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
-  listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
+  listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
   transactions: [['address','Address'],['status','Status'],['contract_price','Contract price',null,'2.9M'],['contingency_date','Contingency date','date'],['closing_date','Closing date','date'],['notes','Notes','textarea']],
   followups: [['action_text','What needs doing?',null,'Call Bianca about St. Ives photos'],['record_label','About which client / property? (optional)',null,'9146 St. Ives'],['due_date','Due date','date'],['urgency','How urgent?',['now','soon','later']]],
   agents: [['name','Agent name',null,'Drew Fenton'],['brokerage','Brokerage',null,'Carolwood, Hilton & Hyland…'],['email','Email',null,'agent@brokerage.com'],['phone','Phone',null,'310-555-1212'],['areas','Neighborhoods they work',null,'Bird Streets, Bel Air, Malibu'],['price_min','Their buyers — from',null,'5M','Type it any way — 5M, 5,000,000'],['price_max','Their buyers — up to',null,'40M'],['buyer_notes','Who their buyers are',null,'entertainment, intl, tech'],['relationship','Relationship / trust',null,'close · solid · new · careful'],['notes','Notes','textarea','Anything worth remembering']]
@@ -3508,7 +3508,7 @@ function recordExtras(table, id) {
   }
   if (table === 'transactions') { h += escrowExtras(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
-  if (table === 'listings') { h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid); more += listingMarketingUrlHtml(sid); }
+  if (table === 'listings') { h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid); more += listingMarketingUrlHtml(sid); }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
@@ -3652,6 +3652,92 @@ function editListingMarketingUrl(sid) {
   if (v === null) return;
   l.extra = Object.assign({}, l.extra || {}); l.extra.marketing_url = v.trim() || null;
   sb.from('listings').update({ extra: l.extra }).eq('id', sid).then(function () { toast('Marketing link saved ✓'); renderBrowse(); });
+}
+
+/* ===== Listing Prep checklist (2026-07-23) =====
+   One combined pipeline per listing — logistics + paperwork + marketing tasks in sequence, each
+   with an optional due date. Lives entirely in extra.prep_tasks (jsonb array), same
+   no-new-migration convention as marketing_url/share_blurb above — no new table, no new column.
+   A listing enters Prep by being set to status='Prep' (added to the Status dropdown); the
+   checklist auto-seeds a standard template the first time it's opened with no tasks yet, so
+   Nick edits/removes from a real starting point instead of an empty list. Every task with a due
+   date gets a one-click "+Calendar" link (same gcalUrl pattern as showings/open houses) AND
+   automatically appears on the subscribed Google Calendar feed via ics-feed v6 (see edge fn —
+   read-only, polls prep_tasks the same way it already polls transaction_deadlines). */
+var PREP_TEMPLATE = [
+  { cat: 'logistics', label: 'Schedule photography/videography' },
+  { cat: 'logistics', label: 'Schedule staging' },
+  { cat: 'logistics', label: 'Install sign' },
+  { cat: 'logistics', label: 'Install lockbox' },
+  { cat: 'logistics', label: 'Cleaning' },
+  { cat: 'paperwork', label: 'Seller disclosures signed' },
+  { cat: 'paperwork', label: 'Listing agreement signed' },
+  { cat: 'paperwork', label: 'Comps/CMA prepared' },
+  { cat: 'paperwork', label: 'Pricing sign-off with seller' },
+  { cat: 'marketing', label: 'MLS entry drafted' },
+  { cat: 'marketing', label: 'Photos/copy reviewed' },
+  { cat: 'marketing', label: 'Marketing site/flyer ready' },
+  { cat: 'marketing', label: 'Social content planned' },
+];
+var PREP_CAT_LABEL = { logistics: 'Pre-list logistics', paperwork: 'Paperwork / disclosures', marketing: 'Marketing prep' };
+function prepTasksOf(l) { return (l && l.extra && Array.isArray(l.extra.prep_tasks)) ? l.extra.prep_tasks : null; }
+function prepSaveTasks(sid, tasks) {
+  var l = recOf('listings', sid); if (!l) return;
+  l.extra = Object.assign({}, l.extra || {}); l.extra.prep_tasks = tasks;
+  sb.from('listings').update({ extra: l.extra, updated_at: nowStamp() }).eq('id', sid).then(function () { renderBrowse(); });
+}
+function prepEnsureSeeded(l) {
+  if (prepTasksOf(l)) return prepTasksOf(l);
+  return PREP_TEMPLATE.map(function (t, i) { return { id: 'p' + i, cat: t.cat, label: t.label, due: null, done: false }; });
+}
+function prepToggleTask(sid, tid) {
+  var l = recOf('listings', sid); if (!l) return;
+  var tasks = prepEnsureSeeded(l).map(function (t) { return t.id === tid ? Object.assign({}, t, { done: !t.done }) : t; });
+  prepSaveTasks(sid, tasks);
+}
+function prepSetDue(sid, tid) {
+  var l = recOf('listings', sid); if (!l) return;
+  var tasks = prepEnsureSeeded(l);
+  var cur = (tasks.filter(function (t) { return t.id === tid; })[0] || {}).due || '';
+  var v = prompt('Due date (YYYY-MM-DD), leave blank to clear:', cur);
+  if (v === null) return;
+  v = v.trim();
+  if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) { toast('Use YYYY-MM-DD'); return; }
+  tasks = tasks.map(function (t) { return t.id === tid ? Object.assign({}, t, { due: v || null }) : t; });
+  prepSaveTasks(sid, tasks);
+}
+function prepAddTask(sid, cat) {
+  var l = recOf('listings', sid); if (!l) return;
+  var label = prompt('New ' + (PREP_CAT_LABEL[cat] || cat).toLowerCase() + ' task:', '');
+  if (!label) return;
+  var tasks = prepEnsureSeeded(l);
+  tasks = tasks.concat([{ id: 'p' + Date.now() + Math.floor(Math.random() * 1000), cat: cat, label: label.trim(), due: null, done: false }]);
+  prepSaveTasks(sid, tasks);
+}
+function prepRemoveTask(sid, tid) {
+  var l = recOf('listings', sid); if (!l) return;
+  var tasks = prepEnsureSeeded(l).filter(function (t) { return t.id !== tid; });
+  prepSaveTasks(sid, tasks);
+}
+function listingPrepChecklistHtml(sid) {
+  var l = recOf('listings', sid); if (!l) return '';
+  if (l.status !== 'Prep' && !prepTasksOf(l)) return ''; /* never shown for a listing that never entered Prep and has no history */
+  var tasks = prepEnsureSeeded(l);
+  var done = tasks.filter(function (t) { return t.done; }).length;
+  var h = '<div class="flabel" style="margin-top:12px;">Listing Prep <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; ' + done + '/' + tasks.length + ' done' + (l.status !== 'Prep' ? ' · kept for the record' : '') + '</span></div>';
+  ['logistics', 'paperwork', 'marketing'].forEach(function (cat) {
+    var rows = tasks.filter(function (t) { return t.cat === cat; });
+    h += '<div class="hint" style="margin-top:8px;font-weight:600;">' + esc(PREP_CAT_LABEL[cat]) + '</div>';
+    h += rows.map(function (t) {
+      var cal = t.due ? ' <a href="' + esc(gcalUrl(t.label + ' — ' + (l.address || 'listing'), t.due + 'T09:00:00', null, '', l.address || '')) + '" target="_blank" rel="noopener" class="hint" onclick="event.stopPropagation();">+Cal &#8599;</a>' : '';
+      return '<div class="qi" style="padding:8px 0;" onclick="event.stopPropagation();prepToggleTask(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')"><div class="txt"><div class="t1" style="' + (t.done ? 'text-decoration:line-through;color:var(--faint);' : '') + '">' + (t.done ? '&#10003; ' : '&#9633; ') + esc(t.label) + '</div>'
+        + '<div class="t2">' + (t.due ? 'Due ' + esc(t.due) : 'No due date') + cal
+        + ' &middot; <span onclick="event.stopPropagation();prepSetDue(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')">set date</span>'
+        + ' &middot; <span onclick="event.stopPropagation();prepRemoveTask(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')">remove</span></div></div></div>';
+    }).join('');
+    h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();prepAddTask(\'' + esc(sid) + '\',\'' + esc(cat) + '\')">&#65291; Add</button>';
+  });
+  return h;
 }
 function editShareBlurb(sid) {
   var o = recOf('offmarket', sid); if (!o) return;
@@ -4658,6 +4744,9 @@ function jumpToRecord(t, id) {
   if (t === 'transactions') { /* #7: escrows/past sales live inside the Listings hub now */
     var tx = null; (DATA.transactions || []).forEach(function (r) { if (String(r.id) === String(id)) tx = r; });
     browseTab = 'listings'; propSeg = (tx && isPastTx(tx)) ? 'past' : 'escrow';
+  } else if (t === 'listings') {
+    var ls = null; (DATA.listings || []).forEach(function (r) { if (String(r.id) === String(id)) ls = r; });
+    browseTab = 'listings'; propSeg = isPrepListing(ls) ? 'prep' : 'active';
   } else { browseTab = t; propSeg = 'active'; }
   renderTabs(); renderBrowse();
   openRids[String(id)] = true;
@@ -6125,13 +6214,20 @@ var browseHot = false;
 var propSeg = 'active';   /* #7: which layer of the Listings hub is showing: active listings | escrow | past */
 var rowTable = 'buyers';  /* the table the current rows actually belong to (differs from browseTab inside the hub) */
 function isPastTx(t) { return /closed|sold/i.test(String((t && t.status) || '')); }
+function isPrepListing(l) { return !!(l && l.status === 'Prep'); }
 function setPropSeg(s) { propSeg = s; openRids = {}; renderTabs(); renderBrowse(); }
 function propNav() {
   function seg(k, lab, n) { return '<span class="filter-chip" onclick="setPropSeg(\'' + k + '\')" style="cursor:pointer;' + (propSeg === k ? 'font-weight:600;border-color:var(--ink);' : '') + '">' + lab + (n != null ? ' ' + n : '') + '</span>'; }
+  var prepN = (DATA.listings || []).filter(isPrepListing).length;
+  var activeN = (DATA.listings || []).filter(function (l) { return !isPrepListing(l); }).length;
   var escN = (DATA.transactions || []).filter(function (t) { return !isPastTx(t); }).length;
   var pastN = (DATA.transactions || []).filter(isPastTx).length;
+  /* "Prep" (2026-07-23): a listing hasn't gone live yet, so it doesn't belong mixed in with the
+     live Listings segment — its own segment, same layer as Escrows/Past sales, filtered by
+     status='Prep' (no new column; status already carries this, same free-text field the other
+     five statuses already use). */
   return '<div class="chip-row" style="margin-bottom:8px;"><span class="chip-label">View</span> '
-    + seg('active', 'Listings', (DATA.listings || []).length) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN) + '</div>';
+    + seg('prep', 'Prep', prepN) + seg('active', 'Listings', activeN) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN) + '</div>';
 }
 function setTab(t) {
   /* 2026-07-23: switching tabs can be triggered from inside a panel now too (e.g. "Who to call"'s
@@ -7813,8 +7909,9 @@ function renderBrowse() {
   var chip = '';
   rowTable = browseTab; /* #7: default — overridden below inside the Listings hub */
   if (browseTab === 'listings') {
-    rowTable = (propSeg === 'active') ? 'listings' : 'transactions';
-    rows = (propSeg === 'active') ? (DATA.listings || [])
+    rowTable = (propSeg === 'active' || propSeg === 'prep') ? 'listings' : 'transactions';
+    rows = (propSeg === 'prep') ? (DATA.listings || []).filter(isPrepListing)
+         : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l); })
          : (propSeg === 'escrow') ? (DATA.transactions || []).filter(function (t) { return !isPastTx(t); })
          : (DATA.transactions || []).filter(isPastTx);
     chip = propNav();
