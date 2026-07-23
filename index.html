@@ -340,6 +340,13 @@
       <span class="sub" id="today-line"></span><span class="sub" id="sync-age"></span>
     </div>
 
+    <!-- 2026-07-23 (Nick): "the function of the dropdown menu is to help me navigate off the home
+         page and into a subsection... deemed important enough to access readily but not keep on
+         the home screen." This #home-view wrapper + #panel-view below it (see openPanel/closePanel)
+         is what makes that real: a dropdown item now hides the whole home screen and shows just
+         that section full-page with a Back control, instead of scrolling to a card still sandwiched
+         between everything else on one long page. -->
+    <div id="home-view">
     <!-- #10: one search box for the whole OS. Type any address or name -> jump to the record if it
          exists, or add it if it doesn't. -->
     <div style="margin:2px 0 10px;">
@@ -406,13 +413,21 @@
       <div id="browse"></div>
     </div>
 
+    <!-- 2026-07-23 (Nick): clicking "Buyer Portal" in the "⋮" dropdown just scrolled here — this
+         card is a read-only, in-app overview (buyer identity reconciliation, unread counts, etc.,
+         via portal-bridge — see fetchPortal), it was never meant to BE the live nickspiro.com site,
+         but the name alone doesn't make that clear. Added an actual external link so there's a real
+         way to reach the live portal from here, one click, instead of just landing on a summary
+         with no way out. -->
     <div class="card" id="portal-card" style="display:none;">
-      <h2>Buyer Portal <button class="hbtn" onclick="fetchPortal(true)" title="Refresh">&#8635;</button></h2>
+      <h2>Buyer Portal <span style="display:flex;gap:6px;"><a href="https://nickspiro.com" target="_blank" rel="noopener" class="hbtn" style="text-decoration:none;" title="Open the live portal in a new tab">Open ↗</a><button class="hbtn" onclick="fetchPortal(true)" title="Refresh">&#8635;</button></span></h2>
+      <div class="hint" style="margin:-10px 0 12px;">In-app overview — buyer activity &amp; identity links, read-only. Not the live site itself; use "Open ↗" for that.</div>
       <div id="portal-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <div class="card" id="share-links-card" style="display:none;">
       <h2 onclick="toggleShareLinksCard()" style="cursor:pointer;">Share Links <span id="share-links-caret" style="float:right;opacity:.55;">&#9656;</span></h2>
+      <div class="hint" style="margin:-10px 0 12px;">Trackable links you've sent buyers — who's opened what, in-app only, nothing external to open.</div>
       <div id="share-links-body" style="display:none;"></div>
     </div>
 
@@ -423,6 +438,7 @@
 
     <div class="card" id="activity-card" style="display:none;">
       <h2>Recent activity</h2>
+      <div class="hint" style="margin:-10px 0 12px;">The event log — every save, match, and status change across the app, in-app only.</div>
       <div id="activity"></div>
     </div>
     </div>
@@ -453,6 +469,15 @@
 
     </div>
     </div>
+    </div>
+
+    <!-- Panel view: where a dropdown-menu section actually lands. openPanel() moves the real card
+         node in here (not a copy — same element, same ids, so every existing render function keeps
+         working untouched) and hides #home-view; closePanel() puts it back. -->
+    <div id="panel-view" style="display:none;">
+      <button class="hbtn" onclick="closePanel()" style="margin-bottom:18px;">&larr; Back to Spiro OS</button>
+      <div id="panel-slot"></div>
+    </div>
 
     <button class="quiet" onclick="setPinFlow()" id="pin-btn">Set app PIN</button>
     <button class="quiet" onclick="signOut()">Sign out</button>
@@ -480,7 +505,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.105.1';
+var APP_VERSION = 'v5.106.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -523,67 +548,71 @@ document.addEventListener('click', function (e) {
   if (wrap && !wrap.contains(e.target)) closeMoreMenu();
 });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMoreMenu(); });
-function menuGoAgents() {
+/* ===== Panel navigation (2026-07-23) =====
+   Nick's framing: "the function of the dropdown menu is to help me navigate off the home page
+   and into a subsection... deemed important enough to access readily but not keep on the home
+   screen." A scroll-to-card (what this used to do) doesn't deliver that — it's still the home
+   page, just scrolled, and it read as "nothing happened" (raised specifically for Buyer Portal,
+   then Share Links/Recent Activity). openPanel() actually moves the target card's real DOM node
+   (same element, same id — every existing render function keeps targeting it with no changes)
+   out of #home-view and into #panel-view, hiding the rest of the home screen. closePanel() moves
+   it back to exactly where it came from. This is every dropdown destination's mechanism now,
+   including the Records-card jumps (Agents/Re-engage/Market/Contacts) — those used to just
+   scroll to Records among everything else; now they get the same full-page treatment. */
+var PANEL_HOME = null; /* { id, parent, next } — where the moved card came from, for closePanel */
+function openPanel(cardId) {
+  var card = document.getElementById(cardId); if (!card) return;
   closeMoreMenu();
-  setTab('agents');
-  var el = document.getElementById('records-card');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!PANEL_HOME) { PANEL_HOME = { id: cardId, parent: card.parentNode, next: card.nextSibling }; }
+  card.style.display = '';
+  document.getElementById('panel-slot').appendChild(card);
+  document.getElementById('home-view').style.display = 'none';
+  document.getElementById('panel-view').style.display = 'block';
+  window.scrollTo(0, 0);
 }
+function closePanel() {
+  if (!PANEL_HOME) { document.getElementById('home-view').style.display = ''; document.getElementById('panel-view').style.display = 'none'; return; }
+  var card = document.getElementById(PANEL_HOME.id);
+  if (card) {
+    PANEL_HOME.parent.insertBefore(card, PANEL_HOME.next);
+    /* Cards that live hidden-by-default on the home page (Who to call / Buyer Portal / Share
+       Links / Recent Activity / Data Coverage) go back to hidden, matching their normal resting
+       state — Records doesn't, since it's always visible on the home page. */
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+  }
+  PANEL_HOME = null;
+  document.getElementById('panel-view').style.display = 'none';
+  document.getElementById('home-view').style.display = '';
+  window.scrollTo(0, 0);
+  /* Records was possibly parked on a hidden-tab view (agents/reengage/market/people) — land back
+     on a normal tab rather than leaving it wherever the panel visit left it. */
+  if (['agents', 'reengage', 'market', 'people'].indexOf(browseTab) !== -1) { browseTab = 'listings'; renderTabs(); renderBrowse(); }
+}
+function menuGoAgents() { setTab('agents'); openPanel('records-card'); }
+function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
+function menuGoMarket() { setTab('market'); openPanel('records-card'); }
+function menuGoPeople() { setTab('people'); openPanel('records-card'); }
+function menuShowIntel() { openPanel('intel-card'); }
+function menuShowPortal() { openPanel('portal-card'); }
+function menuShowShareLinks() {
+  openPanel('share-links-card');
+  var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_sharelinks_open', '1'); } catch (e) {} }
+  renderShareLinks(); /* card was hidden -> render() skips it; force one fresh render now that it's visible */
+}
+function menuShowActivity() { openPanel('activity-card'); renderActivity(); }
 function menuShowCoverage() {
-  closeMoreMenu();
-  var card = document.getElementById('coverage-card');
-  if (card) card.style.display = '';
+  openPanel('coverage-card');
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
   if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_coverage_open', '1'); } catch (e) {} }
   renderCoverage(); /* card was hidden -> render() skips it (see the perf note there); force one fresh render now that it's visible */
-  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+/* "All stats" is a strip, not a card of its own — no natural standalone page, so it stays a
+   reveal-in-place-on-the-home-page toggle rather than forcing it into #panel-view. */
 function menuShowStats() {
   closeMoreMenu();
   var s = document.getElementById('stats');
   if (s) { s.style.display = 'flex'; s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-}
-function menuGoReengage() {
-  closeMoreMenu();
-  setTab('reengage');
-  var el = document.getElementById('records-card');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function menuGoMarket() {
-  closeMoreMenu();
-  setTab('market');
-  var el = document.getElementById('records-card');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function menuGoPeople() {
-  closeMoreMenu();
-  setTab('people');
-  var el = document.getElementById('records-card');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function menuShowIntel() {
-  closeMoreMenu();
-  var card = document.getElementById('intel-card');
-  if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-}
-function menuShowPortal() {
-  closeMoreMenu();
-  var card = document.getElementById('portal-card');
-  if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-}
-function menuShowShareLinks() {
-  closeMoreMenu();
-  var card = document.getElementById('share-links-card');
-  if (card) card.style.display = '';
-  var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
-  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_sharelinks_open', '1'); } catch (e) {} }
-  renderShareLinks(); /* card was hidden -> render() skips it; force one fresh render now that it's visible */
-  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function menuShowActivity() {
-  closeMoreMenu();
-  var card = document.getElementById('activity-card');
-  if (card) { card.style.display = ''; renderActivity(); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 }
 function toggleShareLinksCard() {
   var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
@@ -2637,6 +2666,9 @@ function leadsFarmsHtml() {
    filter — mirrors jumpToRecord's pattern but for a group rather than a single record, since
    these 26 rows are individually un-triaged prospects, not one record to open. */
 function jumpToFarmTriage() {
+  /* 2026-07-23: this lives inside Data Coverage, which now opens as its own panel (see openPanel)
+     — Records is in #home-view, hidden while a panel's open. Close it first. */
+  if (PANEL_HOME) closePanel();
   var q = document.getElementById('browse-q');
   if (q) q.value = '';
   browseTab = 'prospects'; browseHot = false; propSeg = 'active'; prospectSeg = 'new';
@@ -4129,6 +4161,11 @@ function linkChip(bid, l) {
 /* Tap a link chip → jump to that record in Records, expanded and scrolled into view. */
 function jumpToRecord(t, id) {
   if (!DATA[t]) return;
+  /* 2026-07-23: this can now fire from INSIDE a panel (e.g. tapping a buyer from "Who to call",
+     which lives in #panel-slot while its panel is open) — Records itself lives in #home-view,
+     which is hidden while any panel is open. Close the panel first so Records is actually on
+     screen to land on, instead of updating a card nobody can see. */
+  if (PANEL_HOME) closePanel();
   var q = document.getElementById('browse-q');
   if (q) q.value = '';
   browseHot = false;
@@ -5485,15 +5522,13 @@ function renderTabs() {
     var n = t[0] === 'market' ? (MARKET.events || []).length : t[0] === 'reengage' ? reengageCandidateCount() : t[0] === 'people' ? (DATA.contacts || []).length : (DATA[t[0]] || []).length;
     return '<button class="tab' + (browseTab === t[0] ? ' on' : '') + '" onclick="setTab(' + "'" + t[0] + "'" + ')">' + t[1] + (t[0] === 'market' && !n ? '' : ' ' + n) + '</button>';
   }).join('');
-  /* 2026-07-23: when a "More"-menu-only tab (Agents/Re-engage/Market/People) is active, none of
-     the buttons above are marked "on" and the card header still just says "Records" — it used to
-     look like the tap half-broke the page. Now show what's actually open, with a way back. */
+  /* 2026-07-23: when a "More"-menu-only tab (Agents/Re-engage/Market/Contacts) is active, none of
+     the buttons above are marked "on" — label what's actually open so the Records header isn't
+     just a mystery blank. No back-control here anymore: these tabs are now reached through
+     openPanel() (see the Panel navigation block), which already provides its own "← Back to
+     Spiro OS" button above the panel — a second one here would just be a duplicate. */
   var recHead = document.getElementById('records-head-active');
-  if (recHead) {
-    recHead.innerHTML = HIDDEN_TAB_LABELS[browseTab]
-      ? ' &middot; ' + esc(HIDDEN_TAB_LABELS[browseTab]) + ' <button class="hbtn" style="padding:2px 8px;font-size:11px;" onclick="setTab(\'buyers\')" title="Back to the main tabs">&#10005;</button>'
-      : '';
-  }
+  if (recHead) recHead.innerHTML = HIDDEN_TAB_LABELS[browseTab] ? ' &middot; ' + esc(HIDDEN_TAB_LABELS[browseTab]) : '';
   /* Add action lives OUTSIDE the horizontally-scrolling tab strip (where it was invisible on mobile),
      as a prominent, type-labeled button that's always on screen. */
   var add = document.getElementById('tab-add');
@@ -5561,7 +5596,13 @@ function propNav() {
   return '<div class="chip-row" style="margin-bottom:8px;"><span class="chip-label">View</span> '
     + seg('active', 'Listings', (DATA.listings || []).length) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN) + '</div>';
 }
-function setTab(t) { browseTab = t; browseHot = false; propSeg = 'active'; openRids = {}; renderTabs(); renderBrowse(); }
+function setTab(t) {
+  /* 2026-07-23: switching tabs can be triggered from inside a panel now too (e.g. "Who to call"'s
+     "N seller leads to review" line) — Records lives in #home-view, hidden while a panel's open,
+     so close it first or the tab switch would happen invisibly behind the panel still on screen. */
+  if (PANEL_HOME) { closePanel(); document.getElementById('records-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  browseTab = t; browseHot = false; propSeg = 'active'; openRids = {}; renderTabs(); renderBrowse();
+}
 /* Expanded rows persist across re-renders (match approve/deny, background sync, photo-link
    arrival) so you can clear a buyer's whole suggestion list without the card snapping shut.
    Accordion behavior (2026-07-22, Nick's request): opening a row now collapses whichever other
