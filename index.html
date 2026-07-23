@@ -152,6 +152,13 @@
   .qbtn{border:1px solid var(--line);background:none;border-radius:var(--radius);font-size:13px;color:var(--muted);padding:7px 11px;cursor:pointer;white-space:nowrap;transition:border-color .12s,color .12s}
   .qbtn:hover{border-color:var(--green);color:var(--green)}
   .qbtn.done{color:var(--green);border-color:var(--green);background:none;font-weight:600}
+  /* New Share wizard (2026-07-23, phone-use pass): the wizard is a picked-up-mid-showing, one-thumb
+     flow more than any other panel, so it gets bigger tap targets than the shared .qi/.qbtn baseline
+     rather than changing those globally (which are used everywhere, desktop included). ns-row bumps
+     row height toward the ~44px touch-target guideline; ns-btn does the same for action buttons. */
+  .ns-row{padding:16px 4px;min-height:26px}
+  .ns-btn{padding:12px 18px;font-size:14.5px;min-height:44px;box-sizing:border-box}
+  .ns-chip{padding:10px 16px;font-size:14px;display:inline-block;min-height:40px;box-sizing:border-box}
   /* Feedback laws (static pass 2026-07-21): (1) every control acknowledges a tap INSTANTLY — the
      transparent tap-highlight above strips iOS's native flash, so restore a deliberate press here;
      (2) one busy/disabled vocabulary so "working" and "can't tap" look the same everywhere. */
@@ -527,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.115.0';
+var APP_VERSION = 'v5.116.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -3589,9 +3596,14 @@ function copyShareLink(url) {
 }
 function shareLinkResultHtml(slug) {
   var url = shareUrl(slug);
+  /* "Preview" (2026-07-23) opens the exact page an agent/buyer would land on, in a new tab, one
+     tap. This is the "Nick Test" ask from the phone-use backlog item — instead of a separate
+     test account/recipient to pick, every link (fresh or already-sent) gets a direct QA-open
+     right next to Copy, so you can eyeball what went out (or is about to) before/after sending. */
   return '<div style="margin-top:8px;" onclick="event.stopPropagation();">'
     + '<input type="text" readonly value="' + esc(url) + '" style="width:65%;max-width:340px;font-size:12px;" onclick="this.select();"> '
-    + '<button class="qbtn" onclick="copyShareLink(' + "'" + esc(url) + "'" + ')">Copy link</button></div>';
+    + '<button class="qbtn ns-btn" onclick="copyShareLink(' + "'" + esc(url) + "'" + ')">Copy link</button> '
+    + '<a class="qbtn ns-btn" style="text-decoration:none;display:inline-block;" href="' + esc(url) + '" target="_blank" rel="noopener">Preview &#8599;</a></div>';
 }
 
 /* -- share SETTINGS for an off-market listing (2026-07-23: no longer where you actually send a
@@ -3722,9 +3734,9 @@ function newShareRecipientStepHtml() {
   var dlid = 'dl_newshare_agent';
   h += '<input type="text" id="newshare-agent-q" list="' + dlid + '" autocomplete="off" placeholder="Or search any agent…" style="width:70%;max-width:300px;">';
   h += '<datalist id="' + dlid + '">' + (DATA.agents || []).map(function (a) { return '<option value="' + esc(a.name || '') + '">' + esc(a.brokerage || '') + '</option>'; }).join('') + '</datalist>';
-  h += '<div style="margin-top:8px;"><button class="qbtn done" onclick="newShareSubmitAgentSearch()">Use this agent</button> '
-    + '<button class="qbtn" onclick="newShareSkipRecipient()">Skip — anonymous link</button> '
-    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn done ns-btn" onclick="newShareSubmitAgentSearch()">Use this agent</button> '
+    + '<button class="qbtn ns-btn" onclick="newShareSkipRecipient()">Skip — anonymous link</button> '
+    + '<button class="qbtn ns-btn" onclick="cancelNewShare()">Cancel</button></div>';
   return h;
 }
 
@@ -3738,9 +3750,9 @@ function newShareTypeStepHtml() {
   var h = '<div class="hint" style="margin-bottom:8px;">For: <b>' + esc(recipLabel) + '</b> &middot; <span style="cursor:pointer;color:#8a6d3b;" onclick="newShareBackTo(\'recipient\')">change</span></div>';
   h += '<div class="flabel">What are you sharing?</div>';
   h += '<div class="chip-row" style="margin-top:6px;">'
-    + '<span class="chip" onclick="newShareSetType(\'buyers\')">A buyer&rsquo;s criteria</span> '
-    + '<span class="chip" onclick="newShareSetType(\'properties\')">Properties</span></div>';
-  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+    + '<span class="chip ns-chip" onclick="newShareSetType(\'buyers\')">A buyer&rsquo;s criteria</span> '
+    + '<span class="chip ns-chip" onclick="newShareSetType(\'properties\')">Properties</span></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="cancelNewShare()">Cancel</button></div>';
   return h;
 }
 
@@ -3787,12 +3799,12 @@ function newShareBuyerRowsHtml() {
   }
   var h = !rows.length ? '<div class="empty">No buyers match.</div>' : rows.slice(0, 30).map(function (b) {
     var on = !!NEW_SHARE.selected[String(b.id)];
-    return '<div class="qi" style="cursor:pointer;" onclick="newSharePickBuyer(\'' + esc(String(b.id)) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(b.name || 'Buyer') + '</div><div class="t2">' + esc([b.budget_min, b.budget_max].filter(Boolean).join('–')) + (b.areas ? ' · ' + esc(b.areas) : '') + '</div></div></div>';
+    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newSharePickBuyer(\'' + esc(String(b.id)) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(b.name || 'Buyer') + '</div><div class="t2">' + esc([b.budget_min, b.budget_max].filter(Boolean).join('–')) + (b.areas ? ' · ' + esc(b.areas) : '') + '</div></div></div>';
   }).join('');
   var n = Object.keys(NEW_SHARE.selected).length;
-  return h + '<div style="margin-top:8px;"><button class="qbtn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
-    + '<button class="qbtn done" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link</button> '
-    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+  return h + '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
+    + '<button class="qbtn done ns-btn" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link</button> '
+    + '<button class="qbtn ns-btn" onclick="cancelNewShare()">Cancel</button></div>';
 }
 function newSharePropertyRowsHtml() {
   var q = (NEW_SHARE.q || '').toLowerCase();
@@ -3817,12 +3829,12 @@ function newSharePropertyRowsHtml() {
   var h = !rows.length ? '<div class="empty">Nothing matches.</div>' : rows.slice(0, 40).map(function (x) {
     var on = !!NEW_SHARE.selected[String(x.id)];
     var addr = x.address || x.address_area || 'Property';
-    return '<div class="qi" style="cursor:pointer;" onclick="newShareToggleItem(\'' + esc(String(x.id)) + '\',' + multi + ')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(addr) + '</div><div class="t2">' + esc([x.price, x.status].filter(Boolean).join(' · ')) + '</div></div></div>';
+    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newShareToggleItem(\'' + esc(String(x.id)) + '\',' + multi + ')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(addr) + '</div><div class="t2">' + esc([x.price, x.status].filter(Boolean).join(' · ')) + '</div></div></div>';
   }).join('');
   var n = Object.keys(NEW_SHARE.selected).length;
-  return h + '<div style="margin-top:8px;"><button class="qbtn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
-    + '<button class="qbtn done" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link' + (n > 1 ? ' (' + n + ')' : '') + '</button> '
-    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+  return h + '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
+    + '<button class="qbtn done ns-btn" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link' + (n > 1 ? ' (' + n + ')' : '') + '</button> '
+    + '<button class="qbtn ns-btn" onclick="cancelNewShare()">Cancel</button></div>';
 }
 function renderNewShareItemsOnly() {
   var el = document.getElementById('newshare-items');
@@ -3834,12 +3846,12 @@ function newShareItemsStepHtml() {
   var h = '<div class="hint" style="margin-bottom:8px;">For: <b>' + esc(recipLabel) + '</b></div>';
   if (NEW_SHARE.contentType === 'properties') {
     h += '<div class="chip-row" style="margin-bottom:6px;">'
-      + '<span class="filter-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'mine' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'mine\')">My Listings</span> '
-      + '<span class="filter-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'offmarket' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'offmarket\')">Off Market</span>'
-      + (NEW_SHARE.propFilter === 'mine' ? ' <label style="margin-left:8px;font-weight:400;"><input type="checkbox"' + (NEW_SHARE.activeOnly ? ' checked' : '') + ' onchange="newShareToggleActiveOnly()"> active only</label>' : '')
+      + '<span class="filter-chip ns-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'mine' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'mine\')">My Listings</span> '
+      + '<span class="filter-chip ns-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'offmarket' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'offmarket\')">Off Market</span>'
+      + (NEW_SHARE.propFilter === 'mine' ? ' <label style="margin-left:8px;font-weight:400;"><input type="checkbox" style="width:20px;height:20px;vertical-align:middle;"' + (NEW_SHARE.activeOnly ? ' checked' : '') + ' onchange="newShareToggleActiveOnly()"> active only</label>' : '')
       + '</div>';
   }
-  h += '<input type="text" id="newshare-q" placeholder="' + (NEW_SHARE.contentType === 'buyers' ? 'Search buyers…' : 'Search address…') + '" value="' + esc(NEW_SHARE.q || '') + '" oninput="newShareFilterInput()" style="width:100%;box-sizing:border-box;margin-bottom:8px;">';
+  h += '<input type="text" id="newshare-q" placeholder="' + (NEW_SHARE.contentType === 'buyers' ? 'Search buyers…' : 'Search address…') + '" value="' + esc(NEW_SHARE.q || '') + '" oninput="newShareFilterInput()" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:12px 10px;font-size:16px;">';
   h += '<div id="newshare-items">' + (NEW_SHARE.contentType === 'buyers' ? newShareBuyerRowsHtml() : newSharePropertyRowsHtml()) + '</div>';
   return h;
 }
@@ -3913,7 +3925,7 @@ function agentSharesHtml(aid) {
 function renderShareLinks() {
   var el = document.getElementById('share-links-body');
   if (!el) return;
-  var wizardHtml = !NEW_SHARE ? ('<button class="qbtn done" style="margin-bottom:10px;" onclick="event.stopPropagation();openNewShare()">&#65291; New Share</button>')
+  var wizardHtml = !NEW_SHARE ? ('<button class="qbtn done ns-btn" style="margin-bottom:10px;" onclick="event.stopPropagation();openNewShare()">&#65291; New Share</button>')
     : ('<div style="margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:var(--radius);">'
       + (NEW_SHARE.step === 'recipient' ? newShareRecipientStepHtml() : NEW_SHARE.step === 'type' ? newShareTypeStepHtml() : newShareItemsStepHtml())
       + '</div>');
