@@ -505,7 +505,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.108.0';
+var APP_VERSION = 'v5.108.1';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -961,10 +961,29 @@ function renderIntel() { try {
     return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.id)) + '\')"><div class="txt"><div class="t1">' + esc(r.name) + ' <span class="hint">→ open</span></div><div class="t2">' + r.count + ' match' + (r.count === 1 ? '' : 'es') + ' · best ' + r.best + '/10 · ' + esc(r.reasons.join(', ')) + '</div></div></div>';
   }).join('');
   if (leads) html += '<div class="qi deadline" style="cursor:pointer;" onclick="setTab(\'prospects\')"><div class="txt"><div class="t1">' + leads + ' seller lead' + (leads === 1 ? '' : 's') + ' to review <span class="hint">→ open</span></div><div class="t2">Expired/withdrawn + probate — triage them in your Prospects tab</div></div></div>';
+  /* Routine, auto-generated follow-ups (mailer nudges, buyer check-ins, response call-backs) live
+     here now instead of cluttering Today's Focus (2026-07-23) — collapsed by default since there
+     can be dozens; a tap expands the full list, each row still completable/snoozable in place. */
+  var auto = queueItems().auto;
+  if (auto.length) {
+    html += '<div class="flabel" style="margin-top:14px;">Routine follow-ups <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; auto-generated, not urgent</span></div>';
+    if (!intelAutoShow) {
+      html += '<button class="quiet" onclick="toggleIntelAuto()">Show ' + auto.length + ' routine follow-up' + (auto.length === 1 ? '' : 's') + '</button>';
+    } else {
+      html += auto.map(function (it) {
+        return '<div class="qi"><div class="txt"><div class="t1">' + esc(it.label) + '</div>'
+          + (it.who || it.due ? '<div class="t2">' + [it.who ? esc(it.who) : '', it.due ? fmtDate(it.due) : ''].filter(Boolean).join(' · ') + '</div>' : '') + '</div>'
+          + '<button class="qbtn done" onclick="fuDone(this)" data-id="' + it.id + '">&#10003;</button>'
+          + '<button class="qbtn" onclick="fuSnooze(this,3)" data-id="' + it.id + '">3d</button></div>';
+      }).join('') + '<button class="quiet" onclick="toggleIntelAuto()">Hide routine follow-ups</button>';
+    }
+  }
   el.innerHTML = html;
   var badge = document.getElementById('more-menu-intel-n');
   if (badge) badge.textContent = rows.length ? String(rows.length) : '';
 } catch (e) {} }
+var intelAutoShow = false;
+function toggleIntelAuto() { intelAutoShow = !intelAutoShow; renderIntel(); }
 
 /* S8 resilience visibility: a quiet, non-alarming line showing how fresh the data is,
    and a nudge to refresh when the last sync only partially succeeded. Purely local — no network. */
@@ -979,7 +998,10 @@ function renderSyncAge() {
 
 function renderStats() {
   var hot = DATA.offmarket.filter(function (x) { return x.priority === 'Hot'; }).length;
-  var open = DATA.followups.length;
+  /* Count only manual to-dos here (2026-07-23) — matches what Today's Focus actually shows now
+     that routine auto-generated nudges moved to "Who to call"; otherwise this tile and the list
+     it scrolls you to would disagree on the number. */
+  var open = DATA.followups.filter(function (f) { return f.manual !== false; }).length;
   var s = [
     [open, 'To-dos', 'todos'],
     [hot, 'Hot leads', 'hot'],
@@ -1013,23 +1035,57 @@ function jumpStat(target) {
   document.getElementById('records-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+/* Importance weighting (2026-07-23): plain due-date sort used to be the whole story, so a
+   $500 mailer follow-up due today could outrank a $9M escrow deadline due tomorrow just because
+   "today" beats "tomorrow." This scores a linked record's stakes — deal size + any VIP/priority
+   flag already on file — so real weight tips the balance when two items land in the same date
+   bucket. Capped per-signal so one huge number can't totally drown out everything else. */
+function importanceFor(recType, recId) {
+  if (!recType || !recId) return 0;
+  var rec = recOf(recType, recId); if (!rec) return 0;
+  var score = 0;
+  if (recType === 'buyers') {
+    if (rec.extra && rec.extra.vip) score += 3;
+    score += Math.min(3, (Number(rec.budget_max_num) || 0) / 3000000);
+  } else if (recType === 'offmarket') {
+    if (rec.priority === 'Hot') score += 2; else if (rec.priority === 'Warm') score += 1;
+    score += Math.min(3, (Number(rec.price_num) || 0) / 3000000);
+  } else if (recType === 'prospects') {
+    score += Math.min(3, (Number((rec.extra || {}).sell_propensity) || 0) / 33);
+  } else if (recType === 'listings') {
+    score += Math.min(3, (Number(rec.price_num) || 0) / 3000000);
+  } else if (recType === 'transactions') {
+    score += Math.min(3, (Number(rec.contract_price_num) || 0) / 3000000);
+  }
+  return score;
+}
 function queueItems() {
   var today = todayIso();
   var week = addDaysIso(today, 7);
-  var items = [];
+  var items = [], auto = [];
   DATA.followups.forEach(function (f) {
     if (f.status === 'snoozed' && f.snoozed_until && f.snoozed_until > today) return;
     var due = f.due_date || (f.status === 'snoozed' ? f.snoozed_until : null);
-    items.push({ kind: 'fu', id: f.id, label: f.action_text, who: f.record_label, due: due, urgency: f.urgency || '' });
+    /* Auto-generated nudges (mailer follow-ups, buyer check-ins, response call-backs — anything
+       manual:false) are routine busywork, not a priority signal, and there can be dozens of them.
+       They no longer compete for space in Today's Focus; they surface instead under "Who to call"
+       (see renderIntel) where they're one tap away but don't bury what you actually typed in
+       yourself. Manual to-dos get a small tie-break bump so they win over a same-day showing/open
+       house when stakes are otherwise equal — you wrote it down for a reason. */
+    if (f.manual === false) { auto.push({ kind: 'fu', id: f.id, label: f.action_text, who: f.record_label, due: due }); return; }
+    items.push({ kind: 'fu', id: f.id, label: f.action_text, who: f.record_label, due: due, urgency: f.urgency || '', imp: importanceFor(f.record_type, f.record_id) + 0.5 });
   });
   DATA.transactions.forEach(function (tx) {
-    /* Prefer the generated escrow deadline set; fall back to the two coarse dates for escrows that don't have one yet. */
+    /* Deadlines are legally/financially binding — they always float to the top of their day
+       regardless of scoring elsewhere (the +1000 guarantees it), but deal size still breaks ties
+       among several deadlines due the same day. */
+    var imp = 1000 + importanceFor('transactions', tx.id);
     var dls = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) === String(tx.id) && d.status !== 'done'; });
     if (dls.length) {
-      dls.forEach(function (d) { items.push({ kind: 'deadline', label: d.kind + ' — ' + (tx.address || 'escrow'), who: tx.client_name, due: d.due_date }); });
+      dls.forEach(function (d) { items.push({ kind: 'deadline', label: d.kind + ' — ' + (tx.address || 'escrow'), who: tx.client_name, due: d.due_date, imp: imp }); });
     } else if (!txIsClosed(tx)) {
-      if (tx.contingency_date) items.push({ kind: 'deadline', label: 'Contingency removal — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.contingency_date });
-      if (tx.closing_date) items.push({ kind: 'deadline', label: 'Closing — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.closing_date });
+      if (tx.contingency_date) items.push({ kind: 'deadline', label: 'Contingency removal — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.contingency_date, imp: imp });
+      if (tx.closing_date) items.push({ kind: 'deadline', label: 'Closing — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.closing_date, imp: imp });
     }
   });
   /* Upcoming showings + open houses (future-dated) surface alongside deadlines. */
@@ -1037,12 +1093,12 @@ function queueItems() {
     if (s.status === 'cancelled' || s.status === 'done' || !s.showing_ts) return;
     var d = String(s.showing_ts).slice(0, 10); if (d < today) return;
     var buyer = recOf('buyers', s.buyer_id);
-    items.push({ kind: 'showing', label: 'Showing — ' + (s.property_ref || 'property'), who: buyer ? buyer.name : '', due: d });
+    items.push({ kind: 'showing', label: 'Showing — ' + (s.property_ref || 'property'), who: buyer ? buyer.name : '', due: d, imp: importanceFor('buyers', s.buyer_id) });
   });
   (DATA.open_houses || []).forEach(function (o) {
     if (!o.start_ts) return; var d = String(o.start_ts).slice(0, 10); if (d < today) return;
     var lst = recOf('listings', o.listing_key);
-    items.push({ kind: 'openhouse', label: 'Open house — ' + (lst ? lst.address : o.listing_key), who: o.oh_type || '', due: d });
+    items.push({ kind: 'openhouse', label: 'Open house — ' + (lst ? lst.address : o.listing_key), who: o.oh_type || '', due: d, imp: importanceFor('listings', o.listing_key) });
   });
   var b = { overdue: [], today: [], week: [], later: [] };
   items.forEach(function (it) {
@@ -1051,8 +1107,12 @@ function queueItems() {
     else if ((it.due && it.due <= week) || (!it.due && it.urgency === 'soon')) b.week.push(it);
     else b.later.push(it);
   });
-  var byDue = function (x, y) { return String(x.due || '9999').localeCompare(String(y.due || '9999')); };
-  b.overdue.sort(byDue); b.today.sort(byDue); b.week.sort(byDue); b.later.sort(byDue);
+  /* Highest-stakes item first within a bucket; earliest due date is now only the tiebreaker
+     (still the whole story when nothing scores above 0 — e.g. two ordinary to-dos due today). */
+  var byImpThenDue = function (x, y) { return (y.imp || 0) - (x.imp || 0) || String(x.due || '9999').localeCompare(String(y.due || '9999')); };
+  b.overdue.sort(byImpThenDue); b.today.sort(byImpThenDue); b.week.sort(byImpThenDue); b.later.sort(byImpThenDue);
+  auto.sort(function (x, y) { return String(x.due || '9999').localeCompare(String(y.due || '9999')); });
+  b.auto = auto;
   return b;
 }
 
@@ -1135,7 +1195,7 @@ async function fuDone(btn) {
   if (r.error || !r.data || !r.data.length) { btn.disabled = false; toast('Could not save — try again'); return; }
   var f = findFu(id);
   logEvent('followups', id, 'followup.resolved', 'Done: ' + (f ? f.action_text : id));
-  dropFu(id); renderQueue(); renderStats(); toast('Done ✓');
+  dropFu(id); renderQueue(); renderStats(); renderIntel(); toast('Done ✓');
 }
 async function fuSnooze(btn, days) {
   var id = btn.getAttribute('data-id');
@@ -1150,7 +1210,7 @@ async function fuSnooze(btn, days) {
   if (r.error || !r.data || !r.data.length) { btn.disabled = false; toast('Could not save — try again'); return; }
   f.status = 'snoozed'; f.snoozed_until = until;
   logEvent('followups', id, 'followup.snoozed', 'Snoozed to ' + until + ': ' + f.action_text, { days: days });
-  renderQueue(); toast('Snoozed to ' + fmtDate(until));
+  renderQueue(); renderIntel(); toast('Snoozed to ' + fmtDate(until));
 }
 
 /* ---------- capture ---------- */
