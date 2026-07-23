@@ -480,7 +480,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.105.0';
+var APP_VERSION = 'v5.105.1';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -630,7 +630,11 @@ var pendingEmail = '';
 var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
-var browseTab = 'buyers';
+/* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
+   the TABS array (Listings, Buyers, Leads, Prospects) only controls the button order in the
+   strip; it doesn't touch which tab is actually selected on load. That's this variable, and it
+   was never updated to match, so Buyers kept opening first regardless of tab order. */
+var browseTab = 'listings';
 var NL2 = String.fromCharCode(10, 10);
 var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
