@@ -307,9 +307,30 @@
         <img class="mono" src="assets/ns-logo.svg" alt="Spiro OS">
         <div class="wm"><div class="nm">Spiro OS</div><div class="tag">Private Workspace</div></div>
       </div>
-      <div class="hdr-actions">
-        <button class="refresh" id="theme-btn" onclick="toggleSpiroTheme()" title="Night mode">&#9681;</button>
-        <button class="refresh" onclick="loadAll(true)" title="Refresh">&#8635;</button>
+      <div style="display:flex;gap:8px;">
+        <div class="hdr-actions">
+          <button class="refresh" id="theme-btn" onclick="toggleSpiroTheme()" title="Night mode">&#9681;</button>
+          <button class="refresh" onclick="loadAll(true)" title="Refresh">&#8635;</button>
+        </div>
+        <!-- More menu (2026-07-23): Agents, Data Coverage, and the stats strip aren't daily-glance
+             items — Nick uses them occasionally, not every visit — so they're tucked behind this
+             dropdown instead of sitting permanently on the launch pad. Nothing is deleted or
+             disabled, just reached one tap deeper. See openMoreMenu/closeMoreMenu/menuGoAgents/
+             menuShowCoverage/menuShowStats below. -->
+        <div class="menu-wrap" id="more-menu-wrap" style="position:relative;">
+          <button class="refresh" id="more-menu-btn" onclick="event.stopPropagation();toggleMoreMenu()" title="More" style="border:1px solid var(--line);border-radius:var(--radius);width:38px;height:38px;">&#8942;</button>
+          <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
+            <a href="javascript:void(0)" onclick="menuGoAgents()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Agents <span id="more-menu-agents-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call</a>
+            <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
+            <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
+            <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
+            <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuShowCoverage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Data Coverage</a>
+            <a href="javascript:void(0)" onclick="menuShowStats()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">All stats</a>
+          </div>
+        </div>
       </div>
     </div>
     <div class="today-row">
@@ -323,7 +344,7 @@
       <div id="gsearch-results" style="margin-top:4px;"></div>
     </div>
 
-    <div class="stat-row" id="stats"></div>
+    <div class="stat-row" id="stats" style="display:none;"></div>
     <div id="pulse"></div>
 
     <!-- Omnibox: one reserved input for everything. Jot a note, add a lead, or ask a question;
@@ -373,12 +394,12 @@
       <div id="queue"><div class="empty">Loading&hellip;</div></div>
     </div>
 
-    <div class="card" id="intel-card">
+    <div class="card" id="intel-card" style="display:none;">
       <h2>Who to call</h2>
       <div id="intel-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
-    <div class="card" id="coverage-card">
+    <div class="card" id="coverage-card" style="display:none;">
       <h2 onclick="toggleCoverage()" style="cursor:pointer;">Data Coverage <span id="coverage-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();renderCoverage()" title="Refresh">&#8635;</button></h2>
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
     </div>
@@ -402,12 +423,12 @@
       <div id="browse"></div>
     </div>
 
-    <div class="card" id="portal-card">
+    <div class="card" id="portal-card" style="display:none;">
       <h2>Buyer Portal <button class="hbtn" onclick="fetchPortal(true)" title="Refresh">&#8635;</button></h2>
       <div id="portal-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
-    <div class="card" id="share-links-card">
+    <div class="card" id="share-links-card" style="display:none;">
       <h2 onclick="toggleShareLinksCard()" style="cursor:pointer;">Share Links <span id="share-links-caret" style="float:right;opacity:.55;">&#9656;</span></h2>
       <div id="share-links-body" style="display:none;"></div>
     </div>
@@ -417,7 +438,7 @@
       <div id="brief-body" class="hint" style="white-space:pre-wrap;display:none;">Loading&hellip;</div>
     </div>
 
-    <div class="card">
+    <div class="card" id="activity-card" style="display:none;">
       <h2>Recent activity</h2>
       <div id="activity"></div>
     </div>
@@ -450,7 +471,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.102.0';
+var APP_VERSION = 'v5.103.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -474,6 +495,66 @@ function toggleCoverage() {
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
   try { localStorage.setItem('spiro_coverage_open', open ? '1' : '0'); } catch (e) {}
+}
+/* "More" header dropdown (2026-07-23) — Agents / Data Coverage / stats strip live one tap deeper
+   here instead of permanently on the launch pad. Closes on outside tap or Escape, like any other
+   dropdown; nothing here is deleted, just reached differently. */
+function toggleMoreMenu() {
+  var m = document.getElementById('more-menu');
+  if (!m) return;
+  var open = m.style.display === 'none';
+  m.style.display = open ? 'block' : 'none';
+}
+function closeMoreMenu() {
+  var m = document.getElementById('more-menu');
+  if (m) m.style.display = 'none';
+}
+document.addEventListener('click', function (e) {
+  var wrap = document.getElementById('more-menu-wrap');
+  if (wrap && !wrap.contains(e.target)) closeMoreMenu();
+});
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMoreMenu(); });
+function menuGoAgents() {
+  closeMoreMenu();
+  setTab('agents');
+  var el = document.getElementById('records-card');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function menuShowCoverage() {
+  closeMoreMenu();
+  var card = document.getElementById('coverage-card');
+  if (card) card.style.display = '';
+  var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_coverage_open', '1'); } catch (e) {} }
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function menuShowStats() {
+  closeMoreMenu();
+  var s = document.getElementById('stats');
+  if (s) { s.style.display = 'flex'; s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
+function menuShowIntel() {
+  closeMoreMenu();
+  var card = document.getElementById('intel-card');
+  if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
+function menuShowPortal() {
+  closeMoreMenu();
+  var card = document.getElementById('portal-card');
+  if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
+function menuShowShareLinks() {
+  closeMoreMenu();
+  var card = document.getElementById('share-links-card');
+  if (card) card.style.display = '';
+  var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_sharelinks_open', '1'); } catch (e) {} }
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function menuShowActivity() {
+  closeMoreMenu();
+  var card = document.getElementById('activity-card');
+  if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 }
 function toggleShareLinksCard() {
   var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
@@ -724,6 +805,8 @@ function txIsClosed(tx) { return !!(tx && tx.status && TX_CLOSED_STATUSES[tx.sta
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
   renderStats(); renderPulse(); renderQueue(); renderIntel(); renderCoverage(); renderShareLinks(); renderCaptures(); renderTabs(); renderBrowse(); renderActivity(); renderSyncAge();
+  var moreAgentsN = document.getElementById('more-menu-agents-n');
+  if (moreAgentsN) moreAgentsN.textContent = (DATA.agents || []).length;
   /* SECURITY: APP_VERSION is the full internal build changelog (client names, deal specifics,
      negotiation notes) — never render it whole on the public page. Only the leading "vX.Y.Z"
      token is public-facing; the rest stays in source for Claude/Nick's own reference. */
@@ -2475,10 +2558,20 @@ function leadsFarmsHtml() {
   }
   var farmStreets = Object.keys(farms.byStreet).sort(function (a, b) { return farms.byStreet[b] - farms.byStreet[a]; });
   h += farmStreets.length
-    ? '<div class="qi" style="margin-top:6px;"><div class="txt"><div class="t1">' + farms.rows.length + ' farmed parcel' + (farms.rows.length === 1 ? '' : 's') + ' across ' + farmStreets.length + ' street' + (farmStreets.length === 1 ? '' : 's') + ' waiting on scan-and-trace</div>'
+    ? '<div class="qi" style="margin-top:6px;cursor:pointer;" onclick="event.stopPropagation();jumpToFarmTriage()"><div class="txt"><div class="t1">' + farms.rows.length + ' farmed parcel' + (farms.rows.length === 1 ? '' : 's') + ' across ' + farmStreets.length + ' street' + (farmStreets.length === 1 ? '' : 's') + ' waiting on scan-and-trace</div>'
       + '<div class="t2">' + farmStreets.map(function (s) { return esc(s) + ' (' + farms.byStreet[s] + ')'; }).join(', ') + '</div></div></div>'
     : '<div class="hint">No farmed parcels waiting on review.</div>';
   return h;
+}
+/* Tap the farm-triage summary row → jump to Prospects, "new" (to review) segment, cleared
+   filter — mirrors jumpToRecord's pattern but for a group rather than a single record, since
+   these 26 rows are individually un-triaged prospects, not one record to open. */
+function jumpToFarmTriage() {
+  var q = document.getElementById('browse-q');
+  if (q) q.value = '';
+  browseTab = 'prospects'; browseHot = false; propSeg = 'active'; prospectSeg = 'new';
+  renderTabs(); renderBrowse();
+  document.getElementById('records-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ===== Source-coverage registry (2026-07-22 — generalizes the DocuSign extract engine's
@@ -4157,6 +4250,15 @@ function buyerCriteriaHtml(id) {
   var h = '<div class="flabel" style="margin-top:12px;">Match criteria ' + status + '</div>';
   if (noBudget) h += '<div class="hint" style="color:var(--clay);">Add a budget (&ldquo;up to&rdquo;) on this buyer so they can be matched.</div>';
   h += '<button class="qbtn" onclick="event.stopPropagation();criteriaForm(' + q + ')">' + (c ? 'Edit criteria' : 'Set match criteria') + '</button>';
+  /* MOVED HERE (2026-07-23): "Find matches" used to be labeled "Propose matches" and hidden inside
+     the generic "+ Add" menu under Properties for this buyer — nowhere near the Match Criteria
+     section where you'd actually go looking for it (confirmed: Nick went to this exact section
+     looking for a way to see suggested listings and found nothing). It's the same proposeMatches()
+     call as before, just surfaced where it's actually discoverable, and disabled with an explanation
+     until the buyer has real matchable criteria (areas + budget) instead of silently doing nothing. */
+  h += matchable
+    ? ' <button class="qbtn" onclick="event.stopPropagation();proposeMatches(\'buyers\',' + q + ')">&#10024; Find matches</button>'
+    : ' <button class="qbtn" disabled title="Set match criteria + a budget first">&#10024; Find matches</button>';
   return h + '<div id="crit-' + esc(String(id)) + '"></div>';
 }
 function criteriaForm(id) {
@@ -4211,9 +4313,12 @@ function buyerLinksHtml(bid) {
   var r = buyerLinkRows(bid);
   var h = '<div class="flabel">Properties for this buyer</div>';
   h += r.linked.map(function (l) { return linkChip(bid, l); }).join('') || '<span class="hint">none linked yet</span> ';
+  /* "Propose matches" used to live in this +Add menu too — removed (2026-07-23), it now lives as a
+     visible "Find matches" button in the Match Criteria section below (buyerCriteriaHtml), which is
+     where you'd actually look for it. Keeping it in two different places under two different labels
+     was the discoverability problem, not a missing feature. */
   h += addMenuHtml('buyers', bid, [
     '<button class="qbtn" onclick="event.stopPropagation();openLinkPicker(\'' + esc(bid) + '\')">&#65291; Link a property</button>',
-    '<button class="qbtn" onclick="event.stopPropagation();proposeMatches(\'buyers\',\'' + esc(bid) + '\')">&#10024; Propose matches</button>',
     '<button class="qbtn" onclick="event.stopPropagation();openMemForm(\'buyers\',\'' + esc(bid) + '\')">&#65291; Add memory</button>'
   ]);
   return h;
@@ -4223,7 +4328,18 @@ function buyerLinksHtml(bid) {
    screen. Now recordExtras collapses these behind one "N suggested matches ▸" toggle. */
 function buyerSuggestedHtml(bid) {
   var r = buyerLinkRows(bid);
-  var html = r.suggested.map(function (s) {
+  /* Address-less suggestions sort last (2026-07-23) — a property with no address isn't something
+     Nick can act on (nothing to show the buyer, nowhere to drive), so it shouldn't outrank a fully-
+     addressed suggestion just because recLabel() found a fallback (name/owner_name) to display.
+     Checked against the underlying record directly, not the label, since the label can be non-empty
+     via that fallback even when the address itself is missing. */
+  var withAddr = r.suggested.map(function (s) {
+    var rec = recOf(s.type, s.id);
+    return { s: s, hasAddr: !!(rec && String(rec.address || rec.address_area || '').trim()) };
+  });
+  withAddr.sort(function (a, b) { return (b.hasAddr - a.hasAddr) || 0; }); /* stable: keeps existing relative order within each group */
+  var html = withAddr.map(function (x) {
+    var s = x.s;
     return '<div class="qi"><div class="txt"><div class="t1">Suggested: ' + esc(s.label) + (s.score ? ' · fit ' + s.score + '/10' : '') + '</div>'
       + (s.rationale ? '<div class="t2">Why: ' + esc(s.rationale) + '</div>' : '') + '</div>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(' + "'" + s.matchId + "'" + ')">&#10003;</button>'
@@ -5135,9 +5251,12 @@ function scoreMatch(buyer, prop) {
   if (score < 1) score = 1;
   return { score: score, rationale: bits.join(' · ') || 'general fit' };
 }
-function buildProposals(table, sid, exclude) {
+function buildProposals(table, sid, exclude, excludeAddr) {
   /* Pure: ranks candidates, skips excluded pairs, returns ≤3 insert-ready rows.
-     Payload shape is exactly {buyer_id,target_type,target_id,score,rationale,status} — defaults cover the rest. */
+     Payload shape is exactly {buyer_id,target_type,target_id,score,rationale,status} — defaults cover the rest.
+     excludeAddr (buyers side only): addresses already matched/dismissed for this buyer under ANY row
+     id — see the comment in proposeMatches for why id-only exclusion isn't sufficient on its own. */
+  excludeAddr = excludeAddr || {};
   var out = [];
   var byId = function (t, id) { var r = null; (DATA[t] || []).forEach(function (x) { if (String(x.id) === String(id)) r = x; }); return r; };
   if (table === 'buyers') {
@@ -5146,8 +5265,14 @@ function buildProposals(table, sid, exclude) {
     [['offmarket', DATA.offmarket], ['listings', DATA.listings]].forEach(function (g) {
       (g[1] || []).forEach(function (p) {
         if (exclude[g[0] + ':' + String(p.id)]) return;
+        var addr = String(p.address || p.address_area || '').trim();
+        var ak = addrKey(addr);
+        if (ak && excludeAddr[ak]) return;
         var s = scoreMatch(buyer, p);
-        out.push({ buyer_id: sid, target_type: g[0], target_id: String(p.id), score: s.score, rationale: s.rationale, status: 'suggested' });
+        /* _hasAddr is sort-only, stripped before insert below — an address-less property isn't
+           actionable (nothing to show the buyer, nothing to drive to), so it shouldn't beat out an
+           addressed one for one of the 3 proposal slots just because its score happens to be higher. */
+        out.push({ buyer_id: sid, target_type: g[0], target_id: String(p.id), score: s.score, rationale: s.rationale, status: 'suggested', _hasAddr: !!addr });
       });
     });
   } else if (table === 'offmarket') {
@@ -5160,8 +5285,12 @@ function buildProposals(table, sid, exclude) {
     });
   }
   out = out.filter(function (x) { return x.score >= 5; }); /* only propose neutral-or-better fits */
-  out.sort(function (a, b) { return b.score - a.score; });
-  return out.slice(0, 3);
+  out.sort(function (a, b) {
+    var ha = a._hasAddr !== false, hb = b._hasAddr !== false;
+    if (ha !== hb) return ha ? -1 : 1; /* addressed candidates first, regardless of score */
+    return b.score - a.score;
+  });
+  return out.slice(0, 3).map(function (x) { return { buyer_id: x.buyer_id, target_type: x.target_type, target_id: x.target_id, score: x.score, rationale: x.rationale, status: x.status }; });
 }
 var proposeBusy = false;
 async function proposeMatches(table, id) {
@@ -5171,19 +5300,40 @@ async function proposeMatches(table, id) {
     var sid = String(id);
     /* Exclusions: junction links (in DATA.links) + EVERY matches row for this side —
        DATA.matches omits dismissed ones, so ask the DB (read-only) to honor the UNIQUE constraint. */
-    var exclude = {}, q;
+    var exclude = {}, excludeAddr = {}, q;
     if (table === 'buyers') {
       DATA.links.forEach(function (l) { if (String(l.buyer_id) === sid) exclude['offmarket:' + String(l.offmarket_id)] = 1; });
       q = await sb.from('matches').select('target_type,target_id').eq('buyer_id', sid);
       if (q.error) { toast('Could not check existing matches'); return; }
-      (q.data || []).forEach(function (m) { exclude[m.target_type + ':' + String(m.target_id)] = 1; });
+      var ids = { offmarket: [], listings: [] };
+      (q.data || []).forEach(function (m) {
+        exclude[m.target_type + ':' + String(m.target_id)] = 1;
+        if (ids[m.target_type]) ids[m.target_type].push(m.target_id);
+      });
+      /* BUG FIX (2026-07-23): excluding by exact target row id isn't enough on its own — if the
+         same physical property gets re-added as a new row later (relisted, re-synced from an MLS
+         import, re-entered by hand), the old id-based exclude can't recognize it and the buyer sees
+         "the same match I just dismissed" reappear under a new id. Resolve the address of every
+         already-matched/dismissed target for this buyer (querying the DB directly, not DATA, so
+         this still works even if the property was later archived out of DATA) and exclude by that
+         too — an address a buyer already passed on stays passed-on regardless of row id. */
+      var addrLookups = [];
+      if (ids.offmarket.length) addrLookups.push(sb.from('offmarket').select('id,address_area').in('id', ids.offmarket));
+      if (ids.listings.length) addrLookups.push(sb.from('listings').select('id,address').in('id', ids.listings));
+      var addrRes = await Promise.all(addrLookups);
+      addrRes.forEach(function (res) {
+        (res && res.data || []).forEach(function (row) {
+          var k = addrKey(row.address || row.address_area);
+          if (k) excludeAddr[k] = 1;
+        });
+      });
     } else {
       DATA.links.forEach(function (l) { if (String(l.offmarket_id) === sid) exclude['buyers:' + String(l.buyer_id)] = 1; });
       q = await sb.from('matches').select('buyer_id').eq('target_type', 'offmarket').eq('target_id', sid);
       if (q.error) { toast('Could not check existing matches'); return; }
       (q.data || []).forEach(function (m) { exclude['buyers:' + String(m.buyer_id)] = 1; });
     }
-    var pairs = buildProposals(table, sid, exclude);
+    var pairs = buildProposals(table, sid, exclude, excludeAddr);
     if (!pairs.length) { toast('No new matches to suggest'); return; }
     var r = await sb.from('matches').insert(pairs).select('id');
     if (r.error) { toast('Could not save suggestions'); return; }
@@ -5231,8 +5381,12 @@ function renderActivity() {
 }
 
 /* ---------- browse ---------- */
+/* Agents (2026-07-23) intentionally left out of the visible tab strip — it's reached via the
+   "More" dropdown (menuGoAgents) instead, since Nick doesn't use it day-to-day. browseTab can
+   still be set to 'agents' (setTab still works, renderBrowse still knows how to render it) —
+   this array only controls which buttons render in the scrollable tab strip. */
 var TABS = [
-  ['buyers', 'Buyers'], ['agents', 'Agents'], ['offmarket', 'Leads'], ['listings', 'Listings'],
+  ['buyers', 'Buyers'], ['offmarket', 'Leads'], ['listings', 'Listings'],
   ['prospects', 'Prospects'], ['people', 'People'], ['reengage', 'Re-engage'], ['market', 'Market']
 ];
 /* #7: Escrows + Past sales no longer top-level tabs — they live one layer inside the Listings hub
