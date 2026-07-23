@@ -444,7 +444,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.100.0';
+var APP_VERSION = 'v5.100.1';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -800,15 +800,18 @@ function renderStats() {
     [open, 'To-dos', 'todos'],
     [hot, 'Hot leads', 'hot'],
     [DATA.buyers.length, 'Buyers', 'buyers'],
-    [DATA.listings.length, 'Listings', 'listings'],
-    [DATA.transactions.length, 'Escrows', 'transactions']
+    [DATA.listings.length, 'Listings', 'listings']
   ];
   document.getElementById('stats').innerHTML = s.map(function (x) {
     return '<div class="stat" onclick="jumpStat(' + "'" + x[2] + "'" + ')"><div class="num">' + x[0] + '</div><div class="lbl">' + x[1] + '</div></div>';
   }).join('');
 }
 
-/* Tapping a dashboard stat jumps to (and filters) the matching area. */
+/* Tapping a dashboard stat jumps to (and filters) the matching area.
+   BUG FIX (2026-07-23): 'transactions' hasn't been a real top-level tab since Escrows moved inside
+   the Listings hub (see TABS/propSeg above) — this used to set browseTab='transactions', which
+   matches no tab, so tapping the Escrows stat silently landed on a blank tab strip. Route it to
+   Listings' escrow sub-view instead (same place transaction deadline links already jump to). */
 function jumpStat(target) {
   if (target === 'todos') {
     qShowAll = true; renderQueue();
@@ -816,9 +819,11 @@ function jumpStat(target) {
     return;
   }
   if (target === 'hot') {
-    browseTab = 'offmarket'; browseHot = true;
+    browseTab = 'offmarket'; browseHot = true; propSeg = 'active';
+  } else if (target === 'transactions') {
+    browseTab = 'listings'; browseHot = false; propSeg = 'escrow';
   } else {
-    browseTab = target; browseHot = false;
+    browseTab = target; browseHot = false; propSeg = 'active';
   }
   renderTabs(); renderBrowse();
   document.getElementById('records-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
