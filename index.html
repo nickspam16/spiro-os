@@ -415,7 +415,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.98.1';
+var APP_VERSION = 'v5.99.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -682,8 +682,7 @@ async function loadAll(manual) {
    its own contingency_date/closing_date as a live deadline — but that fallback never checked
    whether the deal was already done. A backfilled closed sale (status 'Sold'/'Leased'/'Closed')
    keeps its historical closing_date forever, so it kept surfacing as an OVERDUE "Closing —"
-   item years after it actually closed (e.g. 850 N Kings Rd, closed 2024-07-12, still showing
-   overdue in July 2026). Closed deals should never generate a pending deadline. */
+   item years after it actually closed. Closed deals should never generate a pending deadline. */
 var TX_CLOSED_STATUSES = { 'Sold': 1, 'Leased': 1, 'Closed': 1 };
 function txIsClosed(tx) { return !!(tx && tx.status && TX_CLOSED_STATUSES[tx.status]); }
 
@@ -1666,7 +1665,10 @@ var REVGEO_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/revgeo';
 var OMNI_PHOTO = null, omniPhotoBusy = false;
 async function revgeoCall(body) {
   try {
-    var r = await withTimeout(fetch(REVGEO_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), 15000, { ok: false });
+    var s = await sb.auth.getSession();
+    var tok = s.data && s.data.session && s.data.session.access_token;
+    if (!tok) return null;
+    var r = await withTimeout(fetch(REVGEO_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false });
     if (!r.ok) return null;
     return await r.json();
   } catch (e) { return null; }
@@ -4325,8 +4327,8 @@ function isForwardedNotMine(o) {
    for one concept: everyone repping this side. Backend is unchanged for compatibility — the first
    agent added is still the primary (offmarket.list_agent_id, feeds existing spine/match logic
    elsewhere), the rest still live in property_listing_agents — but the UI now shows them as one
-   plain list with one "+ Add agent" action, so adding e.g. "Justin Hutchel and Mackenzie Walker,
-   both repping the buyers" is just adding two names in a row, no primary/co distinction to think about. */
+   plain list with one "+ Add agent" action, so adding two agents both repping the buyer's side is
+   just adding two names in a row, no primary/co distinction to think about. */
 function listAgentHtml(oid) {
   var o = recOf('offmarket', oid); if (!o) return '';
   var pid = o.property_id;
@@ -5455,7 +5457,10 @@ async function farmStreet(street, city, anchor) {
   toast('Pulling every parcel on ' + street + (city ? ', ' + city : '') + '…');
   var res = null;
   try {
-    var r = await withTimeout(fetch(STREET_PARCELS_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ street: street, city: city }) }), 25000, { ok: false });
+    var s = await sb.auth.getSession();
+    var tok = s.data && s.data.session && s.data.session.access_token;
+    if (!tok) { farmBusy = false; toast('Sign in first'); return; }
+    var r = await withTimeout(fetch(STREET_PARCELS_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ street: street, city: city }) }), 25000, { ok: false });
     res = r.ok ? await r.json() : null;
   } catch (e) { res = null; }
   farmBusy = false;
@@ -5643,11 +5648,17 @@ function buildablePanel(table, id) {
 var BUILDABLE_LOOKUP_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/buildable_lookup';
 var PARCEL_OVERLAYS_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/parcel_overlays';
 var BLD_LOOKUP = {};   // id -> last address-lookup result (transient; carries far_max + use/allowed category into the estimate)
+/* SECURITY (2026-07-23): these lookups spend a real Google Maps API call server-side, so they must be
+   auth-gated — a shared secret in this file wouldn't work (this file is fully public), so they're gated
+   by the signed-in Supabase session JWT instead (same as portalWrite above). Both functions were switched
+   to verify_jwt:true to match. */
+async function authTok() { var s = await sb.auth.getSession(); return (s.data && s.data.session && s.data.session.access_token) || null; }
 /* Best-effort overlay/hillside lookup by address. Returns {hillside, hpoz, specific_plan, coastal} or null.
    Auto-gates hillside so the estimate isn't falsely precise on the hillside luxury farm. */
 async function overlaysFor(addr) {
   try {
-    var r = await withTimeout(fetch(PARCEL_OVERLAYS_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr }) }), 15000, { ok: false });
+    var tok = await authTok(); if (!tok) return null;
+    var r = await withTimeout(fetch(PARCEL_OVERLAYS_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ address: addr }) }), 15000, { ok: false });
     var o = r.ok ? await r.json() : null;
     return (o && !o.error) ? o : null;
   } catch (e) { return null; }
@@ -5660,8 +5671,9 @@ async function buildableAutoFill(table, id) {
   var btn = document.getElementById('bld-af-' + id); if (btn) { btn.disabled = true; btn.textContent = 'Looking up…'; }
   var res = null, ovj = null;
   try {
+    var tok = await authTok(); if (!tok) { toast('Sign in first'); if (btn) { btn.disabled = false; btn.textContent = 'Auto-fill from address'; } return; }
     var pair = await Promise.all([
-      withTimeout(fetch(BUILDABLE_LOOKUP_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr }) }), 20000, { ok: false }),
+      withTimeout(fetch(BUILDABLE_LOOKUP_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ address: addr }) }), 20000, { ok: false }),
       overlaysFor(addr)
     ]);
     if (pair[0].ok) res = await pair[0].json();
@@ -5701,8 +5713,9 @@ async function scanUnderbuilt() {
     var p = todo[i];
     try {
       /* buildable + overlays in parallel — overlays auto-gate hillside so the scan doesn't over-state on slopes. */
+      var tok2 = await authTok(); if (!tok2) { scanBusy = false; toast('Sign in first'); return; }
       var pair = await Promise.all([
-        withTimeout(fetch(BUILDABLE_LOOKUP_FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: p.address }) }), 20000, { ok: false }),
+        withTimeout(fetch(BUILDABLE_LOOKUP_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok2 }, body: JSON.stringify({ address: p.address }) }), 20000, { ok: false }),
         overlaysFor(p.address)
       ]);
       var r = pair[0], ovj = pair[1];
