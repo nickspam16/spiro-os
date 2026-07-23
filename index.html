@@ -312,22 +312,25 @@
           <button class="refresh" id="theme-btn" onclick="toggleSpiroTheme()" title="Night mode">&#9681;</button>
           <button class="refresh" onclick="loadAll(true)" title="Refresh">&#8635;</button>
         </div>
-        <!-- More menu (2026-07-23): Agents, Data Coverage, and the stats strip aren't daily-glance
-             items — Nick uses them occasionally, not every visit — so they're tucked behind this
-             dropdown instead of sitting permanently on the launch pad. Nothing is deleted or
-             disabled, just reached one tap deeper. See openMoreMenu/closeMoreMenu/menuGoAgents/
-             menuShowCoverage/menuShowStats below. -->
+        <!-- More menu (2026-07-23): Data Coverage and the stats strip aren't daily-glance items —
+             Nick uses them occasionally, not every visit — so they're tucked behind this dropdown
+             instead of sitting permanently on the launch pad. Nothing is deleted or disabled, just
+             reached one tap deeper. See openMoreMenu/closeMoreMenu/menuShowCoverage/menuShowStats
+             below. Agents dropped as its own destination here (2026-07-23) — every agent already
+             surfaces inside Contacts (linked-contact role badge, or a synthetic row when there's
+             no linked contact), with an "Agents only" filter chip there instead of a separate menu
+             entry; jumpToRecord('agents', id) still works exactly as before, unchanged. -->
         <div class="menu-wrap" id="more-menu-wrap" style="position:relative;">
           <button class="refresh" id="more-menu-btn" onclick="event.stopPropagation();toggleMoreMenu()" title="More" style="border:1px solid var(--line);border-radius:var(--radius);width:38px;height:38px;">&#8942;</button>
           <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
-            <a href="javascript:void(0)" onclick="menuGoAgents()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Agents <span id="more-menu-agents-n" style="color:var(--muted);font-size:12.5px;"></span></a>
-            <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Re-engage <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Relationships <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
             <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
+            <a href="javascript:void(0)" onclick="menuShowBrief()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Morning Brief</a>
             <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowCoverage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Data Coverage <span id="more-menu-coverage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
@@ -431,7 +434,11 @@
       <div id="share-links-body" style="display:none;"></div>
     </div>
 
-    <div class="card" id="brief-card">
+    <!-- 2026-07-23 (Nick): dashboard should read as home page/deal HQ (Records skeleton + Today's
+         Focus) with everything else one tap away in the dropdown — Morning Brief is a narrative
+         AI summary, not core browsing, so it moved off the always-visible dashboard here and into
+         the "⋮" dropdown (see menuShowBrief) like Buyer Portal/Share Links/Recent Activity. -->
+    <div class="card" id="brief-card" style="display:none;">
       <h2 onclick="toggleBrief()" style="cursor:pointer;">Morning Brief <span id="brief-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();fetchBrief(true)" title="Refresh">&#8635;</button></h2>
       <div id="brief-body" class="hint" style="white-space:pre-wrap;display:none;">Loading&hellip;</div>
     </div>
@@ -505,7 +512,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.108.1';
+var APP_VERSION = 'v5.110.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -572,23 +579,28 @@ function openPanel(cardId) {
 }
 function closePanel() {
   if (!PANEL_HOME) { document.getElementById('home-view').style.display = ''; document.getElementById('panel-view').style.display = 'none'; return; }
+  var homeId = PANEL_HOME.id;
   var card = document.getElementById(PANEL_HOME.id);
   if (card) {
     PANEL_HOME.parent.insertBefore(card, PANEL_HOME.next);
     /* Cards that live hidden-by-default on the home page (Who to call / Buyer Portal / Share
-       Links / Recent Activity / Data Coverage) go back to hidden, matching their normal resting
-       state — Records doesn't, since it's always visible on the home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+       Links / Recent Activity / Data Coverage / Morning Brief) go back to hidden, matching their
+       normal resting state — Records doesn't, since it's always visible on the home page. */
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
   document.getElementById('home-view').style.display = '';
   window.scrollTo(0, 0);
   /* Records was possibly parked on a hidden-tab view (agents/reengage/market/people) — land back
-     on a normal tab rather than leaving it wherever the panel visit left it. */
-  if (['agents', 'reengage', 'market', 'people'].indexOf(browseTab) !== -1) { browseTab = 'listings'; renderTabs(); renderBrowse(); }
+     on a normal tab rather than leaving it wherever the panel visit left it. BUG FIX (2026-07-23):
+     this used to run on every closePanel() call regardless of which card was actually being
+     closed — so opening Buyer Portal/Share Links/Morning Brief/etc. from the dropdown while
+     browsing Contacts (or Agents/Re-engage/Market) would silently bounce Records back to Listings
+     on Back, even though Records was never the thing you closed. Only reset it when the panel you
+     just closed WAS Records itself. */
+  if (homeId === 'records-card' && ['agents', 'reengage', 'market', 'people'].indexOf(browseTab) !== -1) { browseTab = 'listings'; renderTabs(); renderBrowse(); }
 }
-function menuGoAgents() { setTab('agents'); openPanel('records-card'); }
 function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
 function menuGoMarket() { setTab('market'); openPanel('records-card'); }
 function menuGoPeople() { setTab('people'); openPanel('records-card'); }
@@ -601,6 +613,12 @@ function menuShowShareLinks() {
   renderShareLinks(); /* card was hidden -> render() skips it; force one fresh render now that it's visible */
 }
 function menuShowActivity() { openPanel('activity-card'); renderActivity(); }
+function menuShowBrief() {
+  openPanel('brief-card');
+  var b = document.getElementById('brief-body'), c = document.getElementById('brief-caret');
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_brief_open', '1'); } catch (e) {} }
+  fetchBrief(false); /* cached per-day; card was hidden so this is likely the first paint of it this load */
+}
 function menuShowCoverage() {
   openPanel('coverage-card');
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
@@ -886,14 +904,15 @@ function render() {
   var actCard = document.getElementById('activity-card');
   if (actCard && actCard.style.display !== 'none') renderActivity();
   renderSyncAge();
-  var moreAgentsN = document.getElementById('more-menu-agents-n');
-  if (moreAgentsN) moreAgentsN.textContent = (DATA.agents || []).length;
   var moreReengageN = document.getElementById('more-menu-reengage-n');
   if (moreReengageN) moreReengageN.textContent = reengageCandidateCount();
   var moreMarketN = document.getElementById('more-menu-market-n');
   if (moreMarketN) moreMarketN.textContent = (MARKET.events || []).length;
   var morePeopleN = document.getElementById('more-menu-people-n');
-  if (morePeopleN) morePeopleN.textContent = (DATA.contacts || []).length;
+  /* 2026-07-23: Agents folded into Contacts (its own "⋮" entry removed) — count needs to include
+     the synthetic agent-only rows peopleList() adds for agents with no linked contacts row, or
+     this badge would undercount what Contacts actually shows now. */
+  if (morePeopleN) morePeopleN.textContent = peopleList('').length;
   /* SECURITY: APP_VERSION is the full internal build changelog (client names, deal specifics,
      negotiation notes) — never render it whole on the public page. Only the leading "vX.Y.Z"
      token is public-facing; the rest stays in source for Claude/Nick's own reference. */
@@ -1470,7 +1489,7 @@ function cancelForm() {
   if (formDirty() && !window.confirm('Discard your unsaved changes?')) return;
   closeForm();
 }
-function closeForm() { editing = null; memTarget = null; linkTarget = null; document.getElementById('form-card').style.display = 'none'; }
+function closeForm() { editing = null; memTarget = null; linkTarget = null; PROMOTING_ENGAGE_ID = null; document.getElementById('form-card').style.display = 'none'; }
 function submitForm() { if (memTarget) saveMemory(); else if (linkTarget) saveLink(); else saveForm(); }
 
 async function saveForm() {
@@ -1512,6 +1531,15 @@ async function saveForm() {
   else r = await sb.from(editing.table).insert(b.payload).select('id');
   if (r.error || !r.data || !r.data.length) { err.textContent = r.error ? r.error.message : 'Could not save'; return; }
   if (!editing.row) await linkSpines(editing.table, r.data[0].id, vals); /* self-link new record to its person + parcel */
+  /* Engage promote (2026-07-23): a new Buyer/Prospect that started life as "promote from Engage"
+     auto-clears that contact's Engage tag, so they don't sit tagged AND show up as a real pipeline
+     record at the same time — per Nick's scoping call. Only fires for the exact new-record save
+     the promote button triggered (PROMOTING_ENGAGE_ID is cleared here either way). */
+  if (!editing.row && PROMOTING_ENGAGE_ID && (editing.table === 'buyers' || editing.table === 'prospects')) {
+    var promotedContactId = PROMOTING_ENGAGE_ID;
+    PROMOTING_ENGAGE_ID = null;
+    await contactClearEngage(promotedContactId, 'engage.promoted');
+  }
   if (editing.table === 'offmarket') { await applyLeadAgent(editing.row ? editing.row.id : r.data[0].id, vals.list_agent, editing.row); } /* link the listing agent from the form */
   if (editing.table === 'listings') { await maybeOpenEscrowOnPending(editing.row ? editing.row.id : r.data[0].id, vals.status, vals.address); } /* listing → Pending: offer to open the linked escrow */
   var saved = (editing.row ? 'Updated ' : 'Added ') + TITLES[editing.table];
@@ -3336,7 +3364,7 @@ function recordExtras(table, id) {
   }
   if (table === 'transactions') { h += escrowExtras(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
-  if (table === 'listings') h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid);
+  if (table === 'listings') { h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid); more += listingMarketingUrlHtml(sid); }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
@@ -3456,6 +3484,25 @@ function editMarketingUrl(sid) {
   if (v === null) return;
   o.extra = Object.assign({}, o.extra || {}); o.extra.marketing_url = v.trim() || null;
   sb.from('offmarket').update({ extra: o.extra }).eq('id', sid).then(function () { toast('Marketing link saved ✓'); renderBrowse(); });
+}
+/* Same idea as the off-market marketing_url above, extended to on-market Listings (2026-07-23,
+   Nick's brainstorm dump ask: "save a URL of the listing that the marketing team may of made").
+   Same extra.marketing_url convention, own edit function since it writes to a different table. */
+function listingMarketingUrlHtml(sid) {
+  var l = recOf('listings', sid); if (!l) return '';
+  var mUrl = (l.extra && l.extra.marketing_url) || '';
+  var h = '<div class="flabel" style="margin-top:12px;">Marketing site</div>';
+  if (mUrl) h += '<a class="qbtn" style="text-decoration:none;display:inline-block;" href="' + esc(mUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">Open ↗</a> ';
+  h += '<button class="qbtn" onclick="event.stopPropagation();editListingMarketingUrl(\'' + esc(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
+  return h;
+}
+function editListingMarketingUrl(sid) {
+  var l = recOf('listings', sid); if (!l) return;
+  var cur = (l.extra && l.extra.marketing_url) || '';
+  var v = prompt('Marketing site URL the marketing team built for this listing (leave blank to remove):', cur);
+  if (v === null) return;
+  l.extra = Object.assign({}, l.extra || {}); l.extra.marketing_url = v.trim() || null;
+  sb.from('listings').update({ extra: l.extra }).eq('id', sid).then(function () { toast('Marketing link saved ✓'); renderBrowse(); });
 }
 function editShareBlurb(sid) {
   var o = recOf('offmarket', sid); if (!o) return;
@@ -5818,8 +5865,8 @@ function renderActivity() {
 }
 
 /* ---------- browse ---------- */
-/* Agents, Re-engage, Market, and People (2026-07-23) intentionally left out of the visible tab
-   strip — they're reached via the "More" dropdown instead (menuGoAgents/menuGoReengage/
+/* Re-engage, Market, and People (2026-07-23) intentionally left out of the visible tab
+   strip — they're reached via the "More" dropdown instead (menuGoReengage/
    menuGoMarket/menuGoPeople), since Nick found them easy to miss in a scrolling tab row and
    doesn't check them every day. browseTab can still be set to any of these (setTab still works,
    renderBrowse still knows how to render them) — this array only controls which buttons render
@@ -5837,7 +5884,7 @@ function reengageCandidateCount() {
    see the TABS comment above). Needed so renderTabs can show *something* when one of these is
    active, instead of a tab strip where nothing is highlighted and the "Records" header never
    changes — see the note in renderTabs below. */
-var HIDDEN_TAB_LABELS = { agents: 'Agents', reengage: 'Re-engage', market: 'Market', people: 'Contacts' };
+var HIDDEN_TAB_LABELS = { agents: 'Agents', reengage: 'Relationships', market: 'Market', people: 'Contacts' };
 function renderTabs() {
   document.getElementById('tabs').innerHTML = TABS.map(function (t) {
     var n = t[0] === 'market' ? (MARKET.events || []).length : t[0] === 'reengage' ? reengageCandidateCount() : t[0] === 'people' ? (DATA.contacts || []).length : (DATA[t[0]] || []).length;
@@ -6643,6 +6690,104 @@ function exportPursuingLetters() {
   logEvent('system', null, 'outreach.export', list.length + ' pursuing letters exported for mail');
 }
 
+/* ===== Engage list (2026-07-23): people you're CURRENTLY warming up with — chatting, might list
+   with you or buy through you — a different plane from Re-engage below (past clients who didn't
+   transact). Scoped via 8 direct questions to Nick: manual-tag only (no auto-detection yet), same
+   view as Re-engage in two sections, any contact can be tagged, buyer/seller split like Re-engage,
+   actions are draft note / promote to a real Buyer or Prospect record / set a follow-up reminder /
+   snooze-dismiss, no auto-expiry for v1, tag button lives on every Contact card, and promoting
+   auto-clears the Engage tag so someone doesn't sit in two places at once. Same contacts.extra.*
+   convention as Re-engage's extra.reengage, just extra.engage, so both share personExtras/toggleRow
+   plumbing with no schema migration. */
+function engageList() { return (DATA.contacts || []).filter(function (c) { return c.extra && c.extra.engage && c.extra.engage.status === 'active' && !c.extra.merged_into; }); }
+function engageContact(id) { var r = null; (DATA.contacts || []).forEach(function (c) { if (String(c.id) === String(id)) r = c; }); return r; }
+async function contactSetEngage(id, type) {
+  var c = engageContact(id); if (!c) return;
+  c.extra = c.extra || {}; c.extra.engage = { type: type, status: 'active', tagged_at: nowStamp() };
+  var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  logEvent('contacts', id, 'engage.tagged', 'Added to Engage (' + type + '): ' + (c.display_name || ''));
+  renderBrowse();
+  toast('Added to Engage ✓');
+}
+async function contactClearEngage(id, reason) {
+  var c = engageContact(id); if (!c) return;
+  if (!c.extra || !c.extra.engage) return;
+  c.extra.engage.status = 'dismissed';
+  var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  logEvent('contacts', id, 'engage.cleared', (reason || 'Removed from Engage') + ': ' + (c.display_name || ''));
+  renderBrowse();
+}
+function engageDraft(id) {
+  var c = engageContact(id); if (!c) return;
+  var type = (c.extra && c.extra.engage && c.extra.engage.type) || 'buyer';
+  var nm = String(c.display_name || '').split(',')[0].split(' ')[0] || 'there';
+  var body = type === 'seller'
+    ? 'Hi ' + nm + ',\n\nGreat catching up recently — wanted to follow up while it\'s fresh. Whenever you\'re ready to talk about listing, I\'d love to walk you through what I\'m seeing in the market and how I\'d approach it. No pressure, just say the word.\n\nBest,\n' + SPIRO_SIG
+    : 'Hi ' + nm + ',\n\nGreat catching up recently — wanted to follow up while it\'s fresh. If you\'re still looking, I\'d love to put together some options that fit what we talked about. Let me know what\'s a good next step.\n\nBest,\n' + SPIRO_SIG;
+  var box = document.getElementById('engage-draft-' + id); if (!box) return;
+  box.innerHTML = '<div style="margin-top:6px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
+    + '<div class="hint" style="margin-bottom:6px;">Personal check-in note — you send it. Nothing goes out from here.</div>'
+    + '<textarea id="engage-txt-' + esc(id) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();engageCopy(\'' + esc(id) + '\')">Copy</button></div></div>';
+}
+function engageCopy(id) {
+  var t = document.getElementById('engage-txt-' + id); if (!t) return;
+  t.select();
+  try { document.execCommand('copy'); toast('Copied ✓'); } catch (e) { if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { toast('Copied ✓'); }); }
+}
+/* Set a follow-up reminder for someone on Engage — lands in Today's Focus like any other manual
+   to-do (record_type/record_id point back at this contact so it's traceable, same shape the rest
+   of the app already uses for followups tied to a specific record). */
+async function engageSetFollowup(id, days) {
+  var c = engageContact(id); if (!c) return;
+  var due = addDaysIso(todayIso(), days);
+  var fu = { record_type: 'contacts', record_id: id, record_label: c.display_name || '', source_key: 'engagefu:' + id, manual: true, action_text: 'Check in with ' + (c.display_name || 'them'), due_date: due, urgency: '', status: 'open' };
+  var r = await sb.from('followups').insert(fu).select('*');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  DATA.followups.push(r.data[0]);
+  logEvent('contacts', id, 'engage.followup_set', 'Follow-up set for ' + fmtDate(due) + ': ' + (c.display_name || ''));
+  renderQueue(); renderStats(); toast('Follow-up set for ' + fmtDate(due) + ' ✓');
+}
+/* Promote someone straight from "just chatting" into a real pipeline record — one tap instead of
+   re-typing their name/contact into a blank form. PROMOTING_ENGAGE_ID is a short-lived flag: set
+   right before the form opens, consumed (and cleared) by saveForm() on a successful save of that
+   exact record, or cleared on cancel — either way it never lingers to affect an unrelated save. */
+var PROMOTING_ENGAGE_ID = null;
+function promoteEngageToBuyer(id) {
+  var c = engageContact(id); if (!c) return;
+  PROMOTING_ENGAGE_ID = id;
+  openNew('buyers');
+  var f1 = document.getElementById('f_name'); if (f1) f1.value = c.display_name || '';
+  var f2 = document.getElementById('f_contact'); if (f2) f2.value = c.email || c.phone || '';
+}
+function promoteEngageToProspect(id) {
+  var c = engageContact(id); if (!c) return;
+  PROMOTING_ENGAGE_ID = id;
+  openNew('prospects');
+  var f1 = document.getElementById('f_owner_name'); if (f1) f1.value = c.display_name || '';
+  var f2 = document.getElementById('f_owner_contact'); if (f2) f2.value = c.email || c.phone || '';
+}
+function engageRow(c) {
+  var e = c.extra.engage, id = String(c.id);
+  var badge = e.type === 'seller' ? '<span class="pill warn">Might list</span>' : '<span class="pill">Might buy</span>';
+  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + esc(id) + '\')">Draft note</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + esc(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + esc(id) + '\',7)">Remind in 1wk</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + esc(id) + '\',\'engage.dismissed\')">Not now</button>';
+  return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.display_name || '—') + ' ' + badge + '</div></div><div class="acts">' + acts + '</div></div><div id="engage-draft-' + esc(id) + '"></div>';
+}
+function engageHtml() {
+  var all = engageList();
+  if (!all.length) return '';
+  var buyers = all.filter(function (c) { return c.extra.engage.type !== 'seller'; });
+  var sellers = all.filter(function (c) { return c.extra.engage.type === 'seller'; });
+  var h = '<div class="flabel" style="margin-top:0;">Engage <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— warming up now, not past clients</span></div>';
+  if (buyers.length) h += '<div class="flabel" style="margin-top:10px;">Might buy through you</div>' + buyers.map(engageRow).join('');
+  if (sellers.length) h += '<div class="flabel" style="margin-top:10px;">Might list with you</div>' + sellers.map(engageRow).join('');
+  return h;
+}
 /* ===== Re-engage queue: warm past clients who didn't transact (a different plane than prospecting).
    Buyers who wrote offers but never closed; sellers who listed but didn't sell. Detected from DocuSign,
    tagged on contacts.extra.reengage, VERIFIED here by Nick (mark / not now). Draft note is button-only. ===== */
@@ -6650,7 +6795,8 @@ function reengageList() { return (DATA.contacts || []).filter(function (c) { ret
 function reengageContact(id) { var r = null; reengageList().forEach(function (c) { if (String(c.id) === String(id)) r = c; }); return r; }
 function reengageHtml() {
   var all = reengageList();
-  if (!all.length) return '<div class="empty">No one to re-engage yet. As deals flow through, past buyers who never closed and past sellers whose listings didn’t sell will surface here.</div>';
+  var engageSection = engageHtml();
+  if (!all.length) return engageSection + (engageSection ? '<div class="flabel" style="margin-top:16px;">Re-engage</div>' : '') + '<div class="empty">No one to re-engage yet. As deals flow through, past buyers who never closed and past sellers whose listings didn’t sell will surface here.</div>';
   function grp(type, title, sub) {
     var rows = all.filter(function (c) { var s = c.extra.reengage.status; return c.extra.reengage.type === type && (s === 'candidate' || s === 'active'); });
     if (!rows.length) return '';
@@ -6661,10 +6807,10 @@ function reengageHtml() {
     return '<div class="flabel" style="margin-top:14px;">' + esc(title) + ' <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— ' + esc(sub) + '</span></div>' + rows.map(reengageRow).join('');
   }
   var dismissed = all.filter(function (c) { return c.extra.reengage.status === 'dismissed'; }).length;
-  var head = '<div class="hint" style="margin-bottom:6px;">People you’ve worked with who didn’t transact — a warmer, easier reach than cold prospecting. Mark who’s worth reaching back out to.' + (dismissed ? ' · ' + dismissed + ' set aside' : '') + '</div>';
+  var head = (engageSection ? '<div class="flabel" style="margin-top:16px;">Re-engage</div>' : '') + '<div class="hint" style="margin-bottom:6px;">People you’ve worked with who didn’t transact — a warmer, easier reach than cold prospecting. Mark who’s worth reaching back out to.' + (dismissed ? ' · ' + dismissed + ' set aside' : '') + '</div>';
   var buyers = grp('buyer', 'Past buyers worth another look', 'wrote offers, never closed — often still looking');
   var sellers = grp('seller', 'Past sellers worth another look', 'listed with you but didn’t sell — relist candidates');
-  return head + buyers + sellers + (buyers || sellers ? '' : '<div class="empty">All caught up — nothing pending.</div>');
+  return engageSection + head + buyers + sellers + (buyers || sellers ? '' : '<div class="empty">All caught up — nothing pending.</div>');
 }
 function reengageRow(c) {
   var r = c.extra.reengage, id = String(c.id), active = r.status === 'active';
@@ -6753,13 +6899,25 @@ function peopleList(q) {
    'entity'. A vendor with no deal linked yet (personRoles doesn't scan transactions.extra.vendors)
    showed up as a bare name with "No linked records yet", easy to mistake for a stray contact. */
 function kindLabel(k) { return k === 'entity' ? 'Trust / entity' : k === 'vendor' ? 'Vendor' : k === 'agent' ? 'Agent' : ''; }
+/* Agents-only filter (2026-07-23): now that Agents isn't its own "⋮" destination, this segment
+   chip is how you get the same "just show me every agent" list the old Agents tab gave you,
+   without leaving Contacts. A row counts as an agent if it's a synthetic agent-only row, or a
+   real contact whose personRoles() includes an "agents" entry (i.e. has a linked agents.contact_id). */
+var peopleSeg = 'all';
+function peopleSetSeg(s) { peopleSeg = s; renderBrowse(); }
+function isAgentRow(c) { return !!(c._agentOnly || personRoles(c.id).some(function (r) { return r.t === 'agents'; })); }
 function peopleHtml(q) {
   if (!(DATA.contacts || []).length && !(DATA.agents || []).length) return '<div class="empty">No contacts yet. As buyers, sellers, agents, and past clients flow in, everyone you’ve worked with shows up here — one card per person, with their whole history.</div>';
   var rows = peopleList(q);
-  if (!rows.length) return '<div class="empty">No one matches “' + esc(q) + '”.</div>';
-  var review = q ? '' : (duplicatesHtml() + docsToAnchorHtml());
+  if (peopleSeg === 'agents') rows = rows.filter(isAgentRow);
+  var segHtml = '<div class="chip-row" style="margin-bottom:10px;">'
+    + '<span class="filter-chip" style="cursor:pointer;' + (peopleSeg === 'all' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="peopleSetSeg(\'all\')">All</span> '
+    + '<span class="filter-chip" style="cursor:pointer;' + (peopleSeg === 'agents' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="peopleSetSeg(\'agents\')">Agents only</span>'
+    + '</div>';
+  if (!rows.length) return segHtml + '<div class="empty">' + (peopleSeg === 'agents' ? 'No agents yet.' : 'No one matches “' + esc(q) + '”.') + '</div>';
+  var review = (q || peopleSeg !== 'all') ? '' : (duplicatesHtml() + docsToAnchorHtml());
   var head = '<div class="hint" style="margin-bottom:6px;">Everyone you’ve worked with, one card each — every role they play and every document you’ve signed together, in one place.' + (q ? '' : ' Search by name or email above.') + '</div>';
-  return review + head + rows.slice(0, 200).map(peopleRow).join('') + (rows.length > 200 ? '<div class="hint" style="margin-top:10px;">Showing 200 of ' + rows.length + ' — search to narrow.</div>' : '');
+  return segHtml + review + head + rows.slice(0, 200).map(peopleRow).join('') + (rows.length > 200 ? '<div class="hint" style="margin-top:10px;">Showing 200 of ' + rows.length + ' — search to narrow.</div>' : '');
 }
 function peopleRow(c) {
   /* Synthetic agent-only row (see peopleList) — no real contacts.id, so skip contactOf/
@@ -6805,6 +6963,15 @@ function personExtras(id) {
     }).join('');
   }
   h += contactExternalHtml(id);
+  /* Engage tag entry point (2026-07-23) — every Contact card gets this, per Nick's scoping call.
+     Shows current status + actions if already tagged active; otherwise two small buttons to tag
+     them, since (unlike Re-engage) there's no auto-detected "candidate" stage for Engage. */
+  var eng = (c.extra && c.extra.engage) || null;
+  h += '<div class="flabel" style="margin-top:12px;">Engage</div>';
+  if (eng && eng.status === 'active') h += personEngageHtml(c);
+  else h += '<div class="hint" style="margin-bottom:4px;">Currently chatting/warming up with them?</div>'
+    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + esc(id) + '\',\'buyer\')">+ Might buy</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + esc(id) + '\',\'seller\')">+ Might list</button>';
   var re = (c.extra && c.extra.reengage) || null;
   if (re) { h += '<div class="flabel" style="margin-top:12px;">Re-engagement</div>' + personReengageHtml(c); }
   var envs = personEnvelopes(id);
@@ -6857,6 +7024,15 @@ async function removeContactExternal(id, itemId) {
   var r = await sb.from('contacts').update({ extra: c.extra }).eq('id', id).select('id');
   if (r.error) { toast('Could not remove — try again'); return; }
   toast('Removed'); renderBrowse();
+}
+function personEngageHtml(c) {
+  var e = c.extra.engage, id = String(c.id);
+  var badge = e.type === 'seller' ? '<span class="pill warn">Might list</span>' : '<span class="pill">Might buy</span>';
+  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + esc(id) + '\')">Draft note</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + esc(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + esc(id) + '\',7)">Remind in 1wk</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + esc(id) + '\',\'engage.dismissed\')">Not now</button>';
+  return '<div class="qi"><div class="txt">' + badge + '</div><div class="acts">' + acts + '</div></div><div id="engage-draft-' + esc(id) + '"></div>';
 }
 function personReengageHtml(c) {
   var r = c.extra.reengage, id = String(c.id), active = r.status === 'active';
