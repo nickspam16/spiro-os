@@ -206,17 +206,15 @@
   .omni-mic.rec{border-color:var(--clay);color:var(--clay);background:var(--clay-soft)}
   .omni-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
   .omni-actions .hint{margin:0}
-  /* Quick-action row fix (2026-07-23): button.quiet is width:100% globally (needed for the full-width
-     "I already have a sign-in link" style buttons on the auth screens) — inside this flex row that
-     forced every secondary action onto its own full-width line, so "Ask instead / Save for later /
-     MLS email / Business card" read as four stacked links instead of one row of quick actions. Scoped
-     override here: auto width + a bordered chip look (matching the .qbtn idiom used everywhere else
-     in the app), grouped into a visual pair + pair with a hairline divider between the "about this
-     note" actions and the "import a photo" actions.  "File it" keeps its own full-width hero row above. */
+  /* Quick-action row fix (2026-07-23, refined same day after simplifying to one Go button): button.quiet
+     is width:100% globally (needed for the full-width "I already have a sign-in link" style buttons on
+     the auth screens) — inside this flex row that forced every secondary action onto its own full-width
+     line. Scoped override: auto width + a bordered chip look (matching the .qbtn idiom used elsewhere
+     in the app), so "MLS email" / "Business card" sit as one compact row instead of stacked links.
+     "Go" keeps its own full-width hero row above. */
   .omni-actions-sub{margin-top:10px;align-items:center}
   .omni-actions-sub button.quiet{width:auto;flex:none;padding:8px 14px;margin:0;border:1px solid var(--line);border-radius:var(--radius);font-size:12.5px;font-weight:400;color:var(--muted);background:none}
   .omni-actions-sub button.quiet:hover{border-color:var(--green);color:var(--green);background:var(--green-soft)}
-  .omni-actions-sub .chip-sep{align-self:stretch}
   .portal-pick{margin:2px 0 12px;padding:2px 0 2px 12px;border-left:2px solid var(--line)}
   .portal-pick .qi{padding:8px 0}
   .seg-row{display:flex;gap:16px;margin:2px 0 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -336,21 +334,29 @@
         <textarea id="omni-text" rows="1" placeholder="Jot a note, add a lead, or ask a question&hellip;" oninput="omniGrow(this);omniHint()" onkeydown="omniKey(event)"></textarea>
         <button class="omni-mic" id="omni-cam" onclick="omniPhotoPick()" title="Add photos or screenshots" aria-label="Add photos or screenshots">&#128247;</button>
         <button class="omni-mic" id="omni-mic" onclick="omniMic()" title="Dictate" style="display:none;" aria-label="Dictate">&#127908;</button>
+        <!-- SIMPLIFIED (2026-07-23): one photo picker for everything. Used to be three separate hidden
+             file inputs (this one for general/walk-by capture, plus dedicated mls-file/card-file ones
+             behind their own buttons) — now every photo comes through here and the photo-intake edge
+             function classifies MLS screenshot vs business card vs "something else" server-side, so
+             there's nothing for Nick to pick or know in advance. See omniImages/omniRoutePhotos below. -->
         <input type="file" id="omni-file" accept="image/*" multiple style="display:none;" onchange="omniImages(this.files)">
-        <input type="file" id="mls-file" accept="image/*" multiple style="display:none;" onchange="mlsImport(this.files)">
-        <input type="file" id="card-file" accept="image/*" multiple style="display:none;" onchange="cardImport(this.files)">
       </div>
+      <!-- SIMPLIFIED (2026-07-23): one box, one button. The inference model already decided file-vs-
+           question silently on every keystroke (see looksLikeQuestion/omniHint below) — the old
+           "File it"/"Ask" flip-label plus a separate "Ask instead" override button just exposed that
+           machinery to the user without them needing it. Now it's a single static "Go"; the hint line
+           right under it still says what will happen ("Looks like a question — I'll answer it" /
+           "I'll file this for you") so it's not a black box, just no second button to manage. -->
       <div class="omni-actions">
-        <button class="primary" id="omni-go" onclick="omniGo()">File it</button>
+        <button class="primary" id="omni-go" onclick="omniGo()">Go</button>
       </div>
-      <div class="omni-actions omni-actions-sub">
-        <button class="quiet" id="omni-alt" onclick="omniGoAlt()">Ask instead</button>
-        <button class="quiet" onclick="omniSave()" title="Hold it for the 6:30 AM sweep">Save for later</button>
-        <span class="chip-sep"></span>
-        <button class="quiet" onclick="mlsPick()" title="Import an MLS email screenshot — pull the listings and match them to your buyers">&#128231; MLS email</button>
-        <button class="quiet" onclick="cardPick()" title="Snap a business card — Spiro reads it and files the agent or vendor for you">&#128199; Business card</button>
-        <span class="hint" id="omni-mode" style="align-self:center;"></span>
-      </div>
+      <div class="hint" id="omni-mode" style="margin:8px 0 0;"></div>
+      <!-- "Save for later" is gone from the UI (per Nick: he won't use it this way) — saveCapture()/
+           omniSave() stay in the code since the offline queue still calls them automatically when
+           there's no connection; there's just no manual button for it anymore.
+           "MLS email" / "Business card" buttons are gone too (2026-07-23) — any photo dropped into the
+           camera picker above is now auto-classified server-side (see omniRoutePhotos), so there's no
+           separate button to remember or pick correctly. -->
       <div id="omni-note" class="hint"></div>
       <div id="omni-photo"></div>
       <div id="omni-answer" class="hint" style="white-space:pre-wrap;"></div>
@@ -444,7 +450,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.100.1';
+var APP_VERSION = 'v5.102.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1620,12 +1626,14 @@ function looksLikeQuestion(t) {
   if (/\?\s*$/.test(t)) return true;
   return /^(who|what|when|where|why|how|which|whose|is|are|am|do|does|did|can|could|should|would|will|show me|list|find|any |how many|how much)\b/i.test(t);
 }
+/* SIMPLIFIED (2026-07-23): the primary button is now a static "Go" — the file-vs-ask call is made
+   silently by looksLikeQuestion() when Go is tapped (see omniGo below), same detection as always,
+   just no button label flipping to expose it. This function now only updates the hint line under
+   the button, so you still see what Go is about to do before you tap it. */
 function omniHint() {
   var t = (document.getElementById('omni-text') || {}).value || '';
-  var go = document.getElementById('omni-go'), alt = document.getElementById('omni-alt'), mode = document.getElementById('omni-mode');
+  var mode = document.getElementById('omni-mode');
   var q = looksLikeQuestion(t), off = offlineCount();
-  if (go) go.textContent = q ? 'Ask' : 'File it';
-  if (alt) alt.textContent = q ? 'File instead' : 'Ask instead';
   var msg = '';
   if (!t.trim()) msg = off ? (off + ' note' + (off === 1 ? '' : 's') + ' waiting to sync') : '';
   else msg = q ? 'Looks like a question — I’ll answer it' : 'I’ll file this for you';
@@ -1638,7 +1646,6 @@ function omniGo(force) {
   var ans = document.getElementById('omni-answer'); if (ans) ans.textContent = '';
   if (mode === 'ask') askAI(); else aiCapture();
 }
-function omniGoAlt() { var t = (document.getElementById('omni-text') || {}).value || ''; omniGo(looksLikeQuestion(t) ? 'file' : 'ask'); }
 function omniKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); omniGo(); } }
 
 /* Voice dictation. Uses the browser's SpeechRecognition where available (Chrome/Safari);
@@ -1793,8 +1800,11 @@ function imgToBlob(file, maxDim, quality) {
     });
   });
 }
-/* Dispatcher for the camera/attach button. One original photo WITH GPS -> walk-by (type 4);
-   anything else (screenshots or JPGs, no location) -> vision scrape into a lead (types 1/3). */
+/* Dispatcher for the camera/attach button — the single entry point for every photo now (2026-07-23,
+   folded MLS-email and business-card intake in here so there's nothing to pick in advance). One
+   original photo WITH GPS -> walk-by (unchanged). Anything else goes to omniRoutePhotos, which asks
+   the photo-intake edge function what it's actually looking at (MLS screenshot / business card /
+   something else) and renders the right thing — no separate buttons required. */
 async function omniImages(files) {
   files = Array.prototype.slice.call(files || []).filter(function (f) { return f && /^image\//.test(f.type || ''); });
   if (!files.length) return;
@@ -1803,6 +1813,49 @@ async function omniImages(files) {
     try { gps = window.exifr ? await exifr.gps(files[0]) : null; } catch (e) {}
     if (gps && gps.latitude != null) return omniPhoto(files[0]); /* has location -> walk-by capture */
   }
+  return omniRoutePhotos(files);
+}
+var ROUTE_BUSY = false;
+/* Classify-then-extract in one round trip: photo-intake looks at the image(s) and returns
+   kind:'mls'|'card'|'other'. 'mls' and 'card' get their structured extraction back in the SAME
+   response (no second AI call), so this replaces what used to be two separate buttons + two separate
+   network calls (mlsImport/cardImport, now removed) with one. 'other' (walk-by/property/anything else)
+   falls through to the existing general vision-capture flow (omniScrape), so that path is unchanged. */
+async function omniRoutePhotos(files) {
+  if (ROUTE_BUSY) return;
+  files = files.slice(0, 6);
+  var note = document.getElementById('omni-note'), ph = document.getElementById('omni-photo');
+  if (!navigator.onLine) { if (note) note.textContent = 'Reading images needs a connection — try again when you are back online.'; return; }
+  ROUTE_BUSY = true;
+  if (note) note.textContent = 'Reading ' + files.length + (files.length > 1 ? ' images…' : ' image…');
+  if (ph) ph.innerHTML = files.map(function (f) { try { return '<img src="' + URL.createObjectURL(f) + '" style="max-width:70px;border:1px solid var(--line);border-radius:2px;margin:0 6px 6px 0;vertical-align:top;">'; } catch (e) { return ''; } }).join('');
+  var imgs = [];
+  for (var i = 0; i < files.length; i++) { var d = await imgToDataURL(files[i]); if (d) imgs.push(d); }
+  if (!imgs.length) { ROUTE_BUSY = false; if (note) note.textContent = 'Could not read those images — try again, or type the details in the box.'; return; }
+  var r = await withTimeout(sb.functions.invoke('photo-intake', { body: { images: imgs } }), 30000, { error: { message: 'timed out' } });
+  ROUTE_BUSY = false;
+  /* Any failure to classify -> don't dead-end, just treat it like an ordinary photo capture. */
+  if (r.error || !r.data || r.data.error) return omniScrape(files);
+  var kind = r.data.kind;
+  if (kind === 'mls') {
+    MLS_PROPS = (r.data.properties || []).filter(function (p) { return p && p.address; });
+    MLS_SEL = MLS_PROPS.map(function () { return true; });
+    if (!MLS_PROPS.length) { if (note) note.textContent = 'That looked like an MLS screenshot, but no listings were readable — try a clearer photo.'; return; }
+    if (ph) ph.innerHTML = ''; if (note) note.textContent = 'Looks like an MLS email —';
+    logEvent('system', null, 'mls.read', MLS_PROPS.length + ' listing(s) read from MLS email');
+    mlsRender();
+    return;
+  }
+  if (kind === 'card') {
+    var c = r.data.card || {};
+    if (!c.name && !c.company) { if (note) note.textContent = 'That looked like a business card, but no name was readable — try a clearer photo.'; return; }
+    CARD_DATA = { kind: (c.kind === 'agent' ? 'agent' : 'vendor'), name: c.name || '', company: c.company || '', title: c.title || '', phone: c.phone || '', email: c.email || '', website: c.website || '' };
+    if (ph) ph.innerHTML = ''; if (note) note.textContent = '';
+    logEvent('system', null, 'card.read', 'Business card read: ' + (CARD_DATA.name || CARD_DATA.company));
+    cardRender();
+    return;
+  }
+  /* kind === 'other' (or anything unexpected) -> ordinary photo capture, same as always. */
   return omniScrape(files);
 }
 var SCRAPE_BUSY = false, CAPTURE_IMAGES = [], CAPTURE_ROLES = [], CAPTURE_SEL = [], CAPTURE_URLS = [], CAPTURE_SCRAPED = [];
@@ -1843,29 +1896,13 @@ async function omniScrape(files) {
 
 /* ---------- #9: MLS morning-email import — screenshot -> extract every listing -> tap-to-keep ->
    save as on-market inventory (offmarket, source 'MLS email') -> auto-match to buyers via the
-   existing engine. Uses the dedicated `mls-extract` edge function (never touches the capture engine). */
-var MLS_PROPS = [], MLS_SEL = [], MLS_BUSY = false;
-function mlsPick() { var f = document.getElementById('mls-file'); if (f) { f.value = ''; f.click(); } }
-async function mlsImport(files) {
-  if (MLS_BUSY) return;
-  files = Array.prototype.slice.call(files || []).filter(function (f) { return f && /^image\//.test(f.type || ''); }).slice(0, 6);
-  if (!files.length) return;
-  var box = document.getElementById('mls-box'); if (!box) return;
-  if (!navigator.onLine) { box.innerHTML = '<div class="hint">Reading MLS emails needs a connection.</div>'; return; }
-  MLS_BUSY = true;
-  box.innerHTML = '<div class="hint">Reading ' + files.length + ' MLS screenshot' + (files.length > 1 ? 's' : '') + '…</div>';
-  var imgs = [];
-  for (var i = 0; i < files.length; i++) { var d = await imgToDataURL(files[i]); if (d) imgs.push(d); }
-  if (!imgs.length) { MLS_BUSY = false; box.innerHTML = '<div class="hint">Could not read those images — try again.</div>'; return; }
-  var r = await withTimeout(sb.functions.invoke('mls-extract', { body: { images: imgs } }), 40000, { error: { message: 'timed out — check your connection' } });
-  MLS_BUSY = false;
-  if (r.error || !r.data || r.data.error) { box.innerHTML = '<div class="hint">Could not read that — ' + esc((r.data && r.data.error) || (r.error && r.error.message) || 'try again') + '.</div>'; return; }
-  MLS_PROPS = (r.data.properties || []).filter(function (p) { return p && p.address; });
-  MLS_SEL = MLS_PROPS.map(function () { return true; });
-  if (!MLS_PROPS.length) { box.innerHTML = '<div class="hint">No property listings found in those screenshots.</div>'; return; }
-  logEvent('system', null, 'mls.read', MLS_PROPS.length + ' listing(s) read from MLS email');
-  mlsRender();
-}
+   existing engine.
+   SIMPLIFIED (2026-07-23): used to be its own button + its own network call straight to the
+   `mls-extract` edge function (mlsPick/mlsImport, both removed). Now omniRoutePhotos (above) reads
+   the classification from photo-intake and populates MLS_PROPS/MLS_SEL directly, then calls
+   mlsRender() below — same render/select/save UI as before, just reached automatically instead of
+   via a dedicated button. */
+var MLS_PROPS = [], MLS_SEL = [];
 function mlsRender() {
   var box = document.getElementById('mls-box'); if (!box) return;
   var n = MLS_SEL.filter(Boolean).length;
@@ -1908,33 +1945,15 @@ async function mlsSaveKept() {
   toast('Saved ' + saved + ' listing' + (saved !== 1 ? 's' : '') + ' + matched to buyers ✓');
 }
 /* ---------- #6 Business-card auto-scan: snap a card → read it → file the agent or vendor ----------
-   Uses the isolated card-extract edge function (never touches the `ask` capture engine). The model
-   classifies agent vs vendor; Nick can flip that before saving. Agents land in `agents`
+   The model classifies agent vs vendor; Nick can flip that before saving. Agents land in `agents`
    (brokerage + contact in extra); vendors land in `contacts` (kind='vendor', email/phone columns +
    company/role/website in extra). Reuses resolveOrCreateAgent / resolveOrCreateVendor so nobody
-   duplicates. */
-var CARD_DATA = null, CARD_BUSY = false;
-function cardPick() { var f = document.getElementById('card-file'); if (f) { f.value = ''; f.click(); } }
-async function cardImport(files) {
-  if (CARD_BUSY) return;
-  files = Array.prototype.slice.call(files || []).filter(function (f) { return f && /^image\//.test(f.type || ''); }).slice(0, 2);
-  if (!files.length) return;
-  var box = document.getElementById('card-box'); if (!box) return;
-  if (!navigator.onLine) { box.innerHTML = '<div class="hint">Reading a card needs a connection.</div>'; return; }
-  CARD_BUSY = true;
-  box.innerHTML = '<div class="hint">Reading the card…</div>';
-  var imgs = [];
-  for (var i = 0; i < files.length; i++) { var d = await imgToDataURL(files[i]); if (d) imgs.push(d); }
-  if (!imgs.length) { CARD_BUSY = false; box.innerHTML = '<div class="hint">Could not read that image — try again.</div>'; return; }
-  var r = await withTimeout(sb.functions.invoke('card-extract', { body: { images: imgs } }), 40000, { error: { message: 'timed out — check your connection' } });
-  CARD_BUSY = false;
-  if (r.error || !r.data || r.data.error) { box.innerHTML = '<div class="hint">Could not read that — ' + esc((r.data && r.data.error) || (r.error && r.error.message) || 'try again') + '.</div>'; return; }
-  var c = r.data.card || {};
-  if (!c.name && !c.company) { box.innerHTML = '<div class="hint">That doesn\'t look like a business card — no name found. Try a clearer photo.</div>'; return; }
-  CARD_DATA = { kind: (c.kind === 'agent' ? 'agent' : 'vendor'), name: c.name || '', company: c.company || '', title: c.title || '', phone: c.phone || '', email: c.email || '', website: c.website || '' };
-  logEvent('system', null, 'card.read', 'Business card read: ' + (CARD_DATA.name || CARD_DATA.company));
-  cardRender();
-}
+   duplicates.
+   SIMPLIFIED (2026-07-23): used to be its own button + its own network call straight to the
+   `card-extract` edge function (cardPick/cardImport, both removed). Now omniRoutePhotos (above) reads
+   the classification from photo-intake and populates CARD_DATA directly, then calls cardRender()
+   below — same review/save UI as before, just reached automatically instead of via a dedicated button. */
+var CARD_DATA = null;
 function cardSetKind(k) { if (CARD_DATA) { CARD_DATA.kind = k; cardRender(); } }
 function cardRender() {
   var box = document.getElementById('card-box'); if (!box || !CARD_DATA) return;
