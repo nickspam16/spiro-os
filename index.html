@@ -321,6 +321,9 @@
           <button class="refresh" id="more-menu-btn" onclick="event.stopPropagation();toggleMoreMenu()" title="More" style="border:1px solid var(--line);border-radius:var(--radius);width:38px;height:38px;">&#8942;</button>
           <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
             <a href="javascript:void(0)" onclick="menuGoAgents()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Agents <span id="more-menu-agents-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Re-engage <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">People <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
@@ -471,7 +474,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.103.0';
+var APP_VERSION = 'v5.103.2';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -532,6 +535,24 @@ function menuShowStats() {
   closeMoreMenu();
   var s = document.getElementById('stats');
   if (s) { s.style.display = 'flex'; s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
+function menuGoReengage() {
+  closeMoreMenu();
+  setTab('reengage');
+  var el = document.getElementById('records-card');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function menuGoMarket() {
+  closeMoreMenu();
+  setTab('market');
+  var el = document.getElementById('records-card');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function menuGoPeople() {
+  closeMoreMenu();
+  setTab('people');
+  var el = document.getElementById('records-card');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function menuShowIntel() {
   closeMoreMenu();
@@ -807,6 +828,12 @@ function render() {
   renderStats(); renderPulse(); renderQueue(); renderIntel(); renderCoverage(); renderShareLinks(); renderCaptures(); renderTabs(); renderBrowse(); renderActivity(); renderSyncAge();
   var moreAgentsN = document.getElementById('more-menu-agents-n');
   if (moreAgentsN) moreAgentsN.textContent = (DATA.agents || []).length;
+  var moreReengageN = document.getElementById('more-menu-reengage-n');
+  if (moreReengageN) moreReengageN.textContent = reengageCandidateCount();
+  var moreMarketN = document.getElementById('more-menu-market-n');
+  if (moreMarketN) moreMarketN.textContent = (MARKET.events || []).length;
+  var morePeopleN = document.getElementById('more-menu-people-n');
+  if (morePeopleN) morePeopleN.textContent = (DATA.contacts || []).length;
   /* SECURITY: APP_VERSION is the full internal build changelog (client names, deal specifics,
      negotiation notes) — never render it whole on the public page. Only the leading "vX.Y.Z"
      token is public-facing; the rest stays in source for Claude/Nick's own reference. */
@@ -5381,13 +5408,15 @@ function renderActivity() {
 }
 
 /* ---------- browse ---------- */
-/* Agents (2026-07-23) intentionally left out of the visible tab strip — it's reached via the
-   "More" dropdown (menuGoAgents) instead, since Nick doesn't use it day-to-day. browseTab can
-   still be set to 'agents' (setTab still works, renderBrowse still knows how to render it) —
-   this array only controls which buttons render in the scrollable tab strip. */
+/* Agents, Re-engage, Market, and People (2026-07-23) intentionally left out of the visible tab
+   strip — they're reached via the "More" dropdown instead (menuGoAgents/menuGoReengage/
+   menuGoMarket/menuGoPeople), since Nick found them easy to miss in a scrolling tab row and
+   doesn't check them every day. browseTab can still be set to any of these (setTab still works,
+   renderBrowse still knows how to render them) — this array only controls which buttons render
+   in the scrollable tab strip. Order below (Listings, Buyers, Leads, Prospects) is Nick's
+   requested priority order — his four daily-use pipelines. */
 var TABS = [
-  ['buyers', 'Buyers'], ['offmarket', 'Leads'], ['listings', 'Listings'],
-  ['prospects', 'Prospects'], ['people', 'People'], ['reengage', 'Re-engage'], ['market', 'Market']
+  ['listings', 'Listings'], ['buyers', 'Buyers'], ['offmarket', 'Leads'], ['prospects', 'Prospects']
 ];
 /* #7: Escrows + Past sales no longer top-level tabs — they live one layer inside the Listings hub
    (Listings -> Escrows -> Past sales), reached via the sub-nav rendered by propNav(). */
@@ -6277,7 +6306,12 @@ function peopleList(q) {
   mapped.sort(function (a, b) { return b.w - a.w || String(a.c.display_name || '').localeCompare(String(b.c.display_name || '')); });
   return mapped.map(function (m) { return m.c; });
 }
-function kindLabel(k) { return k === 'entity' ? 'Trust / entity' : ''; }
+/* 2026-07-23: vendors (inspectors, contractors, lenders, escrow, photographers, stagers — kind=
+   'vendor' contacts, see resolveOrCreateVendor) already lived in People since they're contacts
+   like anyone else, but had no badge to identify them as vendors — kindLabel only recognized
+   'entity'. A vendor with no deal linked yet (personRoles doesn't scan transactions.extra.vendors)
+   showed up as a bare name with "No linked records yet", easy to mistake for a stray contact. */
+function kindLabel(k) { return k === 'entity' ? 'Trust / entity' : k === 'vendor' ? 'Vendor' : ''; }
 function peopleHtml(q) {
   if (!(DATA.contacts || []).length) return '<div class="empty">No people yet. As buyers, sellers, and past clients flow in, everyone you’ve worked with shows up here — one card per person, with their whole history.</div>';
   var rows = peopleList(q);
