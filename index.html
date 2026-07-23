@@ -71,6 +71,20 @@
   h1{font-family:var(--serif);font-size:30px;font-weight:500;color:var(--green);margin:0}
   .sub{color:var(--muted);font-size:14.5px;font-weight:300;margin:0 0 22px;line-height:1.55}
 
+  /* Header polish (2026-07-23): the theme/refresh icon buttons used to float as two disconnected
+     squares next to the ornate brand mark — grouped into one bordered segment so the header reads
+     as a single cohesive masthead instead of logo + two loose utility buttons. */
+  .hdr-actions{display:flex;align-items:stretch;flex:none;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .hdr-actions .refresh{border:none;border-radius:0;padding:9px 12px}
+  .hdr-actions .refresh + .refresh{border-left:1px solid var(--line)}
+  /* The date and "synced N min ago" used to be two stacked lines glued together with a negative
+     margin hack — now one row, sync status trailing after a middot, so it reads as one fact
+     ("Wed Jul 22 · synced just now") instead of two competing lines of gray text. */
+  .today-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:0;margin:0 0 18px}
+  .today-row .sub{margin:0}
+  #sync-age{font-size:12px;opacity:.75}
+  #sync-age:not(:empty)::before{content:"\00b7";margin:0 8px}
+
   /* Aesthetic sweep (2026-07-22, "Option B"): Spiro's serif/hunter-green/warm-paper identity stays,
      but sections are now elevated bordered rounded cards (not flat borderless blocks) — the fix for
      "everything reads the same, no clear boundaries" on the launchpad + edit screens. No drop shadows;
@@ -116,7 +130,7 @@
   .pill.warn{background:var(--warn-soft);border-color:#E0D3AE;color:var(--warn)}
   .pill.hot{background:var(--clay-soft);border-color:#E1C6BC;color:var(--clay)}
 
-  .stat-row{display:flex;gap:0;flex-wrap:nowrap;margin-bottom:44px}
+  .stat-row{display:flex;gap:0;flex-wrap:nowrap;margin-bottom:30px}
   .stat{flex:1;min-width:0;background:none;border:0;border-radius:0;padding:0 4px;text-align:left;cursor:pointer;transition:opacity .12s}
   .stat:hover{opacity:.7}
   .stat .num{font-family:var(--serif);font-weight:500;font-size:32px;color:var(--green);line-height:1}
@@ -192,6 +206,17 @@
   .omni-mic.rec{border-color:var(--clay);color:var(--clay);background:var(--clay-soft)}
   .omni-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
   .omni-actions .hint{margin:0}
+  /* Quick-action row fix (2026-07-23): button.quiet is width:100% globally (needed for the full-width
+     "I already have a sign-in link" style buttons on the auth screens) — inside this flex row that
+     forced every secondary action onto its own full-width line, so "Ask instead / Save for later /
+     MLS email / Business card" read as four stacked links instead of one row of quick actions. Scoped
+     override here: auto width + a bordered chip look (matching the .qbtn idiom used everywhere else
+     in the app), grouped into a visual pair + pair with a hairline divider between the "about this
+     note" actions and the "import a photo" actions.  "File it" keeps its own full-width hero row above. */
+  .omni-actions-sub{margin-top:10px;align-items:center}
+  .omni-actions-sub button.quiet{width:auto;flex:none;padding:8px 14px;margin:0;border:1px solid var(--line);border-radius:var(--radius);font-size:12.5px;font-weight:400;color:var(--muted);background:none}
+  .omni-actions-sub button.quiet:hover{border-color:var(--green);color:var(--green);background:var(--green-soft)}
+  .omni-actions-sub .chip-sep{align-self:stretch}
   .portal-pick{margin:2px 0 12px;padding:2px 0 2px 12px;border-left:2px solid var(--line)}
   .portal-pick .qi{padding:8px 0}
   .seg-row{display:flex;gap:16px;margin:2px 0 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -284,13 +309,14 @@
         <img class="mono" src="assets/ns-logo.svg" alt="Spiro OS">
         <div class="wm"><div class="nm">Spiro OS</div><div class="tag">Private Workspace</div></div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="hdr-actions">
         <button class="refresh" id="theme-btn" onclick="toggleSpiroTheme()" title="Night mode">&#9681;</button>
         <button class="refresh" onclick="loadAll(true)" title="Refresh">&#8635;</button>
       </div>
     </div>
-    <p class="sub" id="today-line"></p>
-    <div class="sub" id="sync-age" style="font-size:11px;margin:-8px 0 8px;opacity:.7;"></div>
+    <div class="today-row">
+      <span class="sub" id="today-line"></span><span class="sub" id="sync-age"></span>
+    </div>
 
     <!-- #10: one search box for the whole OS. Type any address or name -> jump to the record if it
          exists, or add it if it doesn't. -->
@@ -316,8 +342,11 @@
       </div>
       <div class="omni-actions">
         <button class="primary" id="omni-go" onclick="omniGo()">File it</button>
+      </div>
+      <div class="omni-actions omni-actions-sub">
         <button class="quiet" id="omni-alt" onclick="omniGoAlt()">Ask instead</button>
         <button class="quiet" onclick="omniSave()" title="Hold it for the 6:30 AM sweep">Save for later</button>
+        <span class="chip-sep"></span>
         <button class="quiet" onclick="mlsPick()" title="Import an MLS email screenshot — pull the listings and match them to your buyers">&#128231; MLS email</button>
         <button class="quiet" onclick="cardPick()" title="Snap a business card — Spiro reads it and files the agent or vendor for you">&#128199; Business card</button>
         <span class="hint" id="omni-mode" style="align-self:center;"></span>
@@ -415,7 +444,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.99.0';
+var APP_VERSION = 'v5.100.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
