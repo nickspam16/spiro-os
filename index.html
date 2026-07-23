@@ -505,7 +505,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.107.0';
+var APP_VERSION = 'v5.108.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2294,14 +2294,35 @@ async function removePropertyPhoto(photoId, propertyId, elId) {
    signed URLs on tap (so opening a record does not sign URLs for galleries you never look at). */
 function propertyPhotosSection(propertyId) {
   if (!propertyId) return '';
-  var gid = 'pgal-' + propertyId, fid = 'pfile-' + propertyId;
+  var gid = 'pgal-' + propertyId;
   var n = propertyPhotoRows(propertyId).length;
-  return '<div class="flabel" style="margin-top:12px;">Photos' + (n ? ' (' + n + ')' : '') + '</div>'
+  /* 2026-07-23: the "Add photos" trigger moved up to topActionsHtml, right next to Edit — Nick
+     flagged this card as too crowded, and having an upload button buried mid-card while ANOTHER
+     one lived at the very top made it worse. This section is now gallery-display only; if there's
+     nothing uploaded yet it renders nothing at all (no dead "no photos" placeholder mid-card). */
+  if (!n) return '';
+  return '<div class="flabel" style="margin-top:12px;">Photos (' + n + ')</div>'
     + '<div onclick="event.stopPropagation();">'
-    + '<input type="file" id="' + fid + '" accept="image/*" multiple style="display:none;" onchange="pickPropertyPhotos(\'' + propertyId + '\',\'' + gid + '\',this)">'
-    + '<button class="qbtn done" onclick="event.stopPropagation();document.getElementById(\'' + fid + '\').click()">Add photos</button>'
-    + ' <span class="hint">Stored privately in Spiro OS.</span>'
-    + '<div id="' + gid + '" style="margin-top:8px;">' + (n ? '<button class="qbtn" onclick="event.stopPropagation();renderPropertyGallery(\'' + propertyId + '\',\'' + gid + '\')">Show ' + n + ' photo' + (n > 1 ? 's' : '') + '</button>' : '') + '</div>'
+    + '<div id="' + gid + '" style="margin-top:8px;"><button class="qbtn" onclick="event.stopPropagation();renderPropertyGallery(\'' + propertyId + '\',\'' + gid + '\')">Show ' + n + ' photo' + (n > 1 ? 's' : '') + '</button></div>'
+    + '</div>';
+}
+/* Top-of-card actions (2026-07-23): Edit used to be the very last thing on a long expanded row —
+   easy to miss without scrolling past everything else. Add-photos lived mid-card as its own
+   section, separate from Edit, even though editing a record and adding its photos are the same
+   "update this record" impulse. Both now sit together, right under the summary line, before any
+   of the record's own sections (Agents/Buyers/Portal/etc.) — the two actions you reach for first. */
+function topActionsHtml(table, id) {
+  var rec = recOf(table, id);
+  var pid = rec && rec.property_id;
+  var photoBtn = '';
+  if (pid && (table === 'offmarket' || table === 'listings' || table === 'transactions')) {
+    var fid = 'pfile-top-' + pid, gid = 'pgal-' + pid;
+    photoBtn = '<input type="file" id="' + fid + '" accept="image/*" multiple style="display:none;" onchange="event.stopPropagation();pickPropertyPhotos(\'' + pid + '\',\'' + gid + '\',this)">'
+      + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'' + fid + '\').click()">Add photos</button>';
+  }
+  return '<div style="margin:8px 0 4px;display:flex;gap:8px;flex-wrap:wrap;">'
+    + '<button class="qbtn done" onclick="event.stopPropagation();openEdit(\'' + esc(table) + '\',\'' + esc(String(id)) + '\')">Edit</button>'
+    + photoBtn
     + '</div>';
 }
 
@@ -3238,7 +3259,7 @@ function recordExtras(table, id) {
       h += secToggleHtml(bsid, bsug.count + ' suggested match' + (bsug.count === 1 ? '' : 'es')) + secBodyOpen(bsid) + bsug.html + '</div>';
     }
     h += buyerPortalHtml(sid);
-    more += buyerCriteriaHtml(sid) + shareBuyerHtml(sid); /* Showings + Timeline deliberately dropped from the buyer card per Nick's call — not useful there */
+    more += buyerCriteriaHtml(sid); /* Showings + Timeline deliberately dropped from the buyer card per Nick's call — not useful there; sharing now lives in the Share Links panel */
   }
   if (table === 'offmarket') {
     h += listAgentHtml(sid) + leadBuyersHtml(sid);
@@ -3317,8 +3338,13 @@ function recordExtras(table, id) {
    this proves useful. Property links redirect to the real marketing site when one is on file
    (offmarket.extra.marketing_url); otherwise, and always for list/buyer kinds, they render a
    simple Spiro-hosted landing page. Buyer pages never include the buyer's name or contact info. */
-var SHARE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/share';
-function shareUrl(slug) { return SHARE_FN + '?slug=' + encodeURIComponent(slug); }
+var SHARE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/share'; // raw edge function — still what actually serves every share page under the hood
+/* 2026-07-23: nickspiro.com/s/:slug now rewrites (Netlify _redirects, on the nickspiro-portal
+   repo) straight through to SHARE_FN — confirmed live and byte-identical by Nick. Every new share
+   link generates against the clean domain from here on; existing already-sent Supabase-URL links
+   keep working too (same edge function, just reached the long way — nothing to migrate). */
+var SHARE_BASE = 'https://nickspiro.com/s/';
+function shareUrl(slug) { return SHARE_BASE + encodeURIComponent(slug); }
 function genShareSlug() {
   var chars = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/O/1/l/i — easier to read back over the phone
   var arr = new Uint8Array(14);
@@ -3343,27 +3369,24 @@ function shareLinkResultHtml(slug) {
     + '<button class="qbtn" onclick="copyShareLink(' + "'" + esc(url) + "'" + ')">Copy link</button></div>';
 }
 
-/* -- single property share (from an offmarket record's expanded row) --
-   Your `notes` field never reaches an outside agent — it's your private working notes (who a
-   listing is earmarked for, negotiation color, candid asides). Only extra.share_blurb, an
-   explicit opt-in field you write here specifically for sharing, is ever shown externally. */
+/* -- share SETTINGS for an off-market listing (2026-07-23: no longer where you actually send a
+   link from — that moved to the centralized "Share Links" panel, reached via the "⋮" dropdown,
+   since a recipient-picker + generate buttons on every single card was the crowding Nick flagged).
+   This stays on the card because it's per-listing metadata you set rarely, not an action you take
+   each time you share: what shows on the public page if/when this listing IS shared. Your `notes`
+   field never reaches an outside agent — it's private working notes. Only extra.share_blurb, an
+   explicit opt-in field, is ever shown externally. */
 function shareOffmarketHtml(sid) {
   var o = recOf('offmarket', sid); if (!o) return '';
   var mUrl = (o.extra && o.extra.marketing_url) || '';
   var blurb = (o.extra && o.extra.share_blurb) || '';
   var hideAddr = !!(o.extra && o.extra.share_hide_address);
   var facts = [o.beds ? o.beds + ' bd' : '', o.baths ? o.baths + ' ba' : '', o.sqft ? Number(o.sqft) ? Number(o.sqft).toLocaleString() + ' sqft' : o.sqft + ' sqft' : '', o.lot_sqft ? (Number(o.lot_sqft) ? Number(o.lot_sqft).toLocaleString() : o.lot_sqft) + ' sqft lot' : ''].filter(Boolean).join(' · ');
-  var h = '<div class="flabel" style="margin-top:12px;">Share this listing</div>';
-  h += '<div class="hint" style="margin-bottom:6px;">Bare minimum by default — no buyer/seller names, no private notes, ever. Beds/baths/sqft/lot always show when on file' + (facts ? '' : ' (none entered yet — add via Edit above)') + '; you choose whether the address shows.</div>';
+  var h = '<div class="flabel" style="margin-top:12px;">Public page settings <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; used if you share this from the Share Links panel</span></div>';
   if (facts) h += '<div class="hint" style="margin-bottom:6px;"><b>Will share:</b> ' + esc(facts) + '</div>';
   h += '<button class="qbtn" onclick="event.stopPropagation();toggleShareHideAddress(\'' + esc(sid) + '\')">' + (hideAddr ? 'Address hidden — tap to show' : 'Address will show — tap to hide') + '</button> ';
   h += '<button class="qbtn" onclick="event.stopPropagation();editShareBlurb(\'' + esc(sid) + '\')">' + (blurb ? 'Edit public description' : '&#65291; Add public description (optional)') + '</button> ';
   h += '<button class="qbtn" onclick="event.stopPropagation();editMarketingUrl(\'' + esc(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
-  h += '<div class="hint" style="margin:6px 0;">' + (blurb ? '&#10003; Public description on file' : 'No public description — page will show just facts/photos/price') + (mUrl ? ' &middot; marketing site on file' : '') + '</div>';
-  h += shareRecipientPickerHtml(shareRecipientKey('offmarket', sid), rankAgentsForListing(o));
-  h += '<button class="qbtn done" onclick="event.stopPropagation();shareOffmarketOne(\'' + esc(sid) + '\',\'site\')"' + (mUrl ? '' : ' disabled title="Add a marketing link first"') + '>Share via marketing site</button> ';
-  h += '<button class="qbtn" onclick="event.stopPropagation();shareOffmarketOne(\'' + esc(sid) + '\',\'spiro\')">Share as Spiro page</button>';
-  h += '<div id="share-om-' + esc(sid) + '"></div>';
   return h;
 }
 function editMarketingUrl(sid) {
@@ -3388,99 +3411,230 @@ function toggleShareHideAddress(sid) {
   o.extra.share_hide_address = !o.extra.share_hide_address;
   sb.from('offmarket').update({ extra: o.extra }).eq('id', sid).then(function () { toast(o.extra.share_hide_address ? 'Address will be hidden on shared pages' : 'Address will show on shared pages'); renderBrowse(); });
 }
-async function shareOffmarketOne(sid, mode) {
-  var o = recOf('offmarket', sid); if (!o) return;
-  var mUrl = (o.extra && o.extra.marketing_url) || '';
-  var key = shareRecipientKey('offmarket', sid);
-  var recipientId = SHARE_RECIPIENT[key] || null;
-  var fields = { kind: 'property', offmarket_id: sid, label: o.address_area || 'Off-market listing' };
-  if (recipientId) fields.recipient_agent_id = recipientId;
-  if (mode === 'site') { if (!mUrl) { toast('No marketing link on file yet'); return; } fields.target_url = mUrl; }
-  var link = await createShareLink(fields);
-  if (!link) return;
-  var el = document.getElementById('share-om-' + sid);
-  if (el) el.innerHTML = shareLinkResultHtml(link.slug);
-  var recipLabel = recipientId ? (' to ' + (recLabel('agents', recipientId) || 'an agent')) : '';
-  logEvent('offmarket', sid, 'share.created', 'Share link created (' + mode + ')' + recipLabel + ' for ' + (o.address_area || 'listing'));
-  if (recipientId) logEvent('agents', recipientId, 'share.sent', (o.address_area || 'A listing') + ' shared with them');
-  delete SHARE_RECIPIENT[key];
-}
+/* ===== Centralized "New Share" flow (2026-07-23) =====
+   Replaces the old per-card recipient-picker + generate buttons (on every offmarket/buyer row)
+   AND the old "Build a share list" select-mode over the offmarket tab. Nick's ask: one place,
+   reached from the "⋮" dropdown's Share Links panel — pick who it's for, then what you're
+   sharing (a buyer's criteria vs. properties), then (for properties) filter by My Listings vs.
+   Off Market, then pick the item(s) and generate. Cards themselves keep only their own share
+   SETTINGS (public description/marketing link/address visibility — see shareOffmarketHtml above),
+   not the act of sending a link. */
+var NEW_SHARE = null;
+var newShareFilterTimer = null;
 
-/* -- buyer criteria share (from a buyer record's expanded row) -- never includes name/contact -- */
-function shareBuyerHtml(sid) {
-  var b = recOf('buyers', sid);
-  var h = '<div class="flabel" style="margin-top:12px;">Share this buyer&rsquo;s criteria</div>';
-  h += '<div class="hint" style="margin-bottom:6px;">Shares budget, areas, must-haves, and timeline only — never the buyer&rsquo;s name or contact info.</div>';
-  h += shareRecipientPickerHtml(shareRecipientKey('buyers', sid), b ? rankAgentsForBuyerNeed(b) : []);
-  h += '<button class="qbtn done" onclick="event.stopPropagation();shareBuyerOne(' + "'" + esc(sid) + "'" + ')">Generate share link</button>';
-  h += '<div id="share-buyer-' + esc(sid) + '"></div>';
+function openNewShare() {
+  NEW_SHARE = { step: 'recipient', recipientId: '', contentType: null, propFilter: 'offmarket', activeOnly: true, q: '', selected: {} };
+  renderShareLinks();
+}
+function cancelNewShare() { NEW_SHARE = null; renderShareLinks(); }
+function newShareBackTo(step) { if (!NEW_SHARE) return; NEW_SHARE.step = step; renderShareLinks(); }
+
+/* No item is chosen yet at the recipient step, so suggestions here are general reputation/
+   reciprocity signals (same signals rankAgentsForListing uses) rather than item-fit — once an
+   agent's picked, the item list in step 3 re-sorts by actual fit against THAT agent. */
+function rankAgentsGeneral() {
+  var out = [];
+  (DATA.agents || []).forEach(function (a) {
+    if (a.archived) return;
+    var e = a.extra || {}, score = 0, reasons = [];
+    var role = e.role || '';
+    if (/CEO|principal/i.test(role)) { score += 2; reasons.push('CEO/principal'); }
+    else if (/top producer/i.test(role)) { score += 2; reasons.push('top producer'); }
+    var tags = e.tags || [];
+    if (tags.indexOf('high volume') >= 0) { score += 2; reasons.push('does a lot of business'); }
+    if (tags.indexOf('loyal') >= 0) { score += 1; reasons.push('loyal'); }
+    var deals = (DATA.agent_deals || []).filter(function (d) { return String(d.agent_id) === String(a.id); });
+    if (deals.length) { score += Math.min(3, deals.length); reasons.push(deals.length + ' deal' + (deals.length === 1 ? '' : 's') + ' together'); }
+    out.push({ agent: a, score: score, reasons: reasons, cautions: [] });
+  });
+  return out.sort(function (x, y) { return y.score - x.score; });
+}
+function newSharePickRecipient(id) {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.recipientId = id; NEW_SHARE.step = 'type';
+  renderShareLinks();
+}
+function newShareSkipRecipient() {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.recipientId = ''; NEW_SHARE.step = 'type';
+  renderShareLinks();
+}
+function newShareSubmitAgentSearch() {
+  var el = document.getElementById('newshare-agent-q'); if (!el) return;
+  var name = (el.value || '').trim();
+  if (!name) { toast('Type an agent name, or tap Skip for an anonymous link'); return; }
+  var hit = null; (DATA.agents || []).forEach(function (a) { if (!hit && identityKey(a.name) === identityKey(name)) hit = a; });
+  if (!hit) { toast('No agent named "' + name + '" on file — add them under Agents first'); return; }
+  newSharePickRecipient(String(hit.id));
+}
+function newShareRecipientStepHtml() {
+  var h = '<div class="flabel">Who is this for?</div>';
+  var suggested = rankAgentsGeneral().filter(function (r) { return r.score > 0; }).slice(0, 5);
+  if (suggested.length) {
+    h += '<div class="chip-row" style="margin:6px 0;">' + suggested.map(function (r) {
+      return '<span class="chip" title="' + esc(r.reasons.slice(0, 2).join(' · ')) + '" onclick="newSharePickRecipient(\'' + esc(String(r.agent.id)) + '\')">' + esc(r.agent.name || r.agent.email || 'Agent') + '</span>';
+    }).join(' ') + '</div>';
+  }
+  var dlid = 'dl_newshare_agent';
+  h += '<input type="text" id="newshare-agent-q" list="' + dlid + '" autocomplete="off" placeholder="Or search any agent…" style="width:70%;max-width:300px;">';
+  h += '<datalist id="' + dlid + '">' + (DATA.agents || []).map(function (a) { return '<option value="' + esc(a.name || '') + '">' + esc(a.brokerage || '') + '</option>'; }).join('') + '</datalist>';
+  h += '<div style="margin-top:8px;"><button class="qbtn done" onclick="newShareSubmitAgentSearch()">Use this agent</button> '
+    + '<button class="qbtn" onclick="newShareSkipRecipient()">Skip — anonymous link</button> '
+    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
   return h;
 }
-async function shareBuyerOne(sid) {
-  var b = recOf('buyers', sid); if (!b) return;
-  var label = prompt('Label for this buyer profile (agents will see this as the page title):', 'Buyer looking in ' + (b.areas || 'the area'));
-  if (label === null) return;
-  var key = shareRecipientKey('buyers', sid);
-  var recipientId = SHARE_RECIPIENT[key] || null;
-  var fields = { kind: 'buyer', buyer_id: sid, label: label || 'Buyer profile' };
-  if (recipientId) fields.recipient_agent_id = recipientId;
-  var link = await createShareLink(fields);
-  if (!link) return;
-  var el = document.getElementById('share-buyer-' + sid);
-  if (el) el.innerHTML = shareLinkResultHtml(link.slug);
-  var recipLabel = recipientId ? (' with ' + (recLabel('agents', recipientId) || 'an agent')) : '';
-  logEvent('buyers', sid, 'share.created', 'Share link created for buyer profile' + recipLabel);
-  if (recipientId) logEvent('agents', recipientId, 'share.sent', 'Buyer criteria shared with them' + (label ? ': ' + label : ''));
-  delete SHARE_RECIPIENT[key];
+
+function newShareSetType(t) {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.contentType = t; NEW_SHARE.step = 'items'; NEW_SHARE.selected = {}; NEW_SHARE.q = '';
+  renderShareLinks();
+}
+function newShareTypeStepHtml() {
+  var recipLabel = NEW_SHARE.recipientId ? (recLabel('agents', NEW_SHARE.recipientId) || 'this agent') : 'anonymous link (no specific agent)';
+  var h = '<div class="hint" style="margin-bottom:8px;">For: <b>' + esc(recipLabel) + '</b> &middot; <span style="cursor:pointer;color:#8a6d3b;" onclick="newShareBackTo(\'recipient\')">change</span></div>';
+  h += '<div class="flabel">What are you sharing?</div>';
+  h += '<div class="chip-row" style="margin-top:6px;">'
+    + '<span class="chip" onclick="newShareSetType(\'buyers\')">A buyer&rsquo;s criteria</span> '
+    + '<span class="chip" onclick="newShareSetType(\'properties\')">Properties</span></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+  return h;
 }
 
-/* -- curated multi-property list share: a lightweight select-mode over the offmarket tab -- */
-var shareListMode = false;
-var shareListSelected = {};
-function toggleShareListMode() {
-  shareListMode = !shareListMode;
-  if (!shareListMode) { shareListSelected = {}; delete SHARE_RECIPIENT[shareRecipientKey('sharelist', 'current')]; }
-  renderBrowse();
+function newShareSetSearch(v) { if (!NEW_SHARE) return; NEW_SHARE.q = v; renderNewShareItemsOnly(); }
+function newShareFilterInput() {
+  if (newShareFilterTimer) clearTimeout(newShareFilterTimer);
+  newShareFilterTimer = setTimeout(function () {
+    var el = document.getElementById('newshare-q');
+    newShareSetSearch(el ? el.value : '');
+  }, 130);
 }
-function toggleShareListItem(id) {
+function newShareSetPropFilter(f) {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.propFilter = f; NEW_SHARE.selected = {}; NEW_SHARE.q = '';
+  renderShareLinks();
+}
+function newShareToggleActiveOnly() {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.activeOnly = !NEW_SHARE.activeOnly;
+  renderShareLinks();
+}
+function newSharePickBuyer(id) {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.selected = {}; NEW_SHARE.selected[String(id)] = true; /* single-select — one buyer per share */
+  renderNewShareItemsOnly();
+}
+function newShareToggleItem(id, multi) {
+  if (!NEW_SHARE) return;
   id = String(id);
-  if (shareListSelected[id]) delete shareListSelected[id]; else shareListSelected[id] = true;
-  renderBrowse();
+  if (multi) { if (NEW_SHARE.selected[id]) delete NEW_SHARE.selected[id]; else NEW_SHARE.selected[id] = true; }
+  else { NEW_SHARE.selected = NEW_SHARE.selected[id] ? {} : (function () { var o = {}; o[id] = true; return o; })(); }
+  renderNewShareItemsOnly();
 }
-function shareListCheckbox(id) {
-  if (!shareListMode) return '';
-  var checked = shareListSelected[String(id)] ? ' checked' : '';
-  return '<label style="margin-left:8px;font-weight:400;" onclick="event.stopPropagation();"><input type="checkbox"' + checked + ' onchange="toggleShareListItem(' + "'" + esc(String(id)) + "'" + ')"> select</label>';
+function newShareBuyerRowsHtml() {
+  var q = (NEW_SHARE.q || '').toLowerCase();
+  var rows = (DATA.buyers || []).filter(function (b) { return !q || (String(b.name || '') + ' ' + String(b.areas || '')).toLowerCase().indexOf(q) !== -1; });
+  if (NEW_SHARE.recipientId) {
+    var scored = {};
+    rows.forEach(function (b) {
+      var mine = rankAgentsForBuyerNeed(b).filter(function (r) { return String(r.agent.id) === String(NEW_SHARE.recipientId); })[0];
+      scored[b.id] = mine ? mine.score : -999;
+    });
+    rows = rows.slice().sort(function (a, b) { return (scored[b.id] || 0) - (scored[a.id] || 0); });
+  }
+  var h = !rows.length ? '<div class="empty">No buyers match.</div>' : rows.slice(0, 30).map(function (b) {
+    var on = !!NEW_SHARE.selected[String(b.id)];
+    return '<div class="qi" style="cursor:pointer;" onclick="newSharePickBuyer(\'' + esc(String(b.id)) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(b.name || 'Buyer') + '</div><div class="t2">' + esc([b.budget_min, b.budget_max].filter(Boolean).join('–')) + (b.areas ? ' · ' + esc(b.areas) : '') + '</div></div></div>';
+  }).join('');
+  var n = Object.keys(NEW_SHARE.selected).length;
+  return h + '<div style="margin-top:8px;"><button class="qbtn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
+    + '<button class="qbtn done" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link</button> '
+    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
 }
-function shareListBannerHtml() {
-  if (!shareListMode) return '<div style="margin-bottom:10px;"><button class="qbtn" onclick="toggleShareListMode()">&#128279; Build a share list</button></div>';
-  var n = Object.keys(shareListSelected).length;
-  var h = '<div class="card" style="margin-bottom:10px;padding:10px 14px;">'
-    + '<div class="hint" style="margin-bottom:6px;">Check properties below, then generate one trackable link covering all of them.</div>';
-  if (n) h += shareRecipientPickerHtml(shareRecipientKey('sharelist', 'current'), rankAgentsForList(Object.keys(shareListSelected)));
-  h += '<button class="qbtn done" onclick="generateShareList()"' + (n ? '' : ' disabled') + '>Generate link (' + n + ' selected)</button> '
-    + '<button class="qbtn" onclick="toggleShareListMode()">Cancel</button>'
-    + '<div id="share-list-result"></div>'
-    + '</div>';
+function newSharePropertyRowsHtml() {
+  var q = (NEW_SHARE.q || '').toLowerCase();
+  var table = NEW_SHARE.propFilter === 'mine' ? 'listings' : 'offmarket';
+  var rows = (DATA[table] || []).slice();
+  /* Active only, default on for My Listings — sharing a Pending/Sold listing to prospect an agent
+     doesn't make sense; Off Market leads don't have this status concept so the toggle only shows
+     there. */
+  if (NEW_SHARE.propFilter === 'mine' && NEW_SHARE.activeOnly) rows = rows.filter(function (x) { return ['Active', 'Coming Soon'].indexOf(x.status) !== -1; });
+  if (q) rows = rows.filter(function (x) { return String(x.address || x.address_area || '').toLowerCase().indexOf(q) !== -1; });
+  if (NEW_SHARE.recipientId) {
+    var scored = {};
+    rows.forEach(function (x) {
+      var mine = rankAgentsForListing(x).filter(function (r) { return String(r.agent.id) === String(NEW_SHARE.recipientId); })[0];
+      scored[x.id] = mine ? mine.score : -999;
+    });
+    rows = rows.slice().sort(function (a, b) { return (scored[b.id] || 0) - (scored[a.id] || 0); });
+  } else {
+    rows = rows.slice().sort(function (a, b) { return new Date(b.created_at || 0) - new Date(a.created_at || 0); });
+  }
+  var multi = NEW_SHARE.propFilter === 'offmarket'; /* on-market listings: single-select only — no multi-listing share kind yet */
+  var h = !rows.length ? '<div class="empty">Nothing matches.</div>' : rows.slice(0, 40).map(function (x) {
+    var on = !!NEW_SHARE.selected[String(x.id)];
+    var addr = x.address || x.address_area || 'Property';
+    return '<div class="qi" style="cursor:pointer;" onclick="newShareToggleItem(\'' + esc(String(x.id)) + '\',' + multi + ')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(addr) + '</div><div class="t2">' + esc([x.price, x.status].filter(Boolean).join(' · ')) + '</div></div></div>';
+  }).join('');
+  var n = Object.keys(NEW_SHARE.selected).length;
+  return h + '<div style="margin-top:8px;"><button class="qbtn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
+    + '<button class="qbtn done" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link' + (n > 1 ? ' (' + n + ')' : '') + '</button> '
+    + '<button class="qbtn" onclick="cancelNewShare()">Cancel</button></div>';
+}
+function renderNewShareItemsOnly() {
+  var el = document.getElementById('newshare-items');
+  if (!el || !NEW_SHARE) return;
+  el.innerHTML = NEW_SHARE.contentType === 'buyers' ? newShareBuyerRowsHtml() : newSharePropertyRowsHtml();
+}
+function newShareItemsStepHtml() {
+  var recipLabel = NEW_SHARE.recipientId ? (recLabel('agents', NEW_SHARE.recipientId) || 'this agent') : 'anonymous link';
+  var h = '<div class="hint" style="margin-bottom:8px;">For: <b>' + esc(recipLabel) + '</b></div>';
+  if (NEW_SHARE.contentType === 'properties') {
+    h += '<div class="chip-row" style="margin-bottom:6px;">'
+      + '<span class="filter-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'mine' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'mine\')">My Listings</span> '
+      + '<span class="filter-chip" style="cursor:pointer;' + (NEW_SHARE.propFilter === 'offmarket' ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="newShareSetPropFilter(\'offmarket\')">Off Market</span>'
+      + (NEW_SHARE.propFilter === 'mine' ? ' <label style="margin-left:8px;font-weight:400;"><input type="checkbox"' + (NEW_SHARE.activeOnly ? ' checked' : '') + ' onchange="newShareToggleActiveOnly()"> active only</label>' : '')
+      + '</div>';
+  }
+  h += '<input type="text" id="newshare-q" placeholder="' + (NEW_SHARE.contentType === 'buyers' ? 'Search buyers…' : 'Search address…') + '" value="' + esc(NEW_SHARE.q || '') + '" oninput="newShareFilterInput()" style="width:100%;box-sizing:border-box;margin-bottom:8px;">';
+  h += '<div id="newshare-items">' + (NEW_SHARE.contentType === 'buyers' ? newShareBuyerRowsHtml() : newSharePropertyRowsHtml()) + '</div>';
   return h;
 }
-async function generateShareList() {
-  var ids = Object.keys(shareListSelected);
+
+async function newShareGenerate() {
+  if (!NEW_SHARE) return;
+  var ids = Object.keys(NEW_SHARE.selected);
   if (!ids.length) return;
-  var label = prompt('Label for this list (agents will see this as the page title):', 'A few off-market ideas');
-  if (label === null) return;
-  var key = shareRecipientKey('sharelist', 'current');
-  var recipientId = SHARE_RECIPIENT[key] || null;
-  var fields = { kind: 'list', offmarket_ids: ids, label: label || 'Off-market properties' };
+  var recipientId = NEW_SHARE.recipientId || null;
+  var fields, logTable, logId, logLabel;
+  if (NEW_SHARE.contentType === 'buyers') {
+    var b = recOf('buyers', ids[0]); if (!b) return;
+    var blabel = prompt('Label for this buyer profile (agents will see this as the page title):', 'Buyer looking in ' + (b.areas || 'the area'));
+    if (blabel === null) return;
+    fields = { kind: 'buyer', buyer_id: ids[0], label: blabel || 'Buyer profile' };
+    logTable = 'buyers'; logId = ids[0]; logLabel = 'Share link created for buyer profile';
+  } else if (NEW_SHARE.propFilter === 'mine') {
+    var ls = recOf('listings', ids[0]); if (!ls) return;
+    fields = { kind: 'listing', listing_id: ids[0], label: ls.address || 'Listing' };
+    logTable = 'listings'; logId = ids[0]; logLabel = 'Share link created for ' + (ls.address || 'listing');
+  } else if (ids.length === 1) {
+    var o = recOf('offmarket', ids[0]); if (!o) return;
+    fields = { kind: 'property', offmarket_id: ids[0], label: o.address_area || 'Off-market listing' };
+    logTable = 'offmarket'; logId = ids[0]; logLabel = 'Share link created for ' + (o.address_area || 'listing');
+  } else {
+    var llabel = prompt('Label for this list (agents will see this as the page title):', 'A few off-market ideas');
+    if (llabel === null) return;
+    fields = { kind: 'list', offmarket_ids: ids, label: llabel || 'Off-market properties' };
+    logTable = null; logLabel = 'Share list created: ' + (llabel || '') + ' (' + ids.length + ' properties)';
+  }
   if (recipientId) fields.recipient_agent_id = recipientId;
   var link = await createShareLink(fields);
   if (!link) return;
-  var el = document.getElementById('share-list-result');
-  if (el) el.innerHTML = shareLinkResultHtml(link.slug);
-  var recipLabel = recipientId ? (' with ' + (recLabel('agents', recipientId) || 'an agent')) : '';
-  logEvent('share_links', link.id, 'share.created', 'Share list created' + recipLabel + ': ' + (label || '') + ' (' + ids.length + ' properties)');
-  if (recipientId) logEvent('agents', recipientId, 'share.sent', 'Shared a list of ' + ids.length + ' propert' + (ids.length === 1 ? 'y' : 'ies') + ' with them');
-  delete SHARE_RECIPIENT[key];
+  var recipLabel = recipientId ? (' ' + (NEW_SHARE.contentType === 'buyers' ? 'with' : 'to') + ' ' + (recLabel('agents', recipientId) || 'an agent')) : '';
+  logEvent(logTable || 'share_links', logTable ? logId : link.id, 'share.created', logLabel + recipLabel);
+  if (recipientId) logEvent('agents', recipientId, 'share.sent', logLabel.replace(/^Share (link created( for)?|list created:)\s*/, '') + ' shared with them');
+  NEW_SHARE = null;
+  renderShareLinks();
+  toast('Share link created ✓');
 }
 
 /* -- Share Links dashboard: every link ever generated, its open count, and a one-tap revoke.
@@ -3515,12 +3669,16 @@ function agentSharesHtml(aid) {
 function renderShareLinks() {
   var el = document.getElementById('share-links-body');
   if (!el) return;
+  var wizardHtml = !NEW_SHARE ? ('<button class="qbtn done" style="margin-bottom:10px;" onclick="event.stopPropagation();openNewShare()">&#65291; New Share</button>')
+    : ('<div style="margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:var(--radius);">'
+      + (NEW_SHARE.step === 'recipient' ? newShareRecipientStepHtml() : NEW_SHARE.step === 'type' ? newShareTypeStepHtml() : newShareItemsStepHtml())
+      + '</div>');
   var links = (DATA.share_links || []).slice();
-  if (!links.length) { el.innerHTML = '<div class="empty">No share links created yet — generate one from any off-market listing or buyer\'s expanded row.</div>'; return; }
+  if (!links.length) { el.innerHTML = wizardHtml + '<div class="empty">No share links created yet — generate one above.</div>'; return; }
   var viewCounts = {};
   (DATA.share_link_views || []).forEach(function (v) { viewCounts[v.link_id] = (viewCounts[v.link_id] || 0) + 1; });
-  var kindLabel = { property: 'Listing', list: 'List', buyer: 'Buyer criteria' };
-  el.innerHTML = links.map(function (l) {
+  var kindLabel = { property: 'Off-market listing', listing: 'My listing', list: 'List', buyer: 'Buyer criteria' };
+  var linksHtml = links.map(function (l) {
     var views = viewCounts[l.id] || 0;
     var when = l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
     var revoked = !!l.archived;
@@ -3535,6 +3693,7 @@ function renderShareLinks() {
       + '<button class="qbtn" style="margin-left:6px;" onclick="event.stopPropagation();archiveShareLink(\'' + esc(l.id) + '\',' + (revoked ? 'false' : 'true') + ')">' + (revoked ? 'Restore' : 'Revoke') + '</button></div>'
       + '</div>';
   }).join('');
+  el.innerHTML = wizardHtml + linksHtml;
 }
 async function archiveShareLink(id, archived) {
   var r = await sb.from('share_links').update({ archived: archived }).eq('id', id);
@@ -5212,38 +5371,6 @@ function rankAgentsForList(ids) {
   });
   return Object.keys(scores).map(function (k) { return scores[k]; }).sort(function (x, y) { return y.score - x.score; });
 }
-/* Recipient picker: which agent (if any) a given share is going to. Keyed per share context so
-   the offmarket/buyer/list flows don't clobber each other. '' / unset = anonymous link, exactly
-   today's existing behavior — picking a recipient is additive, nothing breaks if skipped. */
-var SHARE_RECIPIENT = {};
-function shareRecipientKey(table, id) { return table + ':' + id; }
-function setShareRecipient(key, aid) { SHARE_RECIPIENT[key] = aid || ''; renderBrowse(); }
-function shareRecipientPickerHtml(key, ranked) {
-  var curId = SHARE_RECIPIENT[key] || '';
-  var cur = curId ? agentRec(curId) : null;
-  var h = '<div class="flabel" style="margin-top:10px;">Send to a specific agent <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; optional, same info shows either way</span></div>';
-  if (cur) {
-    h += '<div class="hint" style="margin-bottom:6px;">Sharing with <b>' + esc(cur.name || 'this agent') + '</b>'
-      + (cur.brokerage ? ' &middot; ' + esc(cur.brokerage) : '') + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();setShareRecipient(\'' + esc(key) + '\',\'\')">&#10005; clear</span></div>';
-  } else {
-    var top = (ranked || []).filter(function (r) { return r.score > 0; }).slice(0, 3);
-    if (top.length) {
-      h += '<div class="chip-row" style="margin-bottom:6px;">' + top.map(function (r) {
-        return '<span class="chip" title="' + esc(r.reasons.slice(0, 2).join(' · ')) + '" onclick="event.stopPropagation();setShareRecipient(\'' + esc(key) + '\',\'' + esc(String(r.agent.id)) + '\')">' + esc(r.agent.name || r.agent.email || 'Agent') + '</span>';
-      }).join(' ') + '</div>';
-    }
-    var dlid = 'dl_share_' + key.replace(/[^a-z0-9]/gi, '_');
-    h += '<input type="text" list="' + dlid + '" autocomplete="off" placeholder="Or search any agent…" onclick="event.stopPropagation();" onchange="event.stopPropagation();shareRecipientPick(\'' + esc(key) + '\',this)" style="width:65%;max-width:280px;">';
-    h += '<datalist id="' + dlid + '">' + (DATA.agents || []).map(function (a) { return '<option value="' + esc(a.name || '') + '">' + esc(a.brokerage || '') + '</option>'; }).join('') + '</datalist>';
-  }
-  return h;
-}
-function shareRecipientPick(key, el) {
-  var name = (el.value || '').trim(); if (!name) return;
-  var hit = null; (DATA.agents || []).forEach(function (a) { if (!hit && identityKey(a.name) === identityKey(name)) hit = a; });
-  if (!hit) { toast('No agent named "' + name + '" on file — add them under Agents first'); el.value = ''; return; }
-  setShareRecipient(key, String(hit.id));
-}
 /* ===== Chunk C (overnight): pricing-preview workflow on a listing. Pick suggested agents ->
    draft a copyable invite Nick SENDS himself (never auto-send, button-triggered-email rule) ->
    mark invited. Tracking writes to listing_preview_agents IF present; guarded to no-op until that
@@ -5791,7 +5918,6 @@ function reopenSections() {
   });
 }
 function rowHtml(nm, side, sub, det, hot, id, actions) {
-  var editBtn = '<div style="margin-top:8px;"><button class="qbtn" onclick="event.stopPropagation();openEdit(' + "'" + rowTable + "','" + id + "'" + ')">Edit</button></div>';
   var cov = '';
   if ((rowTable === 'offmarket' || rowTable === 'listings') && photoLinksAt) {
     var pl = PHOTOLINKS[portalRef(rowTable, String(id))];
@@ -5800,7 +5926,7 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
   return '<div class="row" data-rid="' + esc(String(id)) + '" onclick="toggleRow(this)">' + cov
     + '<div class="r1"><span class="nm">' + esc(nm) + (hot ? ' <span class="pill hot">HOT</span>' : '') + '</span><span class="rside">' + esc(side || '') + (actions || '') + '</span></div>'
     + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
-    + '<div class="det">' + (det ? esc(det) : '') + recordExtras(browseTab, id) + editBtn + '</div>'
+    + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(browseTab, id) + '</div>'
     + '</div>';
 }
 /* ---------- Prospect triage: pursue / pass / review, with quick filters + propensity sort ---------- */
@@ -7262,11 +7388,10 @@ function renderBrowse() {
       det = [x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
-    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? triageButtons(x) : (rowTable === 'buyers' ? buyerVipBtn(x) : (rowTable === 'offmarket' ? shareListCheckbox(x.id) : '')));
+    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? triageButtons(x) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
   }).join('');
   var dupBanner = (browseTab === 'offmarket' || browseTab === 'prospects' || rowTable === 'listings') ? duplicatesBannerHtml() : '';
-  var shareBanner = (browseTab === 'offmarket') ? shareListBannerHtml() : '';
-  document.getElementById('browse').innerHTML = shareBanner + dupBanner + chip + (h || '<div class="empty">Nothing here.</div>');
+  document.getElementById('browse').innerHTML = dupBanner + chip + (h || '<div class="empty">Nothing here.</div>');
   reopenRows();
   reopenSections();
 }
