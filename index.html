@@ -591,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.132.0';
+var APP_VERSION = 'v5.135.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -717,6 +717,66 @@ function menuShowCalendarSuggestions() { openPanel('calendar-suggestions-card');
    marks the suggestion confirmed; dismiss just marks it dismissed. Neither ever happens
    automatically — see the big comment on the edge function for why matching stays a suggestion. */
 function calendarSuggestionById(id) { var s = null; (DATA.calendar_suggestions || []).forEach(function (x) { if (String(x.id) === String(id)) s = x; }); return s; }
+function calSugMatchLabel(s) {
+  if (s.matched_transaction_id) { var t = recOf('transactions', s.matched_transaction_id); return 'Transaction: ' + esc(t ? (t.address + (t.client_name ? ' — ' + t.client_name : '')) : 'Unknown transaction'); }
+  if (s.matched_listing_id) return 'Listing: ' + esc(recLabel('listings', s.matched_listing_id) || 'Unknown listing');
+  if (s.matched_buyer_id) return 'Buyer: ' + esc(recLabel('buyers', s.matched_buyer_id) || 'Unknown buyer');
+  return 'No match';
+}
+/* "Change match" inline editor (2026-07-24, per Nick) -- the sync's auto-match is sometimes just
+   wrong (a loose address/name overlap picking the wrong buyer), and there's a real case it can
+   never get right at all: a showing for a buyer who is deliberately NOT in the CRM (a HNW client
+   kept off-system by request) that nonetheless has a real transactions row once it closes. Before
+   this, the only options on a pending suggestion were confirm-as-matched or dismiss — no way to
+   correct or redirect the match. This adds a third match target (transaction, alongside the
+   existing listing/buyer) and a lightweight inline picker to switch any of the three, including to
+   "No match" (still confirmable — just files the showing under its raw location text). */
+var calSugEditing = null;   /* id of the suggestion currently showing its inline editor, or null */
+var calSugEditType = {};    /* id -> 'listing'|'buyer'|'transaction'|'none', while mid-edit (before Save) */
+function toggleCalSugEdit(id) {
+  id = String(id);
+  if (calSugEditing === id) { calSugEditing = null; delete calSugEditType[id]; }
+  else { calSugEditing = id; var s = calendarSuggestionById(id); calSugEditType[id] = s ? calSugMatchTypeOf(s) : 'none'; }
+  renderCalendarSuggestionsCard();
+}
+function calSugMatchTypeOf(s) {
+  if (s.matched_transaction_id) return 'transaction';
+  if (s.matched_listing_id) return 'listing';
+  if (s.matched_buyer_id) return 'buyer';
+  return 'none';
+}
+function calSugTypeChanged(id, val) { calSugEditType[String(id)] = val; renderCalendarSuggestionsCard(); }
+function calSugEditHtml(s) {
+  var id = String(s.id), type = calSugEditType[id] || calSugMatchTypeOf(s);
+  var typeLabels = { none: 'No match', listing: 'Listing', buyer: 'Buyer', transaction: 'Transaction' };
+  var typeOpts = ['none', 'listing', 'buyer', 'transaction'].map(function (t) {
+    return '<option value="' + t + '"' + (t === type ? ' selected' : '') + '>' + typeLabels[t] + '</option>';
+  }).join('');
+  var recOpts = '', curId = type === 'listing' ? s.matched_listing_id : type === 'buyer' ? s.matched_buyer_id : type === 'transaction' ? s.matched_transaction_id : null;
+  if (type === 'listing') recOpts = pickerOptions(DATA.listings || []);
+  else if (type === 'buyer') recOpts = pickerOptions(DATA.buyers || [], 'name');
+  else if (type === 'transaction') recOpts = pickerOptions(DATA.transactions || [], 'address');
+  return '<div class="field-group" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">'
+    + '<div class="field-row"><select onchange="calSugTypeChanged(\'' + esc(id) + '\',this.value)">' + typeOpts + '</select></div>'
+    + (type !== 'none' ? '<div class="field-row"><select id="calsug-rec-' + esc(id) + '">' + recOpts + '</select></div>' : '')
+    + '<button class="qbtn done" onclick="saveCalSugMatch(\'' + esc(id) + '\')">Save match</button></div>';
+}
+async function saveCalSugMatch(id) {
+  var s = calendarSuggestionById(id); if (!s) return;
+  var type = calSugEditType[id] || 'none';
+  var recSel = document.getElementById('calsug-rec-' + id);
+  var recId = (type !== 'none' && recSel) ? recSel.value : null;
+  var patch = { matched_listing_id: null, matched_buyer_id: null, matched_transaction_id: null, match_confidence: 'manual' };
+  if (type === 'listing') patch.matched_listing_id = recId;
+  else if (type === 'buyer') patch.matched_buyer_id = recId;
+  else if (type === 'transaction') patch.matched_transaction_id = recId;
+  var r = await sb.from('calendar_suggestions').update(patch).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  s.matched_listing_id = patch.matched_listing_id; s.matched_buyer_id = patch.matched_buyer_id;
+  s.matched_transaction_id = patch.matched_transaction_id; s.match_confidence = 'manual';
+  calSugEditing = null; delete calSugEditType[id];
+  toast('Match updated ✓'); renderCalendarSuggestionsCard();
+}
 function renderCalendarSuggestionsCard() {
   var el = document.getElementById('calendar-suggestions-body'); if (!el) return;
   var pending = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending'; })
@@ -746,15 +806,19 @@ function renderCalendarSuggestionsCard() {
   }
   if (pending.length) {
     h += '<div class="flabel">New candidate showings</div>' + pending.map(function (s) {
-      var matchLabel = s.matched_listing_id ? ('Listing: ' + esc(recLabel('listings', s.matched_listing_id) || 'Unknown listing'))
-        : s.matched_buyer_id ? ('Buyer: ' + esc(recLabel('buyers', s.matched_buyer_id) || 'Unknown buyer')) : 'No match';
-      var confBadge = s.match_confidence === 'high' ? '<span class="pill ok">likely match</span>' : '<span class="pill warn">loose match — check</span>';
+      var matchLabel = calSugMatchLabel(s);
+      var confBadge = s.match_confidence === 'high' ? '<span class="pill ok">likely match</span>'
+        : s.match_confidence === 'manual' ? '<span class="pill">set manually</span>'
+        : '<span class="pill warn">loose match — check</span>';
       var typeBadge = s.event_type === 'open_house' ? ' <span class="pill">open house</span>' : '';
+      var sid = esc(String(s.id));
       return '<div class="qi"><div class="txt"><div class="t1">' + esc(s.title || 'Calendar event') + '</div>'
         + '<div class="t2">' + esc(whenShort(s.start_ts)) + (s.location ? ' · ' + esc(s.location) : '') + '</div>'
         + '<div class="t2">' + matchLabel + ' ' + confBadge + typeBadge + '</div></div>'
-        + '<button class="qbtn done" onclick="event.stopPropagation();confirmCalendarSuggestion(\'' + esc(String(s.id)) + '\')">&#10003; Confirm</button>'
-        + '<button class="qbtn" onclick="event.stopPropagation();dismissCalendarSuggestion(\'' + esc(String(s.id)) + '\')">Not a showing</button></div>';
+        + '<button class="qbtn done" onclick="event.stopPropagation();confirmCalendarSuggestion(\'' + sid + '\')">&#10003; Confirm</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();dismissCalendarSuggestion(\'' + sid + '\')">Not a showing</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();toggleCalSugEdit(\'' + sid + '\')">' + (calSugEditing === String(s.id) ? 'Cancel' : 'Change match') + '</button>'
+        + (calSugEditing === String(s.id) ? calSugEditHtml(s) : '') + '</div>';
     }).join('');
   }
   el.innerHTML = h;
@@ -779,14 +843,22 @@ async function confirmCalendarSuggestion(id) {
     return;
   }
 
+  /* Transaction match (2026-07-24): a showing tied to a closed/in-progress deal rather than a buyer
+     or listing record — the case that needs this is a buyer who is deliberately not in the CRM (a
+     HNW client kept off-system) but has a real transactions row. showings has no transaction_id
+     column, so this ties at the property level (same property_id the transaction itself uses) and
+     leaves buyer_id null; property_ref/notes carry the transaction's address + client_name so the
+     link reads clearly even without a literal FK. */
+  var txn = s.matched_transaction_id ? recOf('transactions', s.matched_transaction_id) : null;
+
   if (!confirmPastConflict(s.start_ts, null)) return;
   var row = {
-    property_id: lst ? lst.property_id : null,
-    property_ref: lst ? lst.address : (s.location || s.title || 'Showing'),
-    buyer_id: s.matched_buyer_id || null,
+    property_id: lst ? lst.property_id : (txn ? txn.property_id : null),
+    property_ref: lst ? lst.address : (txn ? txn.address : (s.location || s.title || 'Showing')),
+    buyer_id: (!txn) ? (s.matched_buyer_id || null) : null,
     showing_ts: s.start_ts,
     status: 'scheduled',
-    notes: s.title || null
+    notes: [s.title, txn ? ('Tied to transaction: ' + txn.address + (txn.client_name ? ' — ' + txn.client_name : '')) : null].filter(Boolean).join(' — ')
   };
   var r = await sb.from('showings').insert(row).select('*');
   if (r.error) { toast('Could not save — try again'); return; }
@@ -795,7 +867,7 @@ async function confirmCalendarSuggestion(id) {
   var r2 = await sb.from('calendar_suggestions').update({ status: 'confirmed', linked_showing_id: newShowing ? newShowing.id : null }).eq('id', id).select('id');
   if (r2.error) { toast('Showing added, but couldn’t clear the suggestion — try again'); }
   s.status = 'confirmed'; s.linked_showing_id = newShowing ? newShowing.id : null;
-  logEvent(lst ? 'listings' : 'buyers', lst ? lst.id : s.matched_buyer_id, 'showing.scheduled', 'Showing confirmed from calendar: ' + (s.title || row.property_ref));
+  logEvent(txn ? 'transactions' : (lst ? 'listings' : 'buyers'), txn ? txn.id : (lst ? lst.id : s.matched_buyer_id), 'showing.scheduled', 'Showing confirmed from calendar: ' + (s.title || row.property_ref));
   if (newShowing) await scheduleShowingFollowup(newShowing);
   toast('Showing added ✓'); render();
 }
@@ -4030,6 +4102,7 @@ function recordExtras(table, id) {
       var t = triageOf(px);
       var badge = t === 'pursue' ? '<span class="pill ok">Pursuing</span>' : t === 'pass' ? '<span class="pill">Passed</span>' : '<span class="pill warn">To review</span>';
       h += '<div class="flabel" style="margin-top:10px;">Your call &nbsp;' + badge + '</div><div class="triage-actions">' + triageButtons(px) + '</div>';
+      h += propensityWhyHtml(px);
       h += '<div class="flabel" style="margin-top:12px;">Outreach <span class="hint" style="font-weight:400;text-transform:none;">&mdash; mail-first, nothing sends</span></div>';
       h += '<button class="qbtn" onclick="event.stopPropagation();draftLetter(' + "'" + esc(sid) + "'" + ')">Draft a letter</button>';
       var ox = (px.extra && px.extra.outreach) || {};
@@ -7111,7 +7184,7 @@ async function fetchMarket(force) {
   try {
     var res = await Promise.all([
       sb.from('monitor_config').select('neighborhood,luxury_floor,high_dollar_sale_floor,active').eq('active', true),
-      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id').order('event_date', { ascending: false }).limit(80),
+      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id,flagged_buyer_ids').order('event_date', { ascending: false }).limit(80),
       sb.from('market_snapshots').select('snapshot_date,neighborhood,active_count,median_list_price,months_of_inventory').order('snapshot_date', { ascending: false }).limit(30)
     ]);
     if (!res[0].error) MARKET.config = res[0].data || [];
@@ -7128,18 +7201,31 @@ function fmtMoney(n) { return n == null ? '' : '$' + Number(n).toLocaleString('e
    (review_status='pending') group together up top so Nick can parse the day's new events in one
    pass; dismissed/flagged ones collapse into a lighter "Already reviewed" section below, kept
    around (not deleted) so a dismiss or a flag is undoable. */
+function marketEventFlaggedIds(e) {
+  /* Multi-buyer flag (2026-07-24, per Nick: "wanted to add one property to both Pauline and Owen").
+     flagged_buyer_ids is the live array field; flagged_buyer_id is the older single-value column,
+     kept only as a fallback for any row that predates the migration/backfill. */
+  if (e.flagged_buyer_ids && e.flagged_buyer_ids.length) return e.flagged_buyer_ids;
+  return e.flagged_buyer_id ? [e.flagged_buyer_id] : [];
+}
 function marketEventLine(e) {
   var facts = [e.neighborhood, fmtDate(e.event_date), fmtMoney(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ');
-  var actions = '';
-  if (e.review_status === 'pending') {
+  var actions = '', pending = e.review_status === 'pending';
+  if (pending) {
     actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + esc(e.id) + '\')">&times; Not interesting</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Flag for buyer</button>';
   } else if (e.review_status === 'dismissed') {
     actions = '<span class="hint">Dismissed</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
   } else if (e.review_status === 'flagged') {
-    actions = '<span class="hint">Flagged for ' + esc(recLabel('buyers', e.flagged_buyer_id) || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
+    var flagNames = marketEventFlaggedIds(e).map(function (bid) { return recLabel('buyers', bid) || 'a buyer'; });
+    actions = '<span class="hint">Flagged for ' + esc(flagNames.join(', ') || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>'
+      + ' <button class="qbtn" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Edit</button>';
   }
-  return '<div class="qi"><div class="txt"><div class="t1">' + esc((e.event_type || '') + ' · ' + (e.address || e.neighborhood || '')) + '</div>'
+  /* Swipe (2026-07-24, per Nick, "like on an iPhone"): pending rows only -- mkt-swipe class + data-id
+     is what the delegated touch handler (bindMarketSwipe(), defined near renderMarketReview) looks
+     for. Swipe right-to-left = dismiss, left-to-right = open the buyer-flag picker; buttons stay as
+     the non-touch/discoverable fallback, swipe is additive not a replacement. */
+  return '<div class="qi' + (pending ? ' mkt-swipe' : '') + '"' + (pending ? ' data-id="' + esc(String(e.id)) + '" data-pending="1"' : '') + '><div class="txt"><div class="t1">' + esc((e.event_type || '') + ' · ' + (e.address || e.neighborhood || '')) + '</div>'
     + '<div class="t2">' + esc(facts) + '</div><div style="margin-top:6px;">' + actions + '</div></div></div>';
 }
 async function dismissMarketEvent(id) {
@@ -7150,38 +7236,92 @@ async function dismissMarketEvent(id) {
   renderMarketReview(); toast('Dismissed');
 }
 async function undoMarketEventReview(id) {
-  var r = await sb.from('market_events').update({ review_status: 'pending', flagged_buyer_id: null, reviewed_at: null }).eq('id', id).select('id');
+  var r = await sb.from('market_events').update({ review_status: 'pending', flagged_buyer_id: null, flagged_buyer_ids: [], reviewed_at: null }).eq('id', id).select('id');
   if (r.error) { toast('Could not undo'); return; }
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
-  if (e) { e.review_status = 'pending'; e.flagged_buyer_id = null; }
+  if (e) { e.review_status = 'pending'; e.flagged_buyer_id = null; e.flagged_buyer_ids = []; }
   renderMarketReview(); toast('Back to needs-review');
 }
 var flagMarketEventId = null;
+/* Multi-buyer flag (2026-07-24, per Nick: "wanted to add one property to both Pauline and Owen") --
+   checkboxes instead of a single <select>, pre-checked with whoever's already flagged so re-opening
+   via "Edit" shows the current state rather than starting blank. */
 function openFlagMarketEvent(id) {
   flagMarketEventId = id;
   var body = document.getElementById('market-body'); if (!body) return;
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
+  var already = {}; (e ? marketEventFlaggedIds(e) : []).forEach(function (bid) { already[String(bid)] = true; });
   var opts = (DATA.buyers || []).slice().sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); })
-    .map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>'; }).join('');
+    .map(function (b) {
+      var checked = already[String(b.id)] ? ' checked' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14.5px;"><input type="checkbox" class="market-flag-buyer-cb" value="' + esc(b.id) + '"' + checked + '> ' + esc(b.name) + '</label>';
+    }).join('');
   var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
-    + '<div class="flabel">Flag for which buyer? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
-    + '<select id="market-flag-buyer" style="margin-top:8px;"><option value="">Pick a buyer…</option>' + opts + '</select>'
+    + '<div class="flabel">Flag for which buyer(s)? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— pick as many as apply; tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
+    + '<div style="margin-top:6px;max-height:260px;overflow-y:auto;">' + opts + '</div>'
     + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="renderMarketReview()">Cancel</button></div>'
     + '</div>';
   body.insertAdjacentHTML('afterbegin', pickerHtml);
-  document.getElementById('market-flag-buyer').focus();
 }
 async function confirmFlagMarketEvent() {
-  var sel = document.getElementById('market-flag-buyer');
-  var buyerId = sel ? sel.value : '';
-  if (!buyerId) { toast('Pick a buyer first'); return; }
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.market-flag-buyer-cb:checked'));
+  var buyerIds = boxes.map(function (cb) { return cb.value; });
+  if (!buyerIds.length) { toast('Pick at least one buyer'); return; }
   var id = flagMarketEventId;
-  var r = await sb.from('market_events').update({ review_status: 'flagged', flagged_buyer_id: buyerId, reviewed_at: nowStamp() }).eq('id', id).select('id');
+  var r = await sb.from('market_events').update({ review_status: 'flagged', flagged_buyer_id: buyerIds[0], flagged_buyer_ids: buyerIds, reviewed_at: nowStamp() }).eq('id', id).select('id');
   if (r.error) { toast('Could not flag'); return; }
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
-  if (e) { e.review_status = 'flagged'; e.flagged_buyer_id = buyerId; }
+  if (e) { e.review_status = 'flagged'; e.flagged_buyer_id = buyerIds[0]; e.flagged_buyer_ids = buyerIds; }
   flagMarketEventId = null;
-  renderMarketReview(); toast('Flagged for ' + (recLabel('buyers', buyerId) || 'buyer'));
+  var names = buyerIds.map(function (bid) { return recLabel('buyers', bid) || 'buyer'; }).join(', ');
+  renderMarketReview(); toast('Flagged for ' + names);
 }
+/* Swipe-to-triage on the Market panel (2026-07-24, per Nick: "swipe from right to left like on an
+   iPhone to show disinterest, swipe left to right opens buyer match dropdown"). Delegated touch
+   listeners on the stable #market-body container -- its children get replaced wholesale by
+   innerHTML on every render, so per-row listeners would go stale the moment a row re-renders;
+   delegation on the parent survives that. Only .mkt-swipe rows (pending review_status) engage.
+   Direction locks to horizontal only after the drag clearly commits one way or the other, so a
+   vertical scroll through the list is never hijacked as an accidental swipe. */
+(function bindMarketSwipe() {
+  var body = document.getElementById('market-body');
+  if (!body) return;
+  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null, id = null;
+  function findRow(el) {
+    while (el && el !== body) { if (el.classList && el.classList.contains('mkt-swipe')) return el; el = el.parentNode; }
+    return null;
+  }
+  function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
+  body.addEventListener('touchstart', function (e) {
+    var r = findRow(e.target); if (!r || r.getAttribute('data-pending') !== '1') return;
+    var t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r; id = r.getAttribute('data-id');
+    row.style.transition = 'none';
+  }, { passive: true });
+  body.addEventListener('touchmove', function (e) {
+    if (!dragging || !row) return;
+    var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
+    if (!horiz) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dx) <= Math.abs(dy)) { dragging = false; row.style.transition = ''; row = null; return; } /* vertical scroll intent — let it through untouched */
+      horiz = true;
+    }
+    e.preventDefault();
+    row.style.transform = 'translateX(' + dx + 'px)';
+    row.style.backgroundColor = dx > 0 ? 'rgba(70,130,80,.14)' : dx < 0 ? 'rgba(170,70,60,.14)' : '';
+  }, { passive: false });
+  function finish() {
+    if (!dragging || !row) { dragging = false; return; }
+    dragging = false;
+    var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
+    var r = row, rid = id; row = null; id = null;
+    reset(r);
+    if (dx >= THRESH) openFlagMarketEvent(rid);
+    else if (dx <= -THRESH) dismissMarketEvent(rid);
+  }
+  body.addEventListener('touchend', finish, { passive: true });
+  body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
+})();
 function renderMarketReview() {
   var body = document.getElementById('market-body'); if (!body) return;
   var events = MARKET.events || [];
@@ -7395,12 +7535,100 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
     + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(browseTab, id) + '</div>'
     + '</div>';
 }
+/* Leads grouped by neighborhood (2026-07-24) -- see the call site in renderBrowse() for the why.
+   Reuses centroidsIn() (same matcher propPoint()/buyer-area matching already use) so a lead's
+   neighborhood is inferred from its address_area text, longest/most-specific centroid name wins
+   when more than one appears (e.g. "Bird Streets" over a broader containing area). Group open/closed
+   state rides the same openSections/toggleSec() mechanism as per-record sub-sections, prefixed
+   'leadgrp-' so the two never collide. */
+function leadNeighborhood(x) {
+  var hits = centroidsIn(x.address_area);
+  if (!hits.length) return 'Other';
+  hits.sort(function (a, b) { return b.name.length - a.name.length; });
+  return hits[0].name;
+}
+function renderLeadsGrouped(rows, q, chip, dupBanner) {
+  var groups = {};
+  rows.forEach(function (x) {
+    var nm = x.address_area, side = money(x.price), hot = x.priority === 'Hot';
+    var sub = [x.source, x.follow_up_date ? 'follow up ' + fmtDate(x.follow_up_date) : ''].filter(Boolean).join(' · ');
+    var det = x.notes || '';
+    if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return;
+    var g = leadNeighborhood(x);
+    (groups[g] = groups[g] || []).push(rowHtml(nm, side, sub, det, hot, x.id, ''));
+  });
+  var names = Object.keys(groups).sort(function (a, b) {
+    if (a === 'Other') return 1; if (b === 'Other') return -1; return a.localeCompare(b);
+  });
+  var body = document.getElementById('browse');
+  if (!names.length) { body.innerHTML = dupBanner + chip + '<div class="empty">Nothing here.</div>'; return; }
+  var forceOpen = !!q; /* auto-expand every matching group while actively searching, so results aren't hidden behind a click */
+  var h = names.map(function (nm) {
+    var id = 'leadgrp-' + nm.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    var open = forceOpen || !!openSections[id];
+    if (open) openSections[id] = true;
+    return '<div class="hint" style="cursor:pointer;margin:14px 0 4px;font-weight:600;font-size:13.5px;letter-spacing:.02em;user-select:none;" onclick="toggleSec(\'' + id + '\')">'
+      + '<span id="' + id + '-c">' + (open ? '&#9662;' : '&#9656;') + '</span> ' + esc(nm) + ' <span style="font-weight:400;color:var(--muted);">(' + groups[nm].length + ')</span></div>'
+      + '<div id="' + id + '" style="display:' + (open ? 'block' : 'none') + ';">' + groups[nm].join('') + '</div>';
+  }).join('');
+  body.innerHTML = dupBanner + chip + h;
+  reopenRows();
+}
 /* ---------- Prospect triage: pursue / pass / review, with quick filters + propensity sort ---------- */
 var prospectSeg = 'new';                 /* 'new' (to review) | 'pursue' | 'pass' */
 var prospectFilters = { probate: false, absentee: false, clean: false, walk: false, underbuilt: false, Hot: false, Warm: false, Cold: false };
 function triageOf(x) { return (x.extra && x.extra.triage) || 'new'; }
 function propScore(x) { var e = x.extra || {}; return Number(e.sell_propensity || 0); }
 function propValue(x) { var e = x.extra || {}; return Number(e.est_value || 0); }
+/* Propensity display (2026-07-24, "AI ADOPT #2" per the roadmap -- a thin consume-the-score
+   wrapper, since the scores themselves are vendor-provided by Tracerfy's lead_lookup, not a model
+   Spiro OS trains). extra.propensity holds all five dimensions Tracerfy returns per lead (sell,
+   refi, roof/hvac/solar renovate), each {score, category, factors[]} -- written by an interactive
+   Tracerfy lookup (session-run; the enrich edge fn's tracerfy_skiptrace adapter is the staged
+   automation path for later, per the roadmap's existing design note).
+
+   Revised 2026-07-24 per a three-lens pass (client lens: a five-number dump makes you compute the
+   decision yourself every time; UX lens: no visible "not yet scored" state; CTO lens: reuse the
+   existing collapsible pattern rather than inventing a new one). Split into two pieces instead of
+   one always-visible line:
+   - sellerSignalBadgeHtml() -- one glanceable pill on the row itself, decision-ready label
+     ("Strong seller signal" / "Possible seller" / "Likely staying — low priority" / "Low seller
+     signal" / "Not yet scored"), colored to match the existing Hot/Warm/Cold pill vocabulary.
+     Built off Tracerfy's OWN category buckets (High/Medium/Low) rather than reinventing thresholds
+     -- one exception: a Low sell score paired with a Medium/High refi score flips the label to
+     "Likely staying", since high-refi-low-sell is a real negative signal (cash-out to stay, not
+     to sell) that a bare sell number alone would miss.
+   - propensityWhyHtml() (in recordExtras(), prospects block) -- the full five-dimension detail and
+     top reasons per dimension, behind the same tap-to-expand secToggleHtml()/toggleSec() pattern
+     already used everywhere else in this app. No new UI paradigm, just reused. */
+function sellerSignalInfo(e) {
+  var p = e.propensity;
+  if (!p || !p.sell) return { label: 'Not yet scored', cls: '' };
+  var sellCat = p.sell.category, refiCat = p.refi ? p.refi.category : null;
+  if (sellCat === 'High') return { label: 'Strong seller signal', cls: 'hot' };
+  if (sellCat === 'Medium') return { label: 'Possible seller', cls: 'warn' };
+  if (refiCat === 'High' || refiCat === 'Medium') return { label: 'Likely staying — low priority', cls: '' };
+  return { label: 'Low seller signal', cls: '' };
+}
+function sellerSignalBadgeHtml(e) {
+  var info = sellerSignalInfo(e);
+  return '<span class="pill' + (info.cls ? ' ' + info.cls : '') + '">' + esc(info.label) + '</span>';
+}
+function propensityWhyHtml(px) {
+  var e = px.extra || {}, p = e.propensity; if (!p) return '';
+  var dims = [['sell', 'Sell'], ['refi', 'Refi'], ['roof', 'Roof'], ['hvac', 'HVAC'], ['solar', 'Solar']];
+  var rows = dims.map(function (d) {
+    var v = p[d[0]]; if (!v) return '';
+    var reasons = (v.factors || []).slice(0, 3).map(function (f) { return f.reason; }).filter(Boolean);
+    var catCls = v.category === 'High' ? ' hot' : v.category === 'Medium' ? ' warn' : '';
+    return '<div style="margin:8px 0;"><b>' + esc(d[1]) + ' ' + esc(String(v.score)) + '</b> <span class="pill' + catCls + '" style="margin-left:4px;">' + esc(v.category) + '</span>'
+      + (reasons.length ? '<div class="hint" style="margin-top:2px;">' + esc(reasons.join(' · ')) + '</div>' : '') + '</div>';
+  }).join('');
+  if (!rows) return '';
+  var id = 'propwhy-' + String(px.id);
+  var fetched = e.tracerfy_fetched_at ? '<div class="hint" style="margin-top:6px;">Scored ' + esc(new Date(e.tracerfy_fetched_at).toLocaleDateString()) + ' via Tracerfy</div>' : '';
+  return secToggleHtml(id, 'Why this score') + secBodyOpen(id) + rows + fetched + '</div>';
+}
 function hasCleanContact(x) {
   var c = String(x.owner_contact || '');
   return !!c && !/do not call|\[DNC|\[LITIGATOR/i.test(c);
@@ -9023,6 +9251,26 @@ function renderBrowse() {
     reopenSections();
     return;
   }
+  /* Leads, grouped by neighborhood (2026-07-24, per Nick) -- the flat list had no way to parse a
+     big lead book at a glance, and clicking through one at a time to find "what's in Bird Streets"
+     was the actual complaint. Groups collapse behind the same toggleSec()/openSections() mechanism
+     used for per-record sub-sections elsewhere, so state survives re-renders the same way. Neighborhood
+     is inferred from address_area via the existing centroidsIn() matcher (same one propPoint() and
+     buyer-area matching already use) -- Nick's own address_area convention already puts the
+     neighborhood right in the text ("9146 St. Ives Dr — Bird Streets"), so this needs no new data
+     entry. Leads with no recognized neighborhood fall into an "Other" bucket rather than being lost. */
+  if (browseTab === 'offmarket') {
+    rowTable = 'offmarket';
+    var lq = document.getElementById('browse-q').value.toLowerCase();
+    var lrows = DATA.offmarket || [];
+    var lchip = '';
+    if (browseHot) {
+      lrows = lrows.filter(function (x) { return x.priority === 'Hot'; });
+      lchip = '<div class="filter-chip" onclick="clearHot()">Hot only · ' + lrows.length + ' &times;</div>';
+    }
+    renderLeadsGrouped(lrows, lq, lchip, duplicatesBannerHtml());
+    return;
+  }
   var q = document.getElementById('browse-q').value.toLowerCase();
   var rows = DATA[browseTab] || [];
   var chip = '';
@@ -9041,10 +9289,7 @@ function renderBrowse() {
                .sort(function (a, b) { return propScore(b) - propScore(a) || propValue(b) - propValue(a); });
   }
   if (browseTab === 'buyers') { chip = buyerControls(); rows = sortBuyers(rows); }
-  if (browseHot && browseTab === 'offmarket') {
-    rows = rows.filter(function (x) { return x.priority === 'Hot'; });
-    chip = '<div class="filter-chip" onclick="clearHot()">Hot only · ' + rows.length + ' &times;</div>';
-  }
+  /* offmarket (Leads) has its own early-return branch above (renderLeadsGrouped) -- unreachable here. */
   if (rowTable === 'transactions') chip = closedDealsToLogHtml() + chip;
   var h = rows.map(function (x) {
     var nm = '', side = '', sub = '', det = '', hot = false;
@@ -9077,7 +9322,7 @@ function renderBrowse() {
       var e = x.extra || {};
       nm = x.address || x.owner_name;
       hot = x.priority === 'Hot';
-      side = [x.priority, e.sell_propensity ? e.sell_propensity + '/100' : ''].filter(Boolean).join(' · ');
+      side = x.priority || '';
       var ocFlag = (e.outreach && e.outreach.outcome) ? ({ appointment: 'appointment set', listed: 'listed', not_interested: 'not interested' })[e.outreach.outcome] : '';
       var stageFlag = ocFlag || (e.outreach && e.outreach.responded_at ? 'responded' : e.outreach && e.outreach.mailed_at ? 'mailed' : '');
       var flags = [e.via_image ? 'Found on a walk' : '', stageFlag, (e.buildable && e.buildable.underbuilt) ? 'underbuilt' : '', e.probate ? 'probate' : '', e.absentee ? 'absentee' : '', e.litigator ? 'litigator — mail only' : ''].filter(Boolean).join(' · ');
@@ -9085,7 +9330,7 @@ function renderBrowse() {
       det = [x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
-    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? triageButtons(x) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
+    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
   }).join('');
   var dupBanner = (browseTab === 'offmarket' || browseTab === 'prospects' || rowTable === 'listings') ? duplicatesBannerHtml() : '';
   document.getElementById('browse').innerHTML = dupBanner + chip + (h || '<div class="empty">Nothing here.</div>');
