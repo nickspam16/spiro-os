@@ -471,7 +471,7 @@
 
     <div class="card" id="intel-card" style="display:none;">
       <h2>Who to call <button class="hbtn" onclick="event.stopPropagation();fetchAiFocus(true)" title="AI triage: what actually matters today">&#10024;</button></h2>
-      <div id="ai-focus-body" class="hint" style="white-space:pre-wrap;display:none;margin:-6px 0 12px;border-left:2px solid var(--line);padding-left:10px;"></div>
+      <div id="ai-focus-body" class="hint" style="white-space:pre-wrap;display:none;margin:-6px 0 12px;"></div>
       <div id="intel-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
@@ -592,7 +592,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.142.0';
+var APP_VERSION = 'v5.144.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -993,7 +993,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [] };
+var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1034,6 +1034,25 @@ function toast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg; t.className = 'show';
   clearTimeout(t._h); t._h = setTimeout(function () { t.className = ''; }, 2200);
+}
+/* Undo toast (2026-07-24, swipe-to-archive) -- plain toast() is pointer-events:none (never meant
+   to be tapped); this variant carries a real tappable action, so the Undo span gets its own
+   pointer-events:auto to punch back through the parent's none. Window is longer (5.5s vs 2.2s) to
+   give a real chance to catch an accidental swipe before the server call becomes the only path
+   back (which still exists via the Archived view, but Undo should be the fast path). */
+var _toastUndoFn = null;
+function toastUndo(msg, undoFn) {
+  var t = document.getElementById('toast');
+  _toastUndoFn = undoFn;
+  t.innerHTML = esc(msg) + ' <span style="pointer-events:auto;text-decoration:underline;font-weight:600;cursor:pointer;margin-left:10px;" onclick="_runToastUndo()">Undo</span>';
+  t.className = 'show';
+  clearTimeout(t._h);
+  t._h = setTimeout(function () { t.className = ''; _toastUndoFn = null; }, 5500);
+}
+function _runToastUndo() {
+  var fn = _toastUndoFn; _toastUndoFn = null;
+  var t = document.getElementById('toast'); clearTimeout(t._h); t.className = '';
+  if (fn) fn();
 }
 function show(id) {
   ['screen-email', 'screen-code', 'screen-app', 'screen-lock'].forEach(function (s) {
@@ -1162,9 +1181,14 @@ async function loadAll(manual) {
     sb.from('share_links').select('id,slug,kind,label,offmarket_id,offmarket_ids,buyer_id,target_url,created_at,archived,recipient_agent_id,expires_at').order('created_at', { ascending: false }),
     sb.from('share_link_views').select('link_id,ts'),
     sb.from('area_aliases').select('alias,canonical_name'),
-    sb.from('calendar_suggestions').select('*').or('status.eq.pending,flag.not.is.null').order('start_ts', { ascending: true })
+    sb.from('calendar_suggestions').select('*').or('status.eq.pending,flag.not.is.null').order('start_ts', { ascending: true }),
+    /* Swipe-to-archive safety net (2026-07-24): mirrors the existing followups→graveyard pattern
+       (line above, status='archived' pulled separately) so swiped-away prospects/leads land
+       somewhere restorable in-app instead of only being reachable via a direct Supabase edit. */
+    sb.from('prospects').select('id,address,owner_name,priority,notes,archived_at,updated_at').eq('archived', true).order('archived_at', { ascending: false }).limit(200),
+    sb.from('offmarket').select('id,address_area,price,priority,notes,archived_at,updated_at').eq('archived', true).order('archived_at', { ascending: false }).limit(200)
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived'];
   var okCount = 0;
   for (var i = 0; i < res.length; i++) {
     if (!res[i].error && res[i].data) { DATA[names[i]] = res[i].data; okCount++; }
@@ -1202,6 +1226,21 @@ async function loadAll(manual) {
    item years after it actually closed. Closed deals should never generate a pending deadline. */
 var TX_CLOSED_STATUSES = { 'Sold': 1, 'Leased': 1, 'Closed': 1 };
 function txIsClosed(tx) { return !!(tx && tx.status && TX_CLOSED_STATUSES[tx.status]); }
+
+/* Single source of truth for "what's the next open deadline on this escrow" (2026-07-24, multi-
+   escrow concurrency fix). Previously this fallback logic (transaction_deadlines row if present,
+   else contingency_date/closing_date) was duplicated separately inside renderPulse() and
+   queueItems() and could drift; now both read from here. Returns null for a closed deal or one
+   with nothing upcoming -- never invents a deadline for a deal that's already done. */
+function nextEscrowDeadline(tx) {
+  if (!tx || txIsClosed(tx)) return null;
+  var set = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) === String(tx.id) && d.status !== 'done' && d.due_date; });
+  var cands = set.length
+    ? set.map(function (d) { return { kind: d.kind, due: d.due_date }; })
+    : [tx.contingency_date ? { kind: 'Contingency removal', due: tx.contingency_date } : null, tx.closing_date ? { kind: 'Closing', due: tx.closing_date } : null].filter(Boolean);
+  cands = cands.filter(function (d) { return d.due; }).sort(function (a, b) { return String(a.due).localeCompare(String(b.due)); });
+  return cands[0] || null;
+}
 
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
@@ -1259,15 +1298,26 @@ function render() {
 function renderPulse() {
   var el = document.getElementById('pulse'); if (!el) return;
   var today = todayIso(), wk = addDaysIso(today, 7), items = [];
-  /* 1) Nearest live escrow deadline within a week */
+  /* 1) Nearest live escrow deadline within a week -- across ALL active escrows, not just one.
+     BUG FIX (2026-07-24, multi-escrow concurrency): this used to collapse to a single global
+     dls[0], so with 2+ active escrows the second deal's own upcoming deadline was silently
+     invisible from this line whenever it wasn't the single most urgent across the whole
+     business. Now it still leads with the nearest one (this is a one-line pulse, not a list) but
+     names how many OTHER escrows also have something due within the week, so a second deal never
+     goes unmentioned here. */
   var dls = [];
   (DATA.transactions || []).forEach(function (tx) {
-    var set = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) === String(tx.id) && d.status !== 'done' && d.due_date; });
-    if (set.length) set.forEach(function (d) { dls.push({ addr: tx.address, kind: d.kind, due: d.due_date }); });
-    else if (!txIsClosed(tx)) { if (tx.contingency_date) dls.push({ addr: tx.address, kind: 'Contingency removal', due: tx.contingency_date }); if (tx.closing_date) dls.push({ addr: tx.address, kind: 'Closing', due: tx.closing_date }); }
+    var nd = nextEscrowDeadline(tx);
+    if (nd) dls.push({ addr: tx.address, kind: nd.kind, due: nd.due });
   });
   dls = dls.filter(function (d) { return d.due >= today; }).sort(function (a, b) { return String(a.due).localeCompare(String(b.due)); });
-  if (dls.length && dls[0].due <= wk) items.push('<b>' + esc(dls[0].kind) + '</b> ' + esc(countdownPhrase(daysUntil(dls[0].due))) + ' &middot; ' + esc(dls[0].addr || 'escrow'));
+  var dlsWk = dls.filter(function (d) { return d.due <= wk; });
+  if (dlsWk.length) {
+    var otherAddrs = {};
+    dlsWk.slice(1).forEach(function (d) { if (d.addr !== dlsWk[0].addr) otherAddrs[d.addr] = 1; });
+    var otherN = Object.keys(otherAddrs).length;
+    items.push('<b>' + esc(dlsWk[0].kind) + '</b> ' + esc(countdownPhrase(daysUntil(dlsWk[0].due))) + ' &middot; ' + esc(dlsWk[0].addr || 'escrow') + (otherN ? ' <span class="hint">(+' + otherN + ' more escrow' + (otherN === 1 ? '' : 's') + ' due this week)</span>' : ''));
+  }
   /* 2) Leads that responded and are awaiting a call-back */
   var cb = (DATA.prospects || []).filter(function (p) { var o = (p.extra && p.extra.outreach) || {}; return o.responded_at && !o.outcome; }).length;
   if (cb) items.push('<b>' + cb + '</b> lead' + (cb === 1 ? '' : 's') + ' responded &mdash; call back');
@@ -1821,7 +1871,10 @@ function itemHtml(it) {
       + '<button class="qbtn" onclick="fuSnooze(this,1)" data-id="' + it.id + '">1d</button>'
       + '<button class="qbtn" onclick="fuSnooze(this,3)" data-id="' + it.id + '">3d</button>';
   }
-  return '<div class="qi' + (it.kind === 'deadline' ? ' deadline' : '') + '">'
+  /* Swipe-to-complete (2026-07-24, Today's Focus queue, per Nick's call) -- only real followup
+     rows (kind 'fu') get it; deadline/auto items have no completion action to swipe toward. */
+  var swipeCls = it.kind === 'fu' ? ' fu-swipe' : '';
+  return '<div class="qi' + (it.kind === 'deadline' ? ' deadline' : '') + swipeCls + '"' + (it.kind === 'fu' ? ' data-id="' + esc(String(it.id)) + '"' : '') + '>'
     + '<div class="txt"><div class="t1">' + esc(it.label) + '</div>'
     + (meta.length ? '<div class="t2">' + meta.join(' · ') + '</div>' : '') + '</div>'
     + actions + '</div>';
@@ -1892,6 +1945,66 @@ async function fuDone(btn) {
   logEvent('followups', id, 'followup.resolved', 'Done: ' + (f ? f.action_text : id));
   dropFu(id); renderQueue(); renderStats(); renderIntel(); toast('Done ✓');
 }
+/* Swipe-to-complete (2026-07-24, Today's Focus queue) -- same "done" outcome as tapping the ✓
+   button (fuDone above: status -> 'resolved'), just reached via a swipe instead, with an undo
+   toast standing in for a confirm(). Optimistic removal + put-back-on-error, same shape as
+   swipeArchive() for Prospects/Leads. Undo sets status back to 'open' (mirrors restoreFu's
+   graveyard-restore semantics), not back to whatever it was before (snoozed, etc.) -- an edge
+   case Nick can adjust later if a snoozed item getting swiped needs to restore to 'snoozed'
+   specifically rather than 'open'. */
+function swipeCompleteFu(id) {
+  var f = findFu(id);
+  dropFu(id); renderQueue(); renderStats(); renderIntel();
+  var stamp = nowStamp();
+  sb.from('followups').update({ status: 'resolved', updated_at: stamp }).eq('id', id).then(function (r) {
+    if (r.error) { toast('Could not save — try again'); if (f) { DATA.followups.push(f); renderQueue(); renderStats(); renderIntel(); } return; }
+    logEvent('followups', id, 'followup.resolved', 'Done (swipe): ' + (f ? f.action_text : id));
+  });
+  toastUndo('Done ✓' + (f && f.action_text ? ' — ' + f.action_text : ''), function () {
+    if (f) { DATA.followups.push(f); renderQueue(); renderStats(); renderIntel(); }
+    sb.from('followups').update({ status: 'open', updated_at: nowStamp() }).eq('id', id).then(function (r) {
+      if (r.error) { toast('Could not restore'); return; }
+      logEvent('followups', id, 'followup.restored', 'Restored (undo)');
+    });
+  });
+}
+/* Delegated touch listener on #queue -- same pattern as bindMarketSwipe()/bindArchiveSwipe().
+   Only .fu-swipe rows (kind 'fu') engage; deadline/auto rows pass through untouched. */
+(function bindQueueSwipe() {
+  var body = document.getElementById('queue');
+  if (!body) return;
+  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null;
+  function findRow(el) { while (el && el !== body) { if (el.classList && el.classList.contains('fu-swipe')) return el; el = el.parentNode; } return null; }
+  function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
+  body.addEventListener('touchstart', function (e) {
+    var r = findRow(e.target); if (!r) return;
+    var t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r;
+    row.style.transition = 'none';
+  }, { passive: true });
+  body.addEventListener('touchmove', function (e) {
+    if (!dragging || !row) return;
+    var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
+    if (!horiz) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dx) <= Math.abs(dy)) { dragging = false; row.style.transition = ''; row = null; return; }
+      horiz = true;
+    }
+    e.preventDefault();
+    row.style.transform = 'translateX(' + dx + 'px)';
+    row.style.backgroundColor = dx !== 0 ? 'rgba(70,130,80,.14)' : '';
+  }, { passive: false });
+  function finish() {
+    if (!dragging || !row) { dragging = false; return; }
+    dragging = false;
+    var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
+    var r = row, rid = r.getAttribute('data-id'); row = null;
+    reset(r);
+    if (Math.abs(dx) >= THRESH && rid) swipeCompleteFu(rid);
+  }
+  body.addEventListener('touchend', finish, { passive: true });
+  body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
+})();
 async function fuSnooze(btn, days) {
   var id = btn.getAttribute('data-id');
   var f = null;
@@ -8103,7 +8216,10 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
     var pl = PHOTOLINKS[portalRef(rowTable, String(id))];
     if (pl && pl.urls && pl.urls.length) cov = '<img class="rowthumb" loading="lazy" src="' + esc(pl.urls[0]) + '">';
   }
-  return '<div class="row" data-rid="' + esc(String(id)) + '" onclick="toggleRow(this)">' + cov
+  /* Swipe-to-archive (2026-07-24) scoped to Prospects + Leads only, per Nick's call — every other
+     rowTable (buyers/listings/transactions/agents) renders through this same function untouched. */
+  var swipeCls = (rowTable === 'prospects' || rowTable === 'offmarket') ? ' arch-swipe' : '';
+  return '<div class="row' + swipeCls + '" data-rid="' + esc(String(id)) + '" data-atable="' + esc(rowTable) + '" onclick="toggleRow(this)">' + cov
     + '<div class="r1"><span class="nm">' + esc(nm) + (hot ? ' <span class="pill hot">HOT</span>' : '') + '</span><span class="rside">' + esc(side || '') + (actions || '') + '</span></div>'
     + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
     + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(browseTab, id) + '</div>'
@@ -8243,7 +8359,9 @@ function prospectControls(all) {
   var funnel = '<div class="hint" style="margin:0 0 8px;letter-spacing:.02em;">'
     + f.leads + ' leads &middot; ' + f.mailed + ' mailed &middot; ' + f.responded + ' responded'
     + (f.mailed ? ' (' + rate + '%)' : '') + ' &middot; ' + f.appt + ' appt &middot; ' + f.listed + ' listed</div>';
-  return funnel + '<div class="seg-row">' + seg('new', 'To review') + seg('pursue', 'Pursuing') + seg('pass', 'Passed') + '</div>'
+  var archN = (DATA.prospects_archived || []).length;
+  return funnel + '<div class="seg-row">' + seg('new', 'To review') + seg('pursue', 'Pursuing') + seg('pass', 'Passed')
+    + '<button class="tab' + (prospectSeg === 'archived' ? ' on' : '') + '" onclick="prospectSetSeg(\'archived\')">Archived ' + archN + '</button></div>'
     + '<div class="chip-row"><span class="chip-label">Priority</span>' + chip('Hot', 'Hot') + chip('Warm', 'Warm') + chip('Cold', 'Cold')
     + '<span class="chip-sep"></span><span class="chip-label">Only</span>' + chip('walk', 'Found on walks') + chip('underbuilt', 'Underbuilt') + chip('probate', 'Probate') + chip('absentee', 'Absentee') + chip('clean', 'Has clean phone') + '</div>' + exportBtn
     + '<button class="qbtn" onclick="scanUnderbuilt()" title="Estimate buildable potential across your farm and flag underbuilt lots">&#128506; Scan farm for underbuilt</button>'
@@ -9814,6 +9932,124 @@ async function archiveDuplicate(table, id) {
   logEvent(table, id, 'record.archived', 'Archived as duplicate address');
   renderBrowse(); toast('Archived ✓');
 }
+
+/* ---------- Swipe-to-archive (2026-07-24, Prospects + Leads) ----------
+   "Delete" here always means archive, never a real delete (Nick's call) — a swipe just sets
+   archived=true/archived_at=now, same as archiveDuplicate above, but with a one-motion undo-toast
+   instead of a blocking confirm() (confirm() would kill the fluid swipe feel). Optimistic: the row
+   disappears from DATA/the list immediately, then the server call fires; if it fails, the row is
+   put back. Undo (tap the toast within ~5.5s) reverses it both client-side and on the server. Even
+   past the undo window, the record isn't gone — it's restorable from the Archived view below,
+   same safety net the existing followups Graveyard already gives resolved-away followups. */
+function swipeArchive(table, id, label) {
+  var arr = DATA[table] || [], rec = null;
+  DATA[table] = arr.filter(function (x) { if (String(x.id) === String(id)) rec = x; return String(x.id) !== String(id); });
+  renderBrowse();
+  var stamp = nowStamp();
+  sb.from(table).update({ archived: true, archived_at: stamp, updated_at: stamp }).eq('id', id).then(function (r) {
+    if (r.error) { toast('Could not archive — try again'); if (rec) { DATA[table].push(rec); renderBrowse(); } return; }
+    logEvent(table, id, 'record.archived', 'Archived via swipe' + (label ? ': ' + label : ''));
+  });
+  toastUndo('Archived' + (label ? ' — ' + label : ''), function () {
+    if (rec) { rec.archived = false; rec.archived_at = null; DATA[table].push(rec); renderBrowse(); }
+    sb.from(table).update({ archived: false, archived_at: null, updated_at: nowStamp() }).eq('id', id).then(function (r) {
+      if (r.error) { toast('Could not restore — check the Archived view'); return; }
+      logEvent(table, id, 'record.restored', 'Restored via undo toast');
+    });
+  });
+}
+/* Delegated touch listener on the stable #browse container -- same pattern as bindMarketSwipe()
+   (market events). Only rows carrying .arch-swipe engage (rowHtml() adds that class only when
+   rowTable is 'prospects' or 'offmarket', per Nick's scoping decision — buyers/listings/agents/
+   transactions rows are untouched). Left-swipe-only commits (iOS convention for destructive
+   actions); a right-swipe just snaps back with no effect. */
+(function bindArchiveSwipe() {
+  var body = document.getElementById('browse');
+  if (!body) return;
+  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null;
+  function findRow(el) { while (el && el !== body) { if (el.classList && el.classList.contains('arch-swipe')) return el; el = el.parentNode; } return null; }
+  function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
+  body.addEventListener('touchstart', function (e) {
+    var r = findRow(e.target); if (!r) return;
+    var t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r;
+    row.style.transition = 'none';
+  }, { passive: true });
+  body.addEventListener('touchmove', function (e) {
+    if (!dragging || !row) return;
+    var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
+    if (!horiz) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dx) <= Math.abs(dy)) { dragging = false; row.style.transition = ''; row = null; return; }
+      horiz = true;
+    }
+    e.preventDefault();
+    row.style.transform = 'translateX(' + Math.min(dx, 0) + 'px)'; /* left-only visual: right-drag pins at 0 */
+    row.style.backgroundColor = dx < 0 ? 'rgba(170,70,60,.14)' : '';
+  }, { passive: false });
+  function finish() {
+    if (!dragging || !row) { dragging = false; return; }
+    dragging = false;
+    var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
+    var r = row, rid = r.getAttribute('data-rid'), tbl = r.getAttribute('data-atable'); row = null;
+    reset(r);
+    if (dx <= -THRESH && tbl) {
+      var rec = (DATA[tbl] || []).filter(function (x) { return String(x.id) === String(rid); })[0];
+      var label = rec ? (rec.address || rec.address_area || rec.owner_name || '') : '';
+      swipeArchive(tbl, rid, label);
+    }
+  }
+  body.addEventListener('touchend', finish, { passive: true });
+  body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
+})();
+
+/* ---------- Archived view (2026-07-24) -- the safety net + the periodic-compression sweep ----------
+   Restorable, browsable list of everything archived (by swipe or by the older archiveDuplicate
+   path) for prospects and offmarket leads. "Periodically swept to be compressed" (Nick's ask) is
+   done live/computed rather than as a separate scheduled job: anything archived over 90 days ago
+   renders collapsed into one grouped-by-month line instead of its own full row. Nothing is ever
+   deleted or trimmed server-side -- this is presentation-only compression, so it's fully reversible
+   and never loses data, just keeps the Archived view from becoming an unbounded flat list. */
+function archivedAgeDays(rec) {
+  var iso = rec.archived_at || rec.updated_at; if (!iso) return 0;
+  return (Date.now() - new Date(iso).getTime()) / 86400000;
+}
+function archivedMonthKey(rec) {
+  var iso = rec.archived_at || rec.updated_at;
+  var d = iso ? new Date(iso) : new Date();
+  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+async function restoreArchived(table, id) {
+  var r = await sb.from(table).update({ archived: false, archived_at: null, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not restore'); return; }
+  logEvent(table, id, 'record.restored', 'Restored from Archived view');
+  toast('Restored ✓');
+  loadAll(false);
+}
+function archivedListHtml(table, list, labelFn) {
+  list = list || [];
+  if (!list.length) return '<div class="empty">Nothing archived.</div>';
+  var recent = list.filter(function (r) { return archivedAgeDays(r) <= 90; });
+  var old = list.filter(function (r) { return archivedAgeDays(r) > 90; });
+  var h = '';
+  h += recent.map(function (r) {
+    var iso = r.archived_at || r.updated_at;
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(labelFn(r)) + '</div>'
+      + '<div class="t2">Archived ' + (iso ? esc(fmtDate(String(iso).slice(0, 10))) : '') + '</div></div>'
+      + '<button class="qbtn" onclick="restoreArchived(\'' + table + '\',\'' + esc(String(r.id)) + '\')">Restore</button></div>';
+  }).join('');
+  if (old.length) {
+    var groups = {};
+    old.forEach(function (r) { var k = archivedMonthKey(r); (groups[k] = groups[k] || []).push(r); });
+    h += '<div class="hint" style="margin:14px 0 4px;">Archived earlier (compressed by month)</div>';
+    h += Object.keys(groups).map(function (k) {
+      var items = groups[k];
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(k) + ' &middot; ' + items.length + ' archived</div>'
+        + '<div class="t2">' + esc(items.map(labelFn).join(', ')) + '</div></div></div>';
+    }).join('');
+  }
+  return h;
+}
 function renderBrowse() {
   if (browseTab === 'reengage') {
     document.getElementById('browse').innerHTML = reengageHtml();
@@ -9835,12 +10071,20 @@ function renderBrowse() {
      entry. Leads with no recognized neighborhood fall into an "Other" bucket rather than being lost. */
   if (browseTab === 'offmarket') {
     rowTable = 'offmarket';
+    /* Archived leads (2026-07-24, swipe-to-archive safety net) -- a separate view, not a filter
+       chip on the live list, since archived rows aren't even fetched into DATA.offmarket (loadAll
+       excludes them) — they live in DATA.offmarket_archived, fetched separately. */
+    if (leadsShowArchived) {
+      document.getElementById('browse').innerHTML = '<div class="filter-chip" onclick="toggleLeadsArchived()">&larr; Back to active leads</div>'
+        + archivedListHtml('offmarket', DATA.offmarket_archived || [], function (r) { return r.address_area || 'Lead'; });
+      return;
+    }
     var lq = document.getElementById('browse-q').value.toLowerCase();
     var lrows = DATA.offmarket || [];
-    var lchip = '';
+    var lchip = '<div class="filter-chip" onclick="toggleLeadsArchived()">Archived · ' + (DATA.offmarket_archived || []).length + '</div>';
     if (browseHot) {
       lrows = lrows.filter(function (x) { return x.priority === 'Hot'; });
-      lchip = '<div class="filter-chip" onclick="clearHot()">Hot only · ' + lrows.length + ' &times;</div>';
+      lchip += '<div class="filter-chip" onclick="clearHot()">Hot only · ' + lrows.length + ' &times;</div>';
     }
     renderLeadsGrouped(lrows, lq, lchip, duplicatesBannerHtml());
     return;
@@ -9855,10 +10099,31 @@ function renderBrowse() {
          : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l); })
          : (propSeg === 'escrow') ? (DATA.transactions || []).filter(function (t) { return !isPastTx(t); })
          : (DATA.transactions || []).filter(isPastTx);
+    /* Multi-escrow concurrency fix (2026-07-24): with 2+ active escrows this used to render in
+       whatever order the query happened to return, same clutter risk prospects already solved by
+       sorting by score/value. Sort by nearest open deadline (soonest first) so the escrow that
+       needs attention first is always the one on top; a deal with nothing dated yet (deadlines
+       not generated) sorts after ones that do, not randomly among them. */
+    if (propSeg === 'escrow') {
+      rows = rows.slice().sort(function (a, b) {
+        var da = nextEscrowDeadline(a), db = nextEscrowDeadline(b);
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return String(da.due).localeCompare(String(db.due));
+      });
+    }
     chip = propNav();
   }
   if (browseTab === 'prospects') {
     chip = prospectControls(rows);
+    /* Archived prospects (2026-07-24, swipe-to-archive safety net) -- own segment (like the
+       existing new/pursue/pass triage segments) rather than a filter, since archived rows come
+       from the separately-fetched DATA.prospects_archived, not the live DATA.prospects. */
+    if (prospectSeg === 'archived') {
+      document.getElementById('browse').innerHTML = chip + archivedListHtml('prospects', DATA.prospects_archived || [], function (r) { return r.address || r.owner_name || 'Prospect'; });
+      return;
+    }
     rows = rows.filter(function (x) { return triageOf(x) === prospectSeg && prospectPassesFilters(x); })
                .sort(function (a, b) { return propScore(b) - propScore(a) || propValue(b) - propValue(a); });
   }
@@ -9881,7 +10146,13 @@ function renderBrowse() {
       det = [x.seller_contact ? 'Seller: ' + (x.seller_name || '') + ' ' + x.seller_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'transactions') {
       nm = x.address; side = money(x.contract_price);
-      sub = [x.status, x.client_name, x.closing_date ? 'closes ' + fmtDate(x.closing_date) : ''].filter(Boolean).join(' · ');
+      /* Multi-escrow concurrency fix (2026-07-24): this used to only ever show contingency_date/
+         closing_date, which disagreed with Today's Focus the moment real transaction_deadlines
+         rows existed (e.g. EMD or inspection due next, not contingency or close) -- with 2+ active
+         escrows that mismatch is exactly what makes them hard to tell apart at a glance. Now reads
+         from the same nextEscrowDeadline() both the pulse bar and Today's Focus already use. */
+      var nextDl = nextEscrowDeadline(x);
+      sub = [x.status, x.client_name, nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : '')].filter(Boolean).join(' · ');
       det = [x.contingency_date ? 'Contingency: ' + fmtDate(x.contingency_date) : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'agents') {
       nm = x.name || x.email || 'Agent';
@@ -9912,6 +10183,8 @@ function renderBrowse() {
   reopenSections();
 }
 function clearHot() { browseHot = false; renderBrowse(); }
+var leadsShowArchived = false;
+function toggleLeadsArchived() { leadsShowArchived = !leadsShowArchived; renderBrowse(); }
 
 /* ---------- boot ---------- */
 async function enterApp() {
