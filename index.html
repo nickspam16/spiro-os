@@ -591,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.138.0';
+var APP_VERSION = 'v5.140.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1474,6 +1474,95 @@ function ownerPortfolioHtml() {
   return h;
 }
 
+/* ===== Buyer-similarity ("twin buyer") chain (2026-07-24, chain audit #3) ===== Reactivation
+   already flags a buyer who passed on something that's since changed. Nothing flagged a buyer
+   whose criteria closely matches ANOTHER buyer -- a different axis (buyer-to-buyer, not
+   buyer-to-property). Note: buyers are excluded from DATA entirely once archived (see the
+   `.not('archived','is',true)` filter in loadAll()), so there's no reliable client-side way to
+   detect "buyer A just converted" -- this instead surfaces standing pairs of currently-active
+   buyers with closely overlapping criteria, on the theory that working one is a natural reminder
+   to check in on its twin, whichever one happens to move first. Requires: both buyers matchable
+   (real areas + budget set), at least one shared target neighborhood, and overlapping budget
+   ranges (a $2-3M buyer and a $5-6M buyer are not twins even if they want the same street). */
+function buyerCriteriaSimilarity(a, b) {
+  var ca = buyerCriteria(a.id), cb = buyerCriteria(b.id);
+  if (!ca || !cb) return null;
+  var areaOverlap = (ca.areas || []).filter(function (x) { return (cb.areas || []).indexOf(x) !== -1; });
+  if (!areaOverlap.length) return null;
+  var aMax = buyerBudgetMax(a.id), bMax = buyerBudgetMax(b.id);
+  if (aMax == null || bMax == null) return null;
+  var aMin = a.budget_min_num != null ? a.budget_min_num : numFrom(a.budget_min);
+  var bMin = b.budget_min_num != null ? b.budget_min_num : numFrom(b.budget_min);
+  var budgetOverlap = !(aMax < (bMin || 0) || bMax < (aMin || 0));
+  if (!budgetOverlap) return null;
+  var sameType = !!(ca.property_type && cb.property_type && ca.property_type === cb.property_type);
+  var similarBeds = !!(ca.beds_min && cb.beds_min && Math.abs(ca.beds_min - cb.beds_min) <= 1);
+  return { areaOverlap: areaOverlap, sameType: sameType, similarBeds: similarBeds, score: areaOverlap.length + (sameType ? 1 : 0) + (similarBeds ? 1 : 0) };
+}
+function buyerTwins() {
+  var buyers = (DATA.buyers || []).filter(function (b) { return buyerMatchable(b.id); });
+  var out = [];
+  for (var i = 0; i < buyers.length; i++) {
+    for (var j = i + 1; j < buyers.length; j++) {
+      var sim = buyerCriteriaSimilarity(buyers[i], buyers[j]);
+      if (sim) out.push({ a: buyers[i], b: buyers[j], sim: sim });
+    }
+  }
+  out.sort(function (x, y) { return y.sim.score - x.sim.score; });
+  return out;
+}
+function buyerTwinsHtml() {
+  var pairs = buyerTwins(); if (!pairs.length) return '';
+  var h = '<div class="flabel" style="margin-top:14px;">Similar buyers <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; worth cross-referencing when one moves</span></div>';
+  h += pairs.slice(0, 5).map(function (p) {
+    var parts = [p.sim.areaOverlap.length + ' shared area' + (p.sim.areaOverlap.length === 1 ? '' : 's')];
+    if (p.sim.sameType) parts.push('same property type');
+    if (p.sim.similarBeds) parts.push('similar bed count');
+    return '<div class="qi"><div class="txt"><div class="t1"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + esc(String(p.a.id)) + '\')">' + esc(p.a.name || 'Buyer') + '</span> &amp; <span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + esc(String(p.b.id)) + '\')">' + esc(p.b.name || 'Buyer') + '</span></div><div class="t2">' + esc(parts.join(' · ')) + '</div></div></div>';
+  }).join('');
+  return h;
+}
+
+/* ===== Neighborhood turnover-velocity chain (2026-07-24, chain audit #5) ===== convergenceSignals
+   already counts real escrow prices per area but never looks at PACE -- 5 closings in an area over
+   the last 6 months reads very differently than the same 5 closings spread across 3 years. This
+   computes a simple velocity: closings in the trailing 180 days vs. the 180 days before that, per
+   area, and flags areas that are accelerating (more recent closings than the prior period, with at
+   least 2 recent closings so a single deal can't look like a "trend"). Deliberately simple (no
+   seasonality adjustment, no absolute-volume normalization) -- flagged as a directional signal, not
+   a market-stats product. */
+function neighborhoodVelocity() {
+  var now = new Date(nowStamp());
+  var d180 = 180 * 24 * 60 * 60 * 1000;
+  var recentCut = new Date(now.getTime() - d180), priorCut = new Date(now.getTime() - 2 * d180);
+  var byArea = {};
+  (DATA.transactions || []).forEach(function (tx) {
+    if (!tx.contract_price_num) return;
+    var dateStr = tx.closing_date || tx.close_date || tx.updated_at; if (!dateStr) return;
+    var d = new Date(dateStr); if (isNaN(d.getTime())) return;
+    var area = areaKeyOf(tx.address); if (!area) return;
+    byArea[area] = byArea[area] || { recent: 0, prior: 0 };
+    if (d >= recentCut) byArea[area].recent++;
+    else if (d >= priorCut) byArea[area].prior++;
+  });
+  var out = [];
+  Object.keys(byArea).forEach(function (area) {
+    var b = byArea[area];
+    if (b.recent < 2 || b.recent <= b.prior) return; /* need 2+ recent closings AND real acceleration */
+    out.push({ area: area, recent: b.recent, prior: b.prior });
+  });
+  out.sort(function (a, b) { return (b.recent - b.prior) - (a.recent - a.prior); });
+  return out;
+}
+function neighborhoodVelocityHtml() {
+  var hits = neighborhoodVelocity(); if (!hits.length) return '';
+  var h = '<div class="flabel" style="margin-top:14px;">Heating up <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; closings accelerating vs. the prior 6 months</span></div>';
+  h += hits.slice(0, 5).map(function (hit) {
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(hit.area) + '</div><div class="t2">' + hit.recent + ' closing' + (hit.recent === 1 ? '' : 's') + ' last 6mo vs. ' + hit.prior + ' the 6mo before — worth a farming push</div></div></div>';
+  }).join('');
+  return h;
+}
+
 /* "Who to call" — computed client-side from already-loaded buyers + matches + prospects. try/catch so it can never break render(). */
 function renderIntel() { try {
   var el = document.getElementById('intel-body'); if (!el) return;
@@ -1531,6 +1620,8 @@ function renderIntel() { try {
   }
   html += propensityHotPocketsHtml();
   html += ownerPortfolioHtml();
+  html += buyerTwinsHtml();
+  html += neighborhoodVelocityHtml();
   html += convergenceHtml();
   /* Routine, auto-generated follow-ups (mailer nudges, buyer check-ins, response call-backs) live
      here now instead of cluttering Today's Focus (2026-07-23) — collapsed by default since there
@@ -4192,6 +4283,11 @@ function recordExtras(table, id) {
       var lsid = 'sugg-offmarket-' + sid;
       h += secToggleHtml(lsid, lsug.count + ' suggested buyer' + (lsug.count === 1 ? '' : 's')) + secBodyOpen(lsid) + lsug.html + '</div>';
     }
+    /* 2026-07-24 (chain audit, mechanical rewire): compsHtml/pressMentionsHtml were already
+       fully generic (plain address string / table+id) and only ever wired to listings. Real
+       nearby escrow prices support the same pitch/est_value sanity-check on an off-market lead
+       that they do on an active listing; a probate/estate-sale press mention is a real signal too. */
+    h += compsHtml((recOf('offmarket', sid) || {}).address_area, null) + pressMentionsHtml('offmarket', sid);
     more += shareOffmarketHtml(sid);
   }
   if (table === 'agents') {
@@ -4208,6 +4304,10 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
     h += prospectChainHtml(sid);
+    /* 2026-07-24 (chain audit, mechanical rewire): same as offmarket above -- generic functions,
+       just never wired here. Real nearby comps support the sell pitch and sanity-check Tracerfy's
+       est_value; a probate/estate-sale press mention is a real, freely-available signal. */
+    h += compsHtml((recOf('prospects', sid) || {}).address, null) + pressMentionsHtml('prospects', sid);
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
     if (px) {
       var t = triageOf(px);
@@ -7337,7 +7437,7 @@ async function fetchMarket(force) {
   try {
     var res = await Promise.all([
       sb.from('monitor_config').select('neighborhood,luxury_floor,high_dollar_sale_floor,active').eq('active', true),
-      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id,flagged_buyer_ids').order('event_date', { ascending: false }).limit(80),
+      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id,flagged_buyer_ids,extra').order('event_date', { ascending: false }).limit(80),
       sb.from('market_snapshots').select('snapshot_date,neighborhood,active_count,median_list_price,months_of_inventory').order('snapshot_date', { ascending: false }).limit(30)
     ]);
     if (!res[0].error) MARKET.config = res[0].data || [];
@@ -7374,6 +7474,14 @@ function marketEventLine(e) {
     actions = '<span class="hint">Flagged for ' + esc(flagNames.join(', ') || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>'
       + ' <button class="qbtn" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Edit</button>';
   }
+  /* Tracking folder (2026-07-24, per Nick) — orthogonal to review_status/buyer-flag: a property
+     can be tracked whether it's pending, dismissed-for-buyer-matching, or flagged, so this button
+     renders on every row regardless of which `actions` branch above fired. Toggle button, not a
+     third swipe direction (two is already the natural limit on a phone). */
+  var tr = marketEventTracking(e);
+  actions += (actions ? ' ' : '') + (tr
+    ? '<button class="qbtn done" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">&#9733; Tracked' + (tr.outcome ? ' (' + esc(tr.outcome === 'converted' ? 'converted' : 'went nowhere') + ')' : '') + '</button>'
+    : '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">&#9734; Track</button>');
   /* Swipe (2026-07-24, per Nick, "like on an iPhone"): pending rows only -- mkt-swipe class + data-id
      is what the delegated touch handler (bindMarketSwipe(), defined near renderMarketReview) looks
      for. Swipe right-to-left = dismiss, left-to-right = open the buyer-flag picker; buttons stay as
@@ -7428,6 +7536,137 @@ async function confirmFlagMarketEvent() {
   flagMarketEventId = null;
   var names = buyerIds.map(function (bid) { return recLabel('buyers', bid) || 'buyer'; }).join(', ');
   renderMarketReview(); toast('Flagged for ' + names);
+}
+
+/* ===== Market tracking folder (2026-07-24, per Nick: "some properties I just want to track, look
+   further into, review at a later date") ===== Separate from the buyer-flag/dismiss review flow --
+   a property can be tracked whether it's pending, dismissed, or flagged for a buyer, since "worth
+   watching myself" is a different question than "does a buyer want this." Stored in the market_
+   events `extra.tracking` jsonb (no migration -- extra already existed on this table, just wasn't
+   selected by the client before today).
+
+   Reason tags are a fixed, structured set rather than free text alone, on purpose: free text can't
+   be aggregated later, and the whole point here is to eventually be able to ask "of everything I
+   tagged 'good bones,' how many actually turned into something?" There's no ML model doing that
+   today -- that would need training data and a pipeline neither of which exist yet (the separate
+   "AI-judgment pass" idea is still deferred, bigger work). What this actually builds is the
+   FEEDBACK LOOP a future model would need: tag the reason at save time (below), record the real
+   outcome later (markMarketTrackOutcome) once you know what happened. That pairing -- reason +
+   eventual outcome -- is the raw material for "which reasons actually convert," computed straight
+   from Nick's own judgment rather than a third-party score. */
+var MARKET_TRACK_REASONS = [
+  ['good_bones', 'Good bones / underpriced'],
+  ['style_architect', 'Architect or style I track'],
+  ['price_drop_watch', 'Price-drop watch'],
+  ['future_buyer', 'For a future buyer, not matched yet'],
+  ['farming_area', 'Neighborhood I’m farming'],
+  ['curious', 'Just curious'],
+];
+function marketEventTracking(e) { return (e && e.extra && e.extra.tracking) || null; }
+function trackedMarketEvents() {
+  return (MARKET.events || []).filter(function (e) { var t = marketEventTracking(e); return t && !t.outcome; })
+    .sort(function (a, b) { return String((marketEventTracking(b) || {}).tracked_at || '').localeCompare(String((marketEventTracking(a) || {}).tracked_at || '')); });
+}
+var trackMarketEventId = null;
+function openTrackMarketEvent(id) {
+  trackMarketEventId = id;
+  var body = document.getElementById('market-body'); if (!body) return;
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
+  var cur = marketEventTracking(e) || {};
+  var curReasons = {}; (cur.reasons || []).forEach(function (r) { curReasons[r] = true; });
+  var opts = MARKET_TRACK_REASONS.map(function (r) {
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14.5px;"><input type="checkbox" class="market-track-reason-cb" value="' + r[0] + '"' + (curReasons[r[0]] ? ' checked' : '') + '> ' + esc(r[1]) + '</label>';
+  }).join('');
+  var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
+    + '<div class="flabel">Why are you tracking this? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; pick as many as apply, doesn’t send anything or notify anyone</span></div>'
+    + '<div style="margin-top:6px;">' + opts + '</div>'
+    + '<textarea id="market-track-note" placeholder="Note (optional)" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:50px;">' + esc(cur.note || '') + '</textarea>'
+    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmTrackMarketEvent()">Save</button> '
+    + (cur.tracked_at ? '<button class="qbtn" onclick="untrackMarketEvent(\'' + esc(id) + '\')">Remove from tracking</button> ' : '')
+    + '<button class="quiet" onclick="renderMarketReview()">Cancel</button></div>'
+    + '</div>';
+  body.insertAdjacentHTML('afterbegin', pickerHtml);
+}
+async function confirmTrackMarketEvent() {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.market-track-reason-cb:checked'));
+  var reasons = boxes.map(function (cb) { return cb.value; });
+  var noteEl = document.getElementById('market-track-note');
+  var note = noteEl ? noteEl.value.trim() : '';
+  if (!reasons.length && !note) { toast('Pick at least one reason, or add a note'); return; }
+  var id = trackMarketEventId;
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); }); if (!e) return;
+  var existing = marketEventTracking(e) || {};
+  var extra = Object.assign({}, e.extra || {});
+  extra.tracking = { tracked_at: existing.tracked_at || nowStamp(), reasons: reasons, note: note, outcome: existing.outcome || null, outcome_at: existing.outcome_at || null };
+  var r = await sb.from('market_events').update({ extra: extra }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save'); return; }
+  e.extra = extra;
+  trackMarketEventId = null;
+  logEvent('market_events', id, 'market.tracked', (e.address || e.neighborhood || 'Listing') + ' — ' + reasons.join(', '));
+  renderMarketReview(); toast('Tracking ✓');
+}
+async function untrackMarketEvent(id) {
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); }); if (!e) return;
+  var extra = Object.assign({}, e.extra || {});
+  delete extra.tracking;
+  var r = await sb.from('market_events').update({ extra: extra }).eq('id', id).select('id');
+  if (r.error) { toast('Could not remove'); return; }
+  e.extra = extra;
+  trackMarketEventId = null;
+  renderMarketReview(); toast('Removed from tracking');
+}
+/* Closing the loop: record what actually happened to a tracked property. This is the half of the
+   feedback loop that makes the reason tags mean something later -- without an outcome, "why I
+   tracked it" never connects back to "did that instinct pan out." */
+async function markMarketTrackOutcome(id, outcome) {
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); }); if (!e) return;
+  var t = marketEventTracking(e); if (!t) return;
+  var extra = Object.assign({}, e.extra || {});
+  extra.tracking = Object.assign({}, t, { outcome: outcome, outcome_at: nowStamp() });
+  var r = await sb.from('market_events').update({ extra: extra }).eq('id', id).select('id');
+  if (r.error) { toast('Could not update'); return; }
+  e.extra = extra;
+  renderMarketReview(); toast(outcome === 'converted' ? 'Marked converted ✓' : 'Marked — went nowhere');
+}
+/* One-tap conversion: a tracked property that's ready to become a real working record. Creates the
+   prospect from what the market feed already knows (address/price/neighborhood), carries the
+   tracking reasons into the prospect's notes so the "why" isn't lost, and marks the market_events
+   row's outcome as converted with a pointer back to the new prospect. */
+async function convertTrackedToProspect(id) {
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); }); if (!e) return;
+  var t = marketEventTracking(e) || {};
+  var reasonLabels = (t.reasons || []).map(function (key) { var m = MARKET_TRACK_REASONS.filter(function (r) { return r[0] === key; })[0]; return m ? m[1] : key; });
+  var notesParts = ['From Market tracking folder: ' + (reasonLabels.join(', ') || 'no reason tags')];
+  if (t.note) notesParts.push(t.note);
+  var payload = { address: e.address || e.neighborhood || '', type: 'Cold Prospect', priority: '', status: '', notes: notesParts.join(' — ') };
+  var r = await sb.from('prospects').insert(payload).select('id');
+  if (r.error || !r.data || !r.data.length) { toast('Could not create prospect'); return; }
+  var newId = r.data[0].id;
+  await markMarketTrackOutcome(id, 'converted');
+  var extra = Object.assign({}, e.extra || {});
+  extra.tracking = Object.assign({}, extra.tracking, { converted_to: { table: 'prospects', id: newId } });
+  await sb.from('market_events').update({ extra: extra }).eq('id', id).select('id');
+  e.extra = extra;
+  await loadAll();
+  toast('Added as a prospect ✓');
+  jumpToRecord('prospects', newId);
+}
+function marketTrackingHtml() {
+  var tracked = trackedMarketEvents(); if (!tracked.length) return '';
+  var h = '<div class="bucket" style="margin-top:16px;">Tracking folder (' + tracked.length + ') <span class="hint" style="font-weight:400;">&mdash; not for a buyer, just worth watching</span></div>';
+  h += tracked.map(function (e) {
+    var t = marketEventTracking(e);
+    var reasonLabels = (t.reasons || []).map(function (key) { var m = MARKET_TRACK_REASONS.filter(function (r) { return r[0] === key; })[0]; return m ? m[1] : key; });
+    var facts = [e.neighborhood, fmtMoney(e.sold_price || e.list_price), fmtDate(e.event_date)].filter(Boolean).join(' · ');
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc((e.address || e.neighborhood || '')) + '</div>'
+      + '<div class="t2">' + esc(facts) + (reasonLabels.length ? ' — ' + esc(reasonLabels.join(', ')) : '') + (t.note ? '<br>' + esc(t.note) : '') + '</div>'
+      + '<div style="margin-top:6px;">'
+      + '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">Edit</button> '
+      + '<button class="qbtn done" onclick="event.stopPropagation();convertTrackedToProspect(\'' + esc(e.id) + '\')">Add as prospect</button> '
+      + '<button class="qbtn" onclick="event.stopPropagation();markMarketTrackOutcome(\'' + esc(e.id) + '\',\'went_nowhere\')">Went nowhere</button>'
+      + '</div></div></div>';
+  }).join('');
+  return h;
 }
 /* Swipe-to-triage on the Market panel (2026-07-24, per Nick: "swipe from right to left like on an
    iPhone to show disinterest, swipe left to right opens buyer match dropdown"). Delegated touch
@@ -7487,6 +7726,7 @@ function renderMarketReview() {
     h += '<div class="bucket" style="margin-top:16px;">Already reviewed</div>';
     h += handled.map(marketEventLine).join('');
   }
+  h += marketTrackingHtml();
   var latest = {};
   MARKET.snaps.forEach(function (s) { if (!latest[s.neighborhood]) latest[s.neighborhood] = s; });
   var snapKeys = Object.keys(latest);
@@ -7554,14 +7794,18 @@ async function renderClimateCard(force) {
     ratesH += '<div class="empty">No rate readings yet — tap Sync now.</div>';
   }
 
-  /* Flood risk -- every geocoded listing/off-market record (extra.lat/extra.lng, from the Mapbox/
-     Census wiring shipped the same day). Lazy per-row lookups so a panel with zero geocoded records
-     yet doesn't stall on nothing; each row patches in place once its lookup resolves. */
+  /* Flood risk -- every geocoded listing/off-market/prospect record. Prospects use extra.gps_lat/
+     gps_lng (from the walk-found-lead photo capture) since they don't go through the Mapbox
+     save-time geocoder the way listings/offmarket do (see saveForm() -- geocodeRecordInBackground
+     only fires for those two tables today). Lazy per-row lookups so a panel with zero geocoded
+     records yet doesn't stall on nothing; each row patches in place once its lookup resolves. */
   var geocoded = [];
   (DATA.listings || []).forEach(function (l) { var e = l.extra || {}; if (e.lat != null && e.lng != null) geocoded.push({ table: 'listings', id: l.id, address: l.address, lat: e.lat, lng: e.lng }); });
   (DATA.offmarket || []).forEach(function (l) { var e = l.extra || {}; if (e.lat != null && e.lng != null) geocoded.push({ table: 'offmarket', id: l.id, address: l.address_area, lat: e.lat, lng: e.lng }); });
+  (DATA.prospects || []).forEach(function (p) { var e = p.extra || {}; var lat = e.lat != null ? e.lat : e.gps_lat, lng = e.lng != null ? e.lng : e.gps_lng; if (lat != null && lng != null) geocoded.push({ table: 'prospects', id: p.id, address: p.address, lat: lat, lng: lng }); });
 
   var floodH = '<div class="bucket" style="margin-top:16px;">Flood risk (FEMA) — ' + geocoded.length + ' geocoded ' + (geocoded.length === 1 ? 'record' : 'records') + '</div>';
+  floodH += '<div id="flood-cluster-summary"></div>'; /* patched in below once all lookups resolve -- chain audit #6 */
   if (!geocoded.length) {
     floodH += '<div class="empty">Nothing geocoded yet — new/edited listings and off-market leads pick up coordinates automatically on save.</div>';
   } else {
@@ -7575,17 +7819,38 @@ async function renderClimateCard(force) {
   /* Fire off the per-row FEMA lookups now that the rows exist in the DOM -- small concurrency cap
      so a large book of business doesn't fire 100 requests at once (cached rows resolve near-instant
      regardless, so the cap mostly matters on first-ever run for a given property). */
-  var CONCURRENCY = 4, idx = 0;
+  var CONCURRENCY = 4, idx = 0, results = [];
   async function nextFema() {
     var i = idx++; if (i >= geocoded.length) return;
     var g = geocoded[i];
     var res = await femaLookupCall(g.lat, g.lng, g.table, g.id);
+    results[i] = res;
     var el = document.getElementById('fema-zone-' + i);
     if (el) el.textContent = floodZoneLabel(res);
     return nextFema();
   }
   var workers = []; for (var w = 0; w < CONCURRENCY; w++) workers.push(nextFema());
   await Promise.all(workers);
+
+  /* ===== Flood-risk cluster chain (2026-07-24, chain audit #6) ===== Once every geocoded record's
+     zone is known, group the ones actually IN a special flood hazard area (SFHA_TF='T') by
+     neighborhood centroid. 2+ in the same area is worth flagging together -- e.g. an
+     insurance-driven urgency angle for prospects, or a disclosure heads-up across a whole pocket --
+     versus one flagged property in isolation, which is just a fact about that one house. */
+  var byArea = {};
+  geocoded.forEach(function (g, i) {
+    var res = results[i]; if (!res || !res.in_special_flood_hazard_area) return;
+    var area = areaKeyOf(g.address); if (!area) return;
+    (byArea[area] = byArea[area] || []).push(g);
+  });
+  var clusters = Object.keys(byArea).map(function (area) { return { area: area, records: byArea[area] }; }).filter(function (c) { return c.records.length >= 2; });
+  clusters.sort(function (a, b) { return b.records.length - a.records.length; });
+  var summaryEl = document.getElementById('flood-cluster-summary');
+  if (summaryEl) {
+    summaryEl.innerHTML = clusters.length ? clusters.map(function (c) {
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + esc(c.records[0].table) + '\',\'' + esc(String(c.records[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(c.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + c.records.length + ' records in a special flood hazard area</div></div></div>';
+    }).join('') : '';
+  }
 }
 async function fredSyncNow() {
   try {
