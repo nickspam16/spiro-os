@@ -470,7 +470,8 @@
     </div>
 
     <div class="card" id="intel-card" style="display:none;">
-      <h2>Who to call</h2>
+      <h2>Who to call <button class="hbtn" onclick="event.stopPropagation();fetchAiFocus(true)" title="AI triage: what actually matters today">&#10024;</button></h2>
+      <div id="ai-focus-body" class="hint" style="white-space:pre-wrap;display:none;margin:-6px 0 12px;border-left:2px solid var(--line);padding-left:10px;"></div>
       <div id="intel-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
@@ -591,7 +592,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.140.0';
+var APP_VERSION = 'v5.142.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1181,6 +1182,7 @@ async function loadAll(manual) {
   render();
   fetchPhotoLinks(manual); /* fire-and-forget; re-renders Records when thumbnails arrive */
   fetchBrief(false);       /* cached per-day; only calls AI once each morning */
+  fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
   flushOfflineCaptures();  /* file any notes captured while offline */
@@ -1564,8 +1566,10 @@ function neighborhoodVelocityHtml() {
 }
 
 /* "Who to call" — computed client-side from already-loaded buyers + matches + prospects. try/catch so it can never break render(). */
-function renderIntel() { try {
-  var el = document.getElementById('intel-body'); if (!el) return;
+/* Extracted (2026-07-24, AI-judgment pass build) from renderIntel()'s inline logic so
+   intelFocusSummary() can reuse the exact same "who to call" rows the human sees on screen,
+   instead of recomputing a slightly different version that could drift out of sync. */
+function buyersToCallRows() {
   var byBuyer = {};
   (DATA.matches || []).forEach(function (m) {
     if (m.status === 'dismissed') return;
@@ -1584,6 +1588,11 @@ function renderIntel() { try {
     rows.push({ id: bu.id, name: bu.name, best: mm.best, count: mm.count, reasons: reasons, pr: pr });
   });
   rows.sort(function (a, b) { return b.pr - a.pr || b.best - a.best; });
+  return rows;
+}
+function renderIntel() { try {
+  var el = document.getElementById('intel-body'); if (!el) return;
+  var rows = buyersToCallRows();
   var leads = (DATA.prospects || []).filter(function (p) { return p.status === 'lead_draft' && !(p.extra && p.extra.triage); }).length;
   var html = '';
   if (!rows.length) html += '<div class="empty">No buyers need a call right now.</div>';
@@ -3471,6 +3480,80 @@ function copyTracerfyBatch() {
   var done = function () { toast('Batch copied — paste to Claude to run it ✓'); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { toast('Could not copy — select manually'); });
 }
+
+/* ===== Propensity readiness -- stage 1 of the two-stage cost-control plan (2026-07-24) =====
+   Tracerfy's lead_lookup returns propensity scores AND contact info in one call, but
+   tracerfyReadinessScan() above only tracks the contact-info half of that value -- a prospect who
+   already has a name+phone on file gets excluded from that batch even though it might still be
+   worth a credit purely for the sell-propensity score. This is the OTHER funnel: the two-stage
+   filter Nick and I agreed on before any batch propensity spend -- free signals already sitting in
+   the CRM (probate, absentee, walk-found, underbuilt) narrow the pool BEFORE a paid Tracerfy hit,
+   instead of running lookups blind across all ~190 remaining "pursue" prospects. A prospect with
+   ZERO free signals doesn't make this batch at all -- that's the actual cost control, not a UI
+   nicety. Contact-cleanliness (DNC/litigator) is deliberately NOT a filter here: per the same
+   framework, that's a hard gate on OUTREACH order once a score is already known, not a reason to
+   skip fetching the score in the first place. No Tracerfy calls happen from this code -- same
+   division of labor as the readiness batch above: this only produces a vetted, prioritized list to
+   copy/paste into a live Claude session, since the static PWA holds no Tracerfy key. */
+function propensityReadinessScan() {
+  var out = [];
+  (DATA.prospects || []).forEach(function (p) {
+    if (p.archived) return;
+    if (p.extra && p.extra.tracerfy_skip) return; /* already ruled out for Tracerfy entirely */
+    if (p.extra && p.extra.propensity) return; /* already scored -- nothing left to fetch */
+    var e = p.extra || {};
+    var signals = [];
+    if (e.probate) signals.push('probate');
+    if (e.absentee) signals.push('absentee');
+    if (e.via_image) signals.push('found on a walk');
+    if (e.buildable && e.buildable.underbuilt) signals.push('underbuilt');
+    if (!signals.length) return; /* stage 1 filter: no free signal yet, not worth a paid hit */
+    out.push({ p: p, signals: signals, score: signals.length });
+  });
+  out.sort(function (a, b) { return b.score - a.score || prospectPriorityRank(a.p) - prospectPriorityRank(b.p); });
+  return out;
+}
+var propensityBatch = {}; /* client-side checkbox state — resets on reload, same convention as tracerfyBatch */
+var propensityFilterTier = 'all';
+function propensityBatchToggle(id) { propensityBatch[id] = !propensityBatch[id]; renderCoverage(); }
+function propensitySetFilter(tier) { propensityFilterTier = tier; renderCoverage(); }
+function propensityCandidatesHtml() {
+  var rows = propensityReadinessScan();
+  if (!rows.length) return '<div class="hint">No unscored prospect currently has a free signal (probate, absentee, walk-found, underbuilt) worth spending a Tracerfy credit on.</div>';
+  var counts = { Hot: 0, Warm: 0, Cold: 0 };
+  rows.forEach(function (r) { var t = r.p.priority; counts[t] != null ? counts[t]++ : counts.Cold++; });
+  var tiers = ['all', 'Hot', 'Warm', 'Cold'];
+  var chips = tiers.map(function (t) {
+    var label = t === 'all' ? 'All (' + rows.length + ')' : t + ' (' + counts[t] + ')';
+    var on = propensityFilterTier === t;
+    return '<span class="chip' + (on ? ' on' : '') + '" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();propensitySetFilter(\'' + t + '\')">' + esc(label) + '</span>';
+  }).join('');
+  var shown = propensityFilterTier === 'all' ? rows : rows.filter(function (r) { return (r.p.priority || 'Cold') === propensityFilterTier; });
+  var h = '<div class="hint" style="margin-bottom:6px;">' + rows.length + ' unscored prospect' + (rows.length === 1 ? '' : 's') + ' with at least one free signal &mdash; sorted by strongest signal first, then priority. Everyone else is either already scored, ruled out, or has no free signal yet worth a paid hit.</div>';
+  h += '<div style="margin-bottom:6px;">' + chips + '</div>';
+  if (!shown.length) { h += '<div class="hint">No ' + esc(propensityFilterTier) + ' prospects in this batch.</div>'; }
+  h += shown.map(function (r) {
+    var p = r.p, checked = propensityBatch[p.id] ? ' checked' : '';
+    return '<div class="qi"><div class="txt"><label style="cursor:pointer;" onclick="event.stopPropagation();">'
+      + '<input type="checkbox"' + checked + ' onchange="propensityBatchToggle(\'' + esc(p.id) + '\')" style="margin-right:6px;">'
+      + '<span class="t1">' + esc(p.address || p.owner_name || 'Unknown') + (p.priority ? ' · ' + esc(p.priority) : '') + '</span></label>'
+      + '<div class="t2">' + esc(r.signals.join(', ')) + '</div></div></div>';
+  }).join('');
+  var selCount = Object.keys(propensityBatch).filter(function (k) { return propensityBatch[k]; }).length;
+  h += '<div style="margin-top:8px;"><button class="qbtn done" onclick="event.stopPropagation();copyPropensityBatch()">Copy batch' + (selCount ? ' (' + selCount + ' selected)' : ' (' + shown.length + ' shown)') + '</button> <span class="hint">paste to Claude in a session to actually run it &mdash; Tracerfy isn&rsquo;t reachable from the app directly</span></div>';
+  return h;
+}
+function copyPropensityBatch() {
+  var rows = propensityReadinessScan();
+  var shown = propensityFilterTier === 'all' ? rows : rows.filter(function (r) { return (r.p.priority || 'Cold') === propensityFilterTier; });
+  var selIds = Object.keys(propensityBatch).filter(function (k) { return propensityBatch[k]; });
+  var batch = selIds.length ? rows.filter(function (r) { return propensityBatch[String(r.p.id)]; }) : shown;
+  if (!batch.length) { toast('Nothing to copy'); return; }
+  var txt = 'Run Tracerfy lead_lookup for propensity scoring on this batch (' + batch.length + ' address' + (batch.length === 1 ? '' : 'es') + '):\n\n'
+    + batch.map(function (r) { return (r.p.address || 'no address on file') + ' — ' + r.signals.join(', '); }).join('\n');
+  var done = function () { toast('Batch copied — paste to Claude to run it ✓'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { toast('Could not copy — select manually'); });
+}
 /* ===== Tracerfy candidates awaiting a pick (2026-07-24) — closes the gap flagged in the 2026-07-23
    batch-run notes: 24 of 41 hits came back ambiguous (multiple residents at one address, no clear
    owner) and got parked in prospects.extra.tracerfy_needs_review/tracerfy_candidates with nowhere
@@ -3720,6 +3803,10 @@ function renderCoverage() {
   var trCandCount = tracerfyCandidatesScan().length;
   h += secToggleHtml('cov-tracerfy-candidates', 'Tracerfy candidates awaiting a pick — ' + trCandCount) + secBodyOpen('cov-tracerfy-candidates')
     + tracerfyCandidatesHtml() + '</div>';
+
+  var propCount = propensityReadinessScan().length;
+  h += secToggleHtml('cov-propensity', 'Propensity candidates — ' + propCount + ' worth a credit') + secBodyOpen('cov-propensity')
+    + propensityCandidatesHtml() + '</div>';
 
   var ltLeads = leadsNeedingTriageScan(), ltFarms = farmsNeedingTriageScan();
   h += secToggleHtml('cov-leadsfarms', 'Leads & farms waiting on triage — ' + (ltLeads.length + ltFarms.rows.length)) + secBodyOpen('cov-leadsfarms')
@@ -4573,10 +4660,21 @@ function setRecordArchitect(table, id) {
   r.extra.architect = v.trim() || null;
   sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Saved ✓'); renderBrowse(); });
 }
+/* Shared chain explainer (2026-07-24, three-lens follow-up): architect/style/building tagging was
+   spread across four entry points (offmarket, prospects, transactions, listings) each with a bare
+   section label and no explanation of the underlying concept anywhere -- a returning user had to
+   already know what "chain" meant. One sentence, written once, shown identically everywhere a
+   chain-tagging group renders (immediately before the architect/style/building trio), instead of
+   five slightly different framings or none at all. Adjacency watch (anchorChainHtml, buyers) is a
+   different mechanic -- buyer-to-property, not property-to-property -- so it keeps its own copy,
+   already honest about being approximate, rather than being folded into this one. */
+function chainIntroHtml() {
+  return '<div class="hint" style="margin:8px 0 2px;">Tag it once — anything else in Spiro OS sharing the same tag surfaces here automatically, no matter which tab it lives in.</div>';
+}
 function offmarketChainHtml(oid) {
   var o = recOf('offmarket', oid); if (!o) return '';
   var architect = o.extra && o.extra.architect;
-  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Set architect</button>';
@@ -4593,7 +4691,7 @@ function offmarketChainHtml(oid) {
 function prospectChainHtml(pid) {
   var p = recOf('prospects', pid); if (!p) return '';
   var architect = p.extra && p.extra.architect;
-  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')">&#65291; Set architect</button>';
@@ -4611,7 +4709,7 @@ function prospectChainHtml(pid) {
 function transactionChainHtml(tid) {
   var t = recOf('transactions', tid); if (!t) return '';
   var architect = t.extra && t.extra.architect;
-  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')">&#65291; Set architect</button>';
@@ -4857,7 +4955,7 @@ function listingChainHtml(sid) {
   var l = recOf('listings', sid); if (!l) return '';
   var architect = l.extra && l.extra.architect;
   var checked = !!(l.extra && l.extra.chain_checked);
-  var h = '<div class="flabel" style="margin-top:12px;">Architect / neighborhood chain</div>';
+  var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   if (!architect) {
     h += '<button class="qbtn" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')">&#65291; Set architect</button>';
   } else {
@@ -5347,6 +5445,64 @@ async function fetchBrief(force) {
     }
   } catch (e) { body.textContent = 'Brief unavailable — check your connection.'; }
   briefBusy = false;
+}
+
+/* ---------- AI-judgment pass on "Who to call" (2026-07-24) ----------
+   "Who to call" grew a long stack of individually-justified sections over one night (propensity
+   hot pockets, owner portfolios, buyer twins, neighborhood velocity, converging signals,
+   reactivation, adjacency watch) with no way to tell which ones actually matter TODAY vs. which
+   are just "worth knowing about" — exactly the clutter problem flagged in the three-lens review.
+   This does NOT re-derive any of that chain logic server-side (that would duplicate a lot of
+   client geo/pairwise computation for no benefit) — it sends a condensed summary of what the
+   client already computed and asks Claude to triage it into "top 3 today" + "safe to skim".
+   Cached per-day like the morning brief, and — cost discipline — skipped entirely (no API call)
+   when there's nothing in any section to triage in the first place. */
+function intelFocusSummary() {
+  var sections = [];
+  function add(name, items) { if (items && items.length) sections.push({ section: name, items: items }); }
+
+  add('who_to_call', buyersToCallRows().slice(0, 6).map(function (r) {
+    return { name: r.name, best_score: r.best, match_count: r.count, reasons: r.reasons };
+  }));
+  var leads = (DATA.prospects || []).filter(function (p) { return p.status === 'lead_draft' && !(p.extra && p.extra.triage); }).length;
+  if (leads) add('seller_leads_to_review', [{ count: leads }]);
+  add('chain_check_needed', listingsNeedingChainCheck().slice(0, 3).map(function (l) { return { address: l.address, architect: l.extra && l.extra.architect }; }));
+  add('press_check_needed', listingsNeedingPressCheck().slice(0, 3).map(function (l) { return { address: l.address, status: l.status }; }));
+  add('worth_a_retouch', reactivationSignals().slice(0, 5).map(function (r) { return { buyer: recLabel('buyers', r.buyer_id), address: r.addr, now_status: r.status }; }));
+  add('adjacency_watch', anchorSignals().slice(0, 5).map(function (a) { return { buyer: recLabel('buyers', a.buyer_id), anchor: a.anchor, nearby_count: a.count }; }));
+  add('propensity_hot_pockets', propensityHotPockets().slice(0, 5).map(function (h) { return { area: h.area, high: h.high.length, medium: h.medium.length }; }));
+  add('possible_same_owner', possibleOwnerPortfolios().slice(0, 5).map(function (g) { return { match_type: g.matchType, addresses: g.records.map(function (r) { return r.address; }) }; }));
+  add('similar_buyers', buyerTwins().slice(0, 5).map(function (p) { return { buyer_a: p.a.name, buyer_b: p.b.name, shared_areas: p.sim.areaOverlap.length }; }));
+  add('neighborhood_heating_up', neighborhoodVelocity().slice(0, 5).map(function (h) { return { area: h.area, recent_closings: h.recent, prior_closings: h.prior }; }));
+  add('converging_signals', convergenceSignals().slice(0, 5).map(function (h) { return { area: h.area, kinds: h.kinds }; }));
+  return sections;
+}
+var aiFocusBusy = false;
+async function fetchAiFocus(force) {
+  var el = document.getElementById('ai-focus-body');
+  if (!el || aiFocusBusy) return;
+  var today = todayIso();
+  try {
+    if (!force && localStorage.getItem('spiro_focus_date') === today) {
+      var cached = localStorage.getItem('spiro_focus_text');
+      if (cached) { el.textContent = cached; el.style.display = ''; return; }
+    }
+  } catch (e) {}
+  var sections = intelFocusSummary();
+  if (!sections.length) { el.style.display = 'none'; return; } /* nothing to triage -- skip the AI call entirely */
+  aiFocusBusy = true;
+  el.style.display = ''; el.textContent = 'Triaging today’s focus…';
+  try {
+    var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'focus', text: JSON.stringify(sections) } }), 20000, { error: { message: 'timeout' } });
+    if (r.error || !r.data || r.data.error || !r.data.focus) {
+      el.textContent = 'AI triage unavailable right now — the sections below are still live as always.';
+    } else {
+      el.textContent = r.data.focus;
+      try { localStorage.setItem('spiro_focus_date', today); localStorage.setItem('spiro_focus_text', r.data.focus); } catch (e) {}
+      logEvent('system', null, 'ai.focus_pass', 'AI focus triage generated');
+    }
+  } catch (e) { el.textContent = 'AI triage unavailable — check your connection.'; }
+  aiFocusBusy = false;
 }
 
 /* ---------- portal photos (read-only mirror; the portal is the single source of truth) ---------- */
