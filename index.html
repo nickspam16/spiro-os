@@ -509,6 +509,20 @@
       <div id="calendar-suggestions-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Market review queue (2026-07-24, per Nick): the Mon/Thu MLS-monitor feed (market_events)
+         used to be a flat read-only list wedged inside the generic Records panel — no way to act on
+         an event, and "Market" isn't really a record type. Now its own panel: each event gets X
+         (dismiss, reversible) and Flag for buyer (a lightweight "maybe, still reviewing" tag —
+         deliberately NOT the same as the matches table's buyer-card suggestions, per Nick's call
+         2026-07-24: this is a Market-only queue, not a second entry point into that pipeline).
+         Needs-review items group together up top so they're easy to parse in one pass; already-
+         handled ones collapse below for reference/undo. -->
+    <div class="card" id="market-card" style="display:none;">
+      <h2>Market <button class="hbtn" onclick="event.stopPropagation();fetchMarket(true)" title="Refresh">&#8635;</button></h2>
+      <div class="hint" style="margin:-6px 0 10px;">New listings, sales, and price changes from your Mon/Thu MLS monitor — dismiss what's not interesting, or flag one for a buyer to review later.</div>
+      <div id="market-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <div class="card" id="coverage-card" style="display:none;">
       <h2 onclick="toggleCoverage()" style="cursor:pointer;">Data Coverage <span id="coverage-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();renderCoverage()" title="Refresh">&#8635;</button></h2>
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
@@ -562,7 +576,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.129.0';
+var APP_VERSION = 'v5.130.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -646,7 +660,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -662,7 +676,7 @@ function closePanel() {
   if (homeId === 'records-card' && ['agents', 'reengage', 'market', 'people'].indexOf(browseTab) !== -1) { browseTab = 'listings'; renderTabs(); renderBrowse(); }
 }
 function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
-function menuGoMarket() { setTab('market'); openPanel('records-card'); }
+function menuGoMarket() { openPanel('market-card'); renderMarketReview(); }
 function menuGoPeople() { setTab('people'); openPanel('records-card'); }
 function menuShowIntel() { openPanel('intel-card'); }
 function menuShowPortal() { openPanel('portal-card'); }
@@ -1125,7 +1139,9 @@ function render() {
   var moreReengageN = document.getElementById('more-menu-reengage-n');
   if (moreReengageN) moreReengageN.textContent = reengageCandidateCount();
   var moreMarketN = document.getElementById('more-menu-market-n');
-  if (moreMarketN) moreMarketN.textContent = (MARKET.events || []).length;
+  if (moreMarketN) { var mPending = (MARKET.events || []).filter(function (e) { return e.review_status === 'pending' || !e.review_status; }).length; moreMarketN.textContent = mPending ? String(mPending) : ''; }
+  var marketCard = document.getElementById('market-card');
+  if (marketCard && marketCard.style.display !== 'none') renderMarketReview();
   var morePeopleN = document.getElementById('more-menu-people-n');
   /* 2026-07-23: Agents folded into Contacts (its own "⋮" entry removed) — count needs to include
      the synthetic agent-only rows peopleList() adds for agents with no linked contacts row, or
@@ -6997,7 +7013,7 @@ function reengageCandidateCount() {
    see the TABS comment above). Needed so renderTabs can show *something* when one of these is
    active, instead of a tab strip where nothing is highlighted and the "Records" header never
    changes — see the note in renderTabs below. */
-var HIDDEN_TAB_LABELS = { agents: 'Agents', reengage: 'Relationships', market: 'Market', people: 'Contacts' };
+var HIDDEN_TAB_LABELS = { agents: 'Agents', reengage: 'Relationships', people: 'Contacts' };
 function renderTabs() {
   document.getElementById('tabs').innerHTML = TABS.map(function (t) {
     var n = t[0] === 'market' ? (MARKET.events || []).length : t[0] === 'reengage' ? reengageCandidateCount() : t[0] === 'people' ? (DATA.contacts || []).length : (DATA[t[0]] || []).length;
@@ -7020,39 +7036,99 @@ function renderTabs() {
 
 /* ---------- market tab (S2): the Mon/Thu MLS monitor's home ---------- */
 var MARKET = { config: [], events: [], snaps: [], at: 0 };
-async function fetchMarket() {
-  if (MARKET.at && Date.now() - MARKET.at < 30 * 60 * 1000) return;
+async function fetchMarket(force) {
+  if (!force && MARKET.at && Date.now() - MARKET.at < 30 * 60 * 1000) return;
   try {
     var res = await Promise.all([
       sb.from('monitor_config').select('neighborhood,luxury_floor,high_dollar_sale_floor,active').eq('active', true),
-      sb.from('market_events').select('event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market').order('event_date', { ascending: false }).limit(40),
+      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id').order('event_date', { ascending: false }).limit(80),
       sb.from('market_snapshots').select('snapshot_date,neighborhood,active_count,median_list_price,months_of_inventory').order('snapshot_date', { ascending: false }).limit(30)
     ]);
     if (!res[0].error) MARKET.config = res[0].data || [];
     if (!res[1].error) MARKET.events = res[1].data || [];
     if (!res[2].error) MARKET.snaps = res[2].data || [];
     MARKET.at = Date.now();
-    if (browseTab === 'market') { renderTabs(); renderBrowse(); }
+    var mCard = document.getElementById('market-card');
+    if (mCard && mCard.style.display !== 'none') renderMarketReview();
     renderCoverage(); /* freshness half of the coverage card depends on MARKET, which lands after the initial render() */
   } catch (e) {}
 }
 function fmtMoney(n) { return n == null ? '' : '$' + Number(n).toLocaleString('en-US'); }
-function marketHtml() {
+/* Market review queue (2026-07-24) — replaces the old read-only marketHtml(). Needs-review events
+   (review_status='pending') group together up top so Nick can parse the day's new events in one
+   pass; dismissed/flagged ones collapse into a lighter "Already reviewed" section below, kept
+   around (not deleted) so a dismiss or a flag is undoable. */
+function marketEventLine(e) {
+  var facts = [e.neighborhood, fmtDate(e.event_date), fmtMoney(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ');
+  var actions = '';
+  if (e.review_status === 'pending') {
+    actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + esc(e.id) + '\')">&times; Not interesting</button>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Flag for buyer</button>';
+  } else if (e.review_status === 'dismissed') {
+    actions = '<span class="hint">Dismissed</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
+  } else if (e.review_status === 'flagged') {
+    actions = '<span class="hint">Flagged for ' + esc(recLabel('buyers', e.flagged_buyer_id) || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
+  }
+  return '<div class="qi"><div class="txt"><div class="t1">' + esc((e.event_type || '') + ' · ' + (e.address || e.neighborhood || '')) + '</div>'
+    + '<div class="t2">' + esc(facts) + '</div><div style="margin-top:6px;">' + actions + '</div></div></div>';
+}
+async function dismissMarketEvent(id) {
+  var r = await sb.from('market_events').update({ review_status: 'dismissed', reviewed_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not dismiss'); return; }
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
+  if (e) { e.review_status = 'dismissed'; }
+  renderMarketReview(); toast('Dismissed');
+}
+async function undoMarketEventReview(id) {
+  var r = await sb.from('market_events').update({ review_status: 'pending', flagged_buyer_id: null, reviewed_at: null }).eq('id', id).select('id');
+  if (r.error) { toast('Could not undo'); return; }
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
+  if (e) { e.review_status = 'pending'; e.flagged_buyer_id = null; }
+  renderMarketReview(); toast('Back to needs-review');
+}
+var flagMarketEventId = null;
+function openFlagMarketEvent(id) {
+  flagMarketEventId = id;
+  var body = document.getElementById('market-body'); if (!body) return;
+  var opts = (DATA.buyers || []).slice().sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); })
+    .map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>'; }).join('');
+  var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
+    + '<div class="flabel">Flag for which buyer? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
+    + '<select id="market-flag-buyer" style="margin-top:8px;"><option value="">Pick a buyer…</option>' + opts + '</select>'
+    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="renderMarketReview()">Cancel</button></div>'
+    + '</div>';
+  body.insertAdjacentHTML('afterbegin', pickerHtml);
+  document.getElementById('market-flag-buyer').focus();
+}
+async function confirmFlagMarketEvent() {
+  var sel = document.getElementById('market-flag-buyer');
+  var buyerId = sel ? sel.value : '';
+  if (!buyerId) { toast('Pick a buyer first'); return; }
+  var id = flagMarketEventId;
+  var r = await sb.from('market_events').update({ review_status: 'flagged', flagged_buyer_id: buyerId, reviewed_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not flag'); return; }
+  var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
+  if (e) { e.review_status = 'flagged'; e.flagged_buyer_id = buyerId; }
+  flagMarketEventId = null;
+  renderMarketReview(); toast('Flagged for ' + (recLabel('buyers', buyerId) || 'buyer'));
+}
+function renderMarketReview() {
+  var body = document.getElementById('market-body'); if (!body) return;
+  var events = MARKET.events || [];
+  var pending = events.filter(function (e) { return e.review_status === 'pending' || !e.review_status; });
+  var handled = events.filter(function (e) { return e.review_status === 'dismissed' || e.review_status === 'flagged'; });
   var h = '';
-  if (MARKET.events.length) {
-    h += '<div class="bucket">Latest market events</div>';
-    MARKET.events.forEach(function (e) {
-      h += '<div class="qi"><div class="txt"><div class="t1">' + esc((e.event_type || '') + ' · ' + (e.address || e.neighborhood || '')) + '</div>'
-        + '<div class="t2">' + esc([e.neighborhood, fmtDate(e.event_date), fmtMoney(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ')) + '</div></div></div>';
-    });
-  } else {
-    h += '<div class="empty">No market events yet — your MLS monitor sweeps Monday and Thursday mornings, and its findings will land here.</div>';
+  h += '<div class="bucket">To review (' + pending.length + ')</div>';
+  h += pending.length ? pending.map(marketEventLine).join('') : '<div class="empty">Nothing new to review — your MLS monitor sweeps Monday and Thursday mornings.</div>';
+  if (handled.length) {
+    h += '<div class="bucket" style="margin-top:16px;">Already reviewed</div>';
+    h += handled.map(marketEventLine).join('');
   }
   var latest = {};
   MARKET.snaps.forEach(function (s) { if (!latest[s.neighborhood]) latest[s.neighborhood] = s; });
   var snapKeys = Object.keys(latest);
   if (snapKeys.length) {
-    h += '<div class="bucket" style="margin-top:14px;">Neighborhood pulse</div>';
+    h += '<div class="bucket" style="margin-top:16px;">Neighborhood pulse</div>';
     snapKeys.forEach(function (k) {
       var s = latest[k];
       h += '<div class="qi"><div class="txt"><div class="t1">' + esc(k) + '</div><div class="t2">'
@@ -7060,10 +7136,10 @@ function marketHtml() {
     });
   }
   if (MARKET.config.length) {
-    h += '<div class="bucket" style="margin-top:14px;">Watching</div><div class="hint" style="line-height:1.7;">'
+    h += '<div class="bucket" style="margin-top:16px;">Watching</div><div class="hint" style="line-height:1.7;">'
       + MARKET.config.map(function (c) { return esc(c.neighborhood) + ' (alerts from ' + fmtMoney(c.luxury_floor) + ')'; }).join(' · ') + '</div>';
   }
-  return h;
+  body.innerHTML = h;
 }
 var browseHot = false;
 var propSeg = 'active';   /* #7: which layer of the Listings hub is showing: active listings | escrow | past */
@@ -8774,10 +8850,6 @@ async function archiveDuplicate(table, id) {
   renderBrowse(); toast('Archived ✓');
 }
 function renderBrowse() {
-  if (browseTab === 'market') {
-    document.getElementById('browse').innerHTML = marketHtml();
-    return;
-  }
   if (browseTab === 'reengage') {
     document.getElementById('browse').innerHTML = reengageHtml();
     return;
