@@ -336,6 +336,7 @@
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuShowCalendarSuggestions()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Calendar suggestions <span id="more-menu-calsug-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
             <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
@@ -495,6 +496,17 @@
       <div id="pricing-preview-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Calendar suggestions (2026-07-24, per Nick): candidate showings synced read-only from his
+         iCloud calendar via CalDAV (caldav-showing-sync edge function, Supabase Cron every 30 min —
+         see calendar_suggestions table). Never auto-written into real showings; each one needs a
+         one-tap confirm or dismiss here first, since matching a personal-calendar event's free text
+         to a listing/buyer is inherently fuzzy and this calendar has plenty of non-work events too. -->
+    <div class="card" id="calendar-suggestions-card" style="display:none;">
+      <h2>Calendar suggestions</h2>
+      <div class="hint" style="margin:-6px 0 10px;">Candidate showings found on your iCloud calendar — confirm to add as a real showing, or dismiss if it's not one.</div>
+      <div id="calendar-suggestions-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <div class="card" id="coverage-card" style="display:none;">
       <h2 onclick="toggleCoverage()" style="cursor:pointer;">Data Coverage <span id="coverage-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();renderCoverage()" title="Refresh">&#8635;</button></h2>
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
@@ -548,7 +560,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.125.0';
+var APP_VERSION = 'v5.127.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -623,7 +635,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -657,6 +669,141 @@ function menuShowBrief() {
   fetchBrief(false); /* cached per-day; card was hidden so this is likely the first paint of it this load */
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
+function menuShowCalendarSuggestions() { openPanel('calendar-suggestions-card'); renderCalendarSuggestionsCard(); }
+/* Calendar suggestions review (2026-07-24) — one row per candidate showing pulled from Nick's
+   iCloud calendar (calendar_suggestions table, filled by the caldav-showing-sync edge function on
+   its own Supabase Cron schedule, not a Claude session). Confirm writes a REAL showings row (using
+   the matched listing's property_id when there is one, else just the free-text location/title) and
+   marks the suggestion confirmed; dismiss just marks it dismissed. Neither ever happens
+   automatically — see the big comment on the edge function for why matching stays a suggestion. */
+function calendarSuggestionById(id) { var s = null; (DATA.calendar_suggestions || []).forEach(function (x) { if (String(x.id) === String(id)) s = x; }); return s; }
+function renderCalendarSuggestionsCard() {
+  var el = document.getElementById('calendar-suggestions-body'); if (!el) return;
+  var pending = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending'; })
+    .sort(function (a, b) { return String(a.start_ts || '').localeCompare(String(b.start_ts || '')); });
+  /* Flagged = already-confirmed showings whose calendar event later moved or disappeared (set by
+     the sync's reschedule/no-show pass) — surfaced here too since it's the same review workflow. */
+  var flagged = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'confirmed' && s.flag; })
+    .sort(function (a, b) { return String(a.start_ts || '').localeCompare(String(b.start_ts || '')); });
+  if (!pending.length && !flagged.length) { el.innerHTML = '<div class="empty">No pending calendar matches right now.</div>'; return; }
+  var h = '';
+  if (flagged.length) {
+    h += '<div class="flabel">Calendar changed on a confirmed showing</div>' + flagged.map(function (s) {
+      var q = "'" + esc(String(s.id)) + "'";
+      if (s.flag === 'missing') {
+        return '<div class="qi"><div class="txt"><div class="t1">' + esc(s.title || 'Showing') + '</div>'
+          + '<div class="t2">Was ' + esc(whenShort(s.start_ts)) + ' — event no longer on your calendar</div>'
+          + '<div class="t2"><span class="pill warn">event removed</span></div></div>'
+          + '<button class="qbtn" onclick="event.stopPropagation();cancelFlaggedShowing(' + q + ')">Cancel showing</button>'
+          + '<button class="qbtn" onclick="event.stopPropagation();clearSuggestionFlag(' + q + ')">Still happening</button></div>';
+      }
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(s.title || 'Showing') + '</div>'
+        + '<div class="t2">Was ' + esc(whenShort(s.start_ts)) + ' → now ' + esc(whenShort(s.flag_new_start_ts)) + '</div>'
+        + '<div class="t2"><span class="pill warn">time changed on your calendar</span></div></div>'
+        + '<button class="qbtn done" onclick="event.stopPropagation();applySuggestionReschedule(' + q + ')">Update showing time</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();clearSuggestionFlag(' + q + ')">Keep original</button></div>';
+    }).join('');
+  }
+  if (pending.length) {
+    h += '<div class="flabel">New candidate showings</div>' + pending.map(function (s) {
+      var matchLabel = s.matched_listing_id ? ('Listing: ' + esc(recLabel('listings', s.matched_listing_id) || 'Unknown listing'))
+        : s.matched_buyer_id ? ('Buyer: ' + esc(recLabel('buyers', s.matched_buyer_id) || 'Unknown buyer')) : 'No match';
+      var confBadge = s.match_confidence === 'high' ? '<span class="pill ok">likely match</span>' : '<span class="pill warn">loose match — check</span>';
+      var typeBadge = s.event_type === 'open_house' ? ' <span class="pill">open house</span>' : '';
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(s.title || 'Calendar event') + '</div>'
+        + '<div class="t2">' + esc(whenShort(s.start_ts)) + (s.location ? ' · ' + esc(s.location) : '') + '</div>'
+        + '<div class="t2">' + matchLabel + ' ' + confBadge + typeBadge + '</div></div>'
+        + '<button class="qbtn done" onclick="event.stopPropagation();confirmCalendarSuggestion(\'' + esc(String(s.id)) + '\')">&#10003; Confirm</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();dismissCalendarSuggestion(\'' + esc(String(s.id)) + '\')">Not a showing</button></div>';
+    }).join('');
+  }
+  el.innerHTML = h;
+}
+async function confirmCalendarSuggestion(id) {
+  var s = calendarSuggestionById(id); if (!s) return;
+  var lst = s.matched_listing_id ? recOf('listings', s.matched_listing_id) : null;
+
+  /* Open-house-titled events go into open_houses, not showings — different table, different
+     downstream UI (listingOpenHouseHtml), same one-tap-confirm principle. Needs a matched listing;
+     without one there's nowhere to file it, so fall through to the normal showing path instead. */
+  if (s.event_type === 'open_house' && lst) {
+    var ohRow = { listing_key: String(lst.id), start_ts: s.start_ts, end_ts: s.end_ts || null, oh_type: 'Public', remarks: s.title || null };
+    var rOh = await sb.from('open_houses').insert(ohRow).select('*');
+    if (rOh.error) { toast('Could not save — try again'); return; }
+    if (rOh.data && rOh.data[0]) DATA.open_houses.push(rOh.data[0]);
+    var r2oh = await sb.from('calendar_suggestions').update({ status: 'confirmed' }).eq('id', id).select('id');
+    if (r2oh.error) { toast('Open house added, but couldn’t clear the suggestion — try again'); }
+    s.status = 'confirmed';
+    logEvent('listings', lst.id, 'openhouse.scheduled', 'Open house confirmed from calendar: ' + (s.title || lst.address));
+    toast('Open house added ✓'); render();
+    return;
+  }
+
+  if (!confirmPastConflict(s.start_ts, null)) return;
+  var row = {
+    property_id: lst ? lst.property_id : null,
+    property_ref: lst ? lst.address : (s.location || s.title || 'Showing'),
+    buyer_id: s.matched_buyer_id || null,
+    showing_ts: s.start_ts,
+    status: 'scheduled',
+    notes: s.title || null
+  };
+  var r = await sb.from('showings').insert(row).select('*');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var newShowing = r.data && r.data[0];
+  if (newShowing) DATA.showings.push(newShowing);
+  var r2 = await sb.from('calendar_suggestions').update({ status: 'confirmed', linked_showing_id: newShowing ? newShowing.id : null }).eq('id', id).select('id');
+  if (r2.error) { toast('Showing added, but couldn’t clear the suggestion — try again'); }
+  s.status = 'confirmed'; s.linked_showing_id = newShowing ? newShowing.id : null;
+  logEvent(lst ? 'listings' : 'buyers', lst ? lst.id : s.matched_buyer_id, 'showing.scheduled', 'Showing confirmed from calendar: ' + (s.title || row.property_ref));
+  if (newShowing) await scheduleShowingFollowup(newShowing);
+  toast('Showing added ✓'); render();
+}
+async function dismissCalendarSuggestion(id) {
+  var s = calendarSuggestionById(id); if (!s) return;
+  s.status = 'dismissed'; renderCalendarSuggestionsCard();
+  var r = await sb.from('calendar_suggestions').update({ status: 'dismissed' }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); s.status = 'pending'; renderCalendarSuggestionsCard(); return; }
+  toast('Dismissed');
+}
+/* Reschedule/no-show review actions (2026-07-24) — for suggestions the sync flagged after they
+   were already confirmed. Applying a reschedule updates the real showing's time (one tap, never
+   automatic); "keep original"/"still happening" just clears the flag without changing anything. */
+async function applySuggestionReschedule(id) {
+  var s = calendarSuggestionById(id); if (!s || !s.flag_new_start_ts) return;
+  if (s.linked_showing_id) {
+    var patch = { showing_ts: s.flag_new_start_ts };
+    var r = await sb.from('showings').update(patch).eq('id', s.linked_showing_id).select('id');
+    if (r.error) { toast('Could not save — try again'); return; }
+    var sh = showingById(s.linked_showing_id);
+    if (sh) { sh.showing_ts = s.flag_new_start_ts; await scheduleShowingFollowup(sh); }
+  }
+  var r2 = await sb.from('calendar_suggestions').update({ start_ts: s.flag_new_start_ts, flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
+  if (r2.error) { toast('Could not clear — try again'); return; }
+  s.start_ts = s.flag_new_start_ts; s.flag = null; s.flag_new_start_ts = null; s.flag_detected_at = null;
+  toast('Showing time updated ✓'); render();
+}
+async function clearSuggestionFlag(id) {
+  var s = calendarSuggestionById(id); if (!s) return;
+  var prevFlag = s.flag, prevNew = s.flag_new_start_ts;
+  s.flag = null; s.flag_new_start_ts = null; renderCalendarSuggestionsCard();
+  var r = await sb.from('calendar_suggestions').update({ flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); s.flag = prevFlag; s.flag_new_start_ts = prevNew; renderCalendarSuggestionsCard(); return; }
+  toast('Got it');
+}
+async function cancelFlaggedShowing(id) {
+  var s = calendarSuggestionById(id); if (!s) return;
+  if (s.linked_showing_id) {
+    var sh = showingById(s.linked_showing_id);
+    if (sh) sh.status = 'cancelled';
+    var r = await sb.from('showings').update({ status: 'cancelled' }).eq('id', s.linked_showing_id).select('id');
+    if (r.error) { toast('Could not save — try again'); return; }
+  }
+  var r2 = await sb.from('calendar_suggestions').update({ flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
+  if (r2.error) { toast('Could not clear — try again'); return; }
+  s.flag = null; s.flag_new_start_ts = null;
+  toast('Showing cancelled'); render();
+}
 function menuShowPricingPreview(presetListingId) {
   openPanel('pricing-preview-card');
   if (presetListingId) PP_SELECTED_LISTING = String(presetListingId);
@@ -733,7 +880,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [] };
+var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -901,9 +1048,10 @@ async function loadAll(manual) {
     sb.from('property_listing_agents').select('property_id,agent_id,is_primary'),
     sb.from('share_links').select('id,slug,kind,label,offmarket_id,offmarket_ids,buyer_id,target_url,created_at,archived,recipient_agent_id,expires_at').order('created_at', { ascending: false }),
     sb.from('share_link_views').select('link_id,ts'),
-    sb.from('area_aliases').select('alias,canonical_name')
+    sb.from('area_aliases').select('alias,canonical_name'),
+    sb.from('calendar_suggestions').select('*').or('status.eq.pending,flag.not.is.null').order('start_ts', { ascending: true })
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions'];
   var okCount = 0;
   for (var i = 0; i < res.length; i++) {
     if (!res[i].error && res[i].data) { DATA[names[i]] = res[i].data; okCount++; }
@@ -979,6 +1127,10 @@ function render() {
   if (moreFarmingN) { var fLeads = farmingLeads(); moreFarmingN.textContent = fLeads.length ? String(fLeads.length) : ''; }
   var farmCard = document.getElementById('farming-card');
   if (farmCard && farmCard.style.display !== 'none') renderFarming();
+  var moreCalSugN = document.getElementById('more-menu-calsug-n');
+  if (moreCalSugN) { var pendingSug = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending' || (s.status === 'confirmed' && s.flag); }); moreCalSugN.textContent = pendingSug.length ? String(pendingSug.length) : ''; }
+  var calSugCard = document.getElementById('calendar-suggestions-card');
+  if (calSugCard && calSugCard.style.display !== 'none') renderCalendarSuggestionsCard();
   /* SECURITY: APP_VERSION is the full internal build changelog (client names, deal specifics,
      negotiation notes) — never render it whole on the public page. Only the leading "vX.Y.Z"
      token is public-facing; the rest stays in source for Claude/Nick's own reference. */
@@ -3458,6 +3610,54 @@ function isoToLocalInput(iso) {
 }
 function showingById(id) { var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === String(id)) s = x; }); return s; }
 
+/* Double-booking guard (2026-07-24) — now that a real calendar feed exists, a manually-entered
+   showing time that collides with one already on the books is worth a heads-up before saving.
+   Returns the conflicting showing (or null); +/-30min counts as a collision. Never blocks by
+   itself — callers decide whether to confirm through it, same pattern as the app's other
+   window.confirm() guards (formDirty, merge, portal reset, etc). */
+function conflictingShowing(whenIso, excludeId) {
+  if (!whenIso) return null;
+  var t = new Date(whenIso).getTime(); if (isNaN(t)) return null;
+  var hit = null;
+  (DATA.showings || []).forEach(function (s) {
+    if (hit || s.status === 'cancelled' || !s.showing_ts) return;
+    if (excludeId && String(s.id) === String(excludeId)) return;
+    var st = new Date(s.showing_ts).getTime(); if (isNaN(st)) return;
+    if (Math.abs(st - t) <= 30 * 60000) hit = s;
+  });
+  return hit;
+}
+function confirmPastConflict(whenIso, excludeId) {
+  var c = conflictingShowing(whenIso, excludeId);
+  if (!c) return true;
+  return window.confirm('You already have a showing around ' + whenShort(c.showing_ts) + ' (' + (c.property_ref || c.notes || 'another showing') + ').\n\nSchedule this one anyway?');
+}
+/* Showing follow-up chain (2026-07-24) — closes the loop that was entirely manual before: every
+   confirmed showing (calendar-sourced or hand-entered) gets a same-pattern Today's Focus nudge a
+   day later to capture feedback, using the exact source_key delete-then-insert convention already
+   used by the outreach chain (markMailed/markResponded) so re-running this is always idempotent. */
+async function scheduleShowingFollowup(showing) {
+  if (!showing || !showing.id || !showing.showing_ts) return; // no time yet ("TBD") — nothing to schedule against
+  var sk = 'showingfu:' + showing.id;
+  var due = new Date(new Date(showing.showing_ts).getTime() + 86400000);
+  var label = showing.property_ref || showing.notes || 'the showing';
+  var fu = {
+    record_type: showing.buyer_id ? 'buyers' : 'showings',
+    record_id: showing.buyer_id || showing.id,
+    record_label: label,
+    source_key: sk,
+    manual: false,
+    action_text: 'How did the showing go — ' + label + '?',
+    due_date: dueIso(due.getTime()),
+    urgency: 'later',
+    status: 'open'
+  };
+  await sb.from('followups').delete().eq('source_key', sk);
+  DATA.followups = (DATA.followups || []).filter(function (f) { return f.source_key !== sk; });
+  var r = await sb.from('followups').insert(fu).select('*');
+  if (!r.error && r.data && r.data[0]) DATA.followups.push(r.data[0]);
+}
+
 function buyerShowingsHtml(buyerId) {
   var buyer = recOf('buyers', buyerId), q = "'" + esc(buyerId) + "'";
   var list = (DATA.showings || []).filter(function (s) { return String(s.buyer_id) === String(buyerId) && s.status !== 'cancelled'; })
@@ -3494,11 +3694,13 @@ async function saveShowingEdit(id) {
   var when = (document.getElementById('esh-when-' + id) || {}).value;
   var note = String((document.getElementById('esh-note-' + id) || {}).value || '').trim();
   var patch = { property_ref: prop || null, showing_ts: when ? new Date(when).toISOString() : null, notes: note || null };
+  if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
   if (r.error) { toast('Could not save — try again'); return; }
   var s = showingById(id);
   if (s) { s.property_ref = patch.property_ref; s.showing_ts = patch.showing_ts; s.notes = patch.notes; }
   logEvent('buyers', s ? s.buyer_id : null, 'showing.edited', 'Showing updated: ' + (prop || 'property') + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
+  if (s) await scheduleShowingFollowup(s);
   toast('Updated ✓'); render();
 }
 function showingForm(buyerId) {
@@ -3517,10 +3719,12 @@ async function saveShowing(buyerId) {
   var note = String((document.getElementById('sh-note-' + buyerId) || {}).value || '').trim();
   if (!prop) { toast('Enter the property'); return; }
   if (!when) { toast('Pick a date & time'); return; }
-  var row = { buyer_id: buyerId, property_ref: prop, showing_ts: new Date(when).toISOString(), status: 'scheduled', notes: note || null };
+  var whenIso = new Date(when).toISOString();
+  if (!confirmPastConflict(whenIso, null)) return;
+  var row = { buyer_id: buyerId, property_ref: prop, showing_ts: whenIso, status: 'scheduled', notes: note || null };
   var r = await sb.from('showings').insert(row).select('*');
   if (r.error) { toast('Could not save — try again'); return; }
-  if (r.data && r.data[0]) DATA.showings.push(r.data[0]);
+  if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   var buyer = recOf('buyers', buyerId);
   logEvent('buyers', buyerId, 'showing.scheduled', 'Showing: ' + prop + (buyer ? ' for ' + buyer.name : ''));
   toast('Showing scheduled'); render();
@@ -3620,11 +3824,13 @@ async function saveListingShowingEdit(id, listingId) {
   var when = (document.getElementById('elsh-when-' + id) || {}).value;
   if (!who) { toast('Enter who\'s coming'); return; }
   var patch = { notes: who, showing_ts: when ? new Date(when).toISOString() : null };
+  if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
   if (r.error) { toast('Could not save — try again'); return; }
   var s = showingById(id);
   if (s) { s.notes = patch.notes; s.showing_ts = patch.showing_ts; }
   logEvent('listings', listingId, 'showing.edited', 'Showing updated: ' + who + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
+  if (s) await scheduleShowingFollowup(s);
   toast('Updated ✓'); render();
 }
 function listingShowingForm(listingId) {
@@ -3645,11 +3851,13 @@ async function saveListingShowing(listingId) {
   if (!who) { toast('Enter who\'s coming'); return; }
   var lst = recOf('listings', listingId);
   if (!lst || !lst.property_id) { toast('This listing has no linked property yet — link one first'); return; }
+  var whenIso = when ? new Date(when).toISOString() : null;
+  if (whenIso && !confirmPastConflict(whenIso, null)) return;
   var label = who + (note ? ' — ' + note : '');
-  var row = { property_id: lst.property_id, property_ref: lst.address, buyer_id: null, showing_ts: when ? new Date(when).toISOString() : null, status: 'scheduled', notes: label };
+  var row = { property_id: lst.property_id, property_ref: lst.address, buyer_id: null, showing_ts: whenIso, status: 'scheduled', notes: label };
   var r = await sb.from('showings').insert(row).select('*');
   if (r.error) { toast('Could not save — try again'); return; }
-  if (r.data && r.data[0]) DATA.showings.push(r.data[0]);
+  if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   logEvent('listings', listingId, 'showing.scheduled', 'Showing: ' + label);
   toast('Showing scheduled'); render();
 }
