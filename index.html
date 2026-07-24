@@ -336,6 +336,7 @@
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
             <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
             <a href="javascript:void(0)" onclick="menuShowBrief()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Morning Brief</a>
@@ -477,8 +478,21 @@
     <div class="card" id="farming-card" style="display:none;">
       <h2>Farming</h2>
       <div class="hint" id="farming-note" style="margin:-6px 0 10px;">Showing walk-by leads with a snapped location &mdash; more sources coming.</div>
+      <div id="farming-pockets"></div>
       <div id="farming-map" style="height:360px;border:1px solid var(--line);border-radius:var(--radius);"></div>
       <div id="farming-detail" style="margin-top:10px;"></div>
+      <div id="farming-tracerfy" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Pricing Preview dashboard (2026-07-24): moved out of the per-listing detail card, per Nick
+         — off-market pricing previews to agents happen ~3x/year, not something that should sit in
+         the daily listing view every time he opens a property. Same previewSuggestHtml/previewDraft/
+         previewMarkInvited logic as before, just relocated behind the "..." menu with a listing
+         picker so it's a deliberate visit, not ambient clutter. -->
+    <div class="card" id="pricing-preview-card" style="display:none;">
+      <h2>Pricing Preview</h2>
+      <div class="hint" id="pp-note" style="margin:-6px 0 10px;">Pick agents to preview an off-market listing to before it hits the portal — nothing sends automatically.</div>
+      <div id="pricing-preview-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <div class="card" id="coverage-card" style="display:none;">
@@ -534,7 +548,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.123.0';
+var APP_VERSION = 'v5.125.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -609,7 +623,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -643,6 +657,27 @@ function menuShowBrief() {
   fetchBrief(false); /* cached per-day; card was hidden so this is likely the first paint of it this load */
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
+function menuShowPricingPreview(presetListingId) {
+  openPanel('pricing-preview-card');
+  if (presetListingId) PP_SELECTED_LISTING = String(presetListingId);
+  renderPricingPreviewCard();
+}
+function pricingPreviewSetListing(id) { PP_SELECTED_LISTING = id || null; renderPricingPreviewCard(); }
+function renderPricingPreviewCard() {
+  var el = document.getElementById('pricing-preview-body'); if (!el) return;
+  var listings = (DATA.listings || []).slice().sort(function (a, b) { return String(a.address || '').localeCompare(String(b.address || '')); });
+  var opts = '<option value="">Choose a listing…</option>' + listings.map(function (l) {
+    return '<option value="' + esc(String(l.id)) + '"' + (PP_SELECTED_LISTING === String(l.id) ? ' selected' : '') + '>' + esc(l.address || 'Listing') + '</option>';
+  }).join('');
+  var h = '<select onchange="pricingPreviewSetListing(this.value)" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:var(--radius);margin-bottom:6px;">' + opts + '</select>';
+  if (PP_SELECTED_LISTING) {
+    var body = previewSuggestHtml(PP_SELECTED_LISTING);
+    h += body || '<div class="empty">No ranked agents for this listing yet.</div>';
+  } else {
+    h += '<div class="empty">Pick a listing above to preview it to agents.</div>';
+  }
+  el.innerHTML = h;
+}
 function menuShowCoverage() {
   openPanel('coverage-card');
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
@@ -3413,6 +3448,15 @@ function gcalUrl(title, startISO, endISO, details, location) {
 function whenShort(iso) { return iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'TBD'; }
 function shCancel(id) { var b = document.getElementById('sh-' + id); if (b) b.innerHTML = ''; }
 function ohCancel(id) { var b = document.getElementById('oh-' + id); if (b) b.innerHTML = ''; }
+/* Local-time <input type=datetime-local> value from an ISO string (2026-07-24, showing-edit fix).
+   datetime-local wants "YYYY-MM-DDTHH:MM" in the viewer's local time, not UTC — a naive
+   .toISOString().slice(0,16) would silently shift the displayed time by the browser's UTC offset. */
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function showingById(id) { var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === String(id)) s = x; }); return s; }
 
 function buyerShowingsHtml(buyerId) {
   var buyer = recOf('buyers', buyerId), q = "'" + esc(buyerId) + "'";
@@ -3425,10 +3469,37 @@ function buyerShowingsHtml(buyerId) {
       var cal = s.showing_ts ? ' <a href="' + esc(gcalUrl('Showing — ' + (s.property_ref || 'property') + (buyer ? ' (' + buyer.name + ')' : ''), s.showing_ts, null, s.notes || '', s.property_ref || '')) + '" target="_blank" rel="noopener" class="hint" onclick="event.stopPropagation();">+ Calendar &#8599;</a>' : '';
       return '<div class="qi"><div class="txt"><div class="t1"' + (done ? ' style="text-decoration:line-through;opacity:.55;"' : '') + '>' + esc(s.property_ref || 'Property') + '</div><div class="t2">' + esc(whenShort(s.showing_ts) + (s.notes ? ' · ' + s.notes : '')) + '</div></div>'
         + (done ? '' : '<button class="qbtn done" onclick="event.stopPropagation();setShowingStatus(' + sid + ",'done')\">&#10003;</button>")
-        + '<button class="qbtn" onclick="event.stopPropagation();setShowingStatus(' + sid + ",'cancelled')\">&#10005;</button>" + cal + '</div>';
+        + '<button class="qbtn" onclick="event.stopPropagation();editShowingForm(' + sid + ')">Edit</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();setShowingStatus(' + sid + ",'cancelled')\">&#10005;</button>" + cal + '</div><div id="esh-' + esc(String(s.id)) + '"></div>';
     }).join('') + '</div>';
   } else h += '<span class="hint">none scheduled</span>';
   return h + '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();showingForm(' + q + ')">Schedule a showing</button></div><div id="sh-' + esc(buyerId) + '"></div>';
+}
+/* Edit an existing showing's time/property/notes (2026-07-24) — the create flow (showingForm/
+   saveShowing) always existed, but there was no way to fix a wrong or TBD time after the fact
+   short of cancelling and re-creating. Caught from a real case: a listing showed "Ali Jack — Fri
+   7/24 (time TBD)" with no edit path even though the actual time (10am) was known. */
+function editShowingForm(id) {
+  var s = showingById(id); if (!s) return;
+  var box = document.getElementById('esh-' + id); if (!box) return;
+  box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
+    + '<input type="text" id="esh-prop-' + esc(id) + '" placeholder="Property (address)" value="' + esc(s.property_ref || '') + '" style="width:100%;margin-bottom:6px;">'
+    + '<input type="datetime-local" id="esh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
+    + '<input type="text" id="esh-note-' + esc(id) + '" placeholder="Notes (optional)" value="' + esc(s.notes || '') + '" style="width:100%;margin:6px 0;">'
+    + '<button class="qbtn done" onclick="event.stopPropagation();saveShowingEdit(\'' + esc(id) + '\')">Save</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'esh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
+}
+async function saveShowingEdit(id) {
+  var prop = String((document.getElementById('esh-prop-' + id) || {}).value || '').trim();
+  var when = (document.getElementById('esh-when-' + id) || {}).value;
+  var note = String((document.getElementById('esh-note-' + id) || {}).value || '').trim();
+  var patch = { property_ref: prop || null, showing_ts: when ? new Date(when).toISOString() : null, notes: note || null };
+  var r = await sb.from('showings').update(patch).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var s = showingById(id);
+  if (s) { s.property_ref = patch.property_ref; s.showing_ts = patch.showing_ts; s.notes = patch.notes; }
+  logEvent('buyers', s ? s.buyer_id : null, 'showing.edited', 'Showing updated: ' + (prop || 'property') + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
+  toast('Updated ✓'); render();
 }
 function showingForm(buyerId) {
   var box = document.getElementById('sh-' + buyerId); if (!box) return;
@@ -3527,10 +3598,34 @@ function listingShowingsHtml(listingId) {
       var cal = s.showing_ts ? ' <a href="' + esc(gcalUrl('Showing — ' + (lst ? lst.address : ''), s.showing_ts, null, s.notes || '', lst ? lst.address : '')) + '" target="_blank" rel="noopener" class="hint" onclick="event.stopPropagation();">+ Calendar &#8599;</a>' : '';
       return '<div class="qi"><div class="txt"><div class="t1"' + (done ? ' style="text-decoration:line-through;opacity:.55;"' : '') + '>' + esc(s.notes || 'Showing') + '</div><div class="t2">' + esc(s.showing_ts ? whenShort(s.showing_ts) : 'Time TBD') + '</div></div>'
         + (done ? '' : '<button class="qbtn done" onclick="event.stopPropagation();setListingShowingStatus(' + sid + ",'done')\">&#10003;</button>")
-        + '<button class="qbtn" onclick="event.stopPropagation();setListingShowingStatus(' + sid + ",'cancelled')\">&#10005;</button>" + cal + '</div>';
+        + '<button class="qbtn" onclick="event.stopPropagation();editListingShowingForm(' + sid + ',' + q + ')">Edit</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();setListingShowingStatus(' + sid + ",'cancelled')\">&#10005;</button>" + cal + '</div><div id="elsh-' + esc(String(s.id)) + '"></div>';
     }).join('') + '</div>';
   } else h += '<span class="hint">none scheduled</span>';
   return h + '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();listingShowingForm(' + q + ')">Schedule a showing</button></div><div id="lsh-' + esc(listingId) + '"></div>';
+}
+/* Edit an existing listing-side showing (2026-07-24) — same gap as the buyer-side one: no way to
+   fix a wrong or TBD time after scheduling short of cancelling and re-creating. */
+function editListingShowingForm(id, listingId) {
+  var s = showingById(id); if (!s) return;
+  var box = document.getElementById('elsh-' + id); if (!box) return;
+  box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
+    + '<input type="text" id="elsh-who-' + esc(id) + '" placeholder="Who (e.g. Jane Smith)" value="' + esc(s.notes || '') + '" style="width:100%;margin-bottom:6px;">'
+    + '<label class="hint">When</label> <input type="datetime-local" id="elsh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
+    + '<button class="qbtn done" onclick="event.stopPropagation();saveListingShowingEdit(\'' + esc(id) + '\',\'' + esc(listingId) + '\')">Save</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'elsh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
+}
+async function saveListingShowingEdit(id, listingId) {
+  var who = String((document.getElementById('elsh-who-' + id) || {}).value || '').trim();
+  var when = (document.getElementById('elsh-when-' + id) || {}).value;
+  if (!who) { toast('Enter who\'s coming'); return; }
+  var patch = { notes: who, showing_ts: when ? new Date(when).toISOString() : null };
+  var r = await sb.from('showings').update(patch).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var s = showingById(id);
+  if (s) { s.notes = patch.notes; s.showing_ts = patch.showing_ts; }
+  logEvent('listings', listingId, 'showing.edited', 'Showing updated: ' + who + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
+  toast('Updated ✓'); render();
 }
 function listingShowingForm(listingId) {
   var box = document.getElementById('lsh-' + listingId); if (!box) return;
@@ -3619,7 +3714,7 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + pricingPreviewLinkHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
@@ -6270,6 +6365,18 @@ function rankAgentsForList(ids) {
    mark invited. Tracking writes to listing_preview_agents IF present; guarded to no-op until that
    table is added (DDL is Nick-OK-gated; migration staged in /migrations, NOT applied). ===== */
 var PREVIEW_SEL = {};   /* listingId -> { agentId: true } transient selection */
+var PP_SELECTED_LISTING = null;   /* which listing the Pricing Preview dashboard (menuShowPricingPreview) is showing */
+/* One-line breadcrumb on the listing card itself (2026-07-24) — the full pricing-preview workflow
+   now lives in its own dashboard (Pricing Preview, "..." menu), not here, since it's a ~3x/year
+   action and doesn't belong in the everyday listing view. This link jumps straight there with the
+   listing pre-selected, so it's still one tap away without being ambient clutter every time the
+   card renders. Only shows if there's actually a ranked-agent list worth previewing to. */
+function pricingPreviewLinkHtml(listingId) {
+  var x = recOf('listings', listingId); if (!x || !(DATA.agents || []).length) return '';
+  var ranked = rankAgentsForListing(x).filter(function (r) { return r.score > 0; });
+  if (!ranked.length) return '';
+  return '<div class="qi" style="cursor:pointer;margin-top:12px;" onclick="event.stopPropagation();menuShowPricingPreview(\'' + esc(listingId) + '\')"><div class="txt"><div class="t1">Pricing preview <span class="hint">→ open dashboard</span></div><div class="t2">' + ranked.length + ' agent' + (ranked.length === 1 ? '' : 's') + ' worth previewing to</div></div></div>';
+}
 function previewToggle(lid, aid) {
   PREVIEW_SEL[lid] = PREVIEW_SEL[lid] || {};
   if (PREVIEW_SEL[lid][aid]) delete PREVIEW_SEL[lid][aid]; else PREVIEW_SEL[lid][aid] = true;
@@ -6961,11 +7068,40 @@ function farmingPinDetail(id) {
     + '<div style="margin-top:8px;"><button class="qbtn" onclick="jumpToRecord(\'prospects\',\'' + esc(String(p.id)) + '\')">View full record</button></div>'
     + '</div>';
 }
+/* Tracerfy hand-off, scoped to what's actually on this map (2026-07-24, per Nick — "farms to parse
+   through and send to Tracerfy"). The underlying scan/batch mechanics already existed for ALL
+   active prospects (tracerfyReadinessScan/copyTracerfyBatch, in the Data Coverage panel) — this
+   isn't a new subsystem, just the same read-only, never-spends check filtered down to the leads
+   actually visible on this map, with its own copy button so a walk-by pocket can be handed off
+   without leaving the map view. */
+function farmingTracerfyHtml() {
+  var ids = {}; farmingLeads().forEach(function (p) { ids[String(p.id)] = true; });
+  var s = tracerfyReadinessScan();
+  var batch = s.missing.concat(s.nameOnly).filter(function (p) { return ids[String(p.id)]; });
+  if (!batch.length) return '';
+  return '<div class="flabel">Ready for Tracerfy</div>'
+    + '<div class="hint" style="margin-bottom:6px;">' + batch.length + ' walk-by lead' + (batch.length === 1 ? '' : 's') + ' on this map missing owner name/contact.</div>'
+    + '<button class="qbtn" onclick="event.stopPropagation();copyFarmingTracerfyBatch()">Copy batch for Tracerfy</button> '
+    + '<span class="hint">paste to Claude in a session to actually run it</span>';
+}
+function copyFarmingTracerfyBatch() {
+  var ids = {}; farmingLeads().forEach(function (p) { ids[String(p.id)] = true; });
+  var s = tracerfyReadinessScan();
+  var batch = s.missing.concat(s.nameOnly).filter(function (p) { return ids[String(p.id)]; });
+  if (!batch.length) { toast('Nothing to copy'); return; }
+  var txt = 'Send this batch to Tracerfy (' + batch.length + ' address' + (batch.length === 1 ? '' : 'es') + '):\n\n'
+    + batch.map(function (p) { return (p.address || 'no address on file') + (p.owner_name ? ' — ' + p.owner_name : ''); }).join('\n');
+  var done = function () { toast('Batch copied — paste to Claude to run it ✓'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { toast('Could not copy — select manually'); });
+  else toast('Copy not supported — select manually');
+}
 function renderFarming() {
   var mapEl = document.getElementById('farming-map'); if (!mapEl || !window.L) return;
   var leads = farmingLeads();
   var pocketCounts = farmingPocketCounts();
   var out = document.getElementById('farming-detail'); if (out) out.innerHTML = '';
+  var pocketsEl = document.getElementById('farming-pockets'); if (pocketsEl) pocketsEl.innerHTML = walkByPocketsHtml();
+  var tracerfyEl = document.getElementById('farming-tracerfy'); if (tracerfyEl) tracerfyEl.innerHTML = farmingTracerfyHtml();
   if (!FARMING_MAP) {
     FARMING_MAP = L.map('farming-map', { scrollWheelZoom: false });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
