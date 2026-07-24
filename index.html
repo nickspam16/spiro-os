@@ -591,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.135.0';
+var APP_VERSION = 'v5.136.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1328,7 +1328,7 @@ function convergenceSignals() {
     byArea[area] = byArea[area] || { architect: [], style: [], deals: [], reactivation: [] };
     byArea[area][kind].push(item);
   }
-  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
     (DATA[t] || []).forEach(function (r) {
       var addr = r.address || r.address_area, area = areaKeyOf(addr);
       if (!area) return;
@@ -4087,7 +4087,7 @@ function recordExtras(table, id) {
     h += agentContactFlagHtml(sid) + agentDealsHtml(sid);
     more += agentSuggestHtml(sid) + agentSignalsHtml(sid) + agentAreasHtml(sid) + agentLeadsHtml(sid) + agentSharesHtml(sid) + agentIgFeaturesHtml(sid);
   }
-  if (table === 'transactions') { h += escrowExtras(sid) + pressMentionsHtml('transactions', sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
+  if (table === 'transactions') { h += escrowExtras(sid) + pressMentionsHtml('transactions', sid) + transactionChainHtml(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal; chain tag added 2026-07-24 so closed off-book deals (e.g. Cromwell) can still surface as style/architect neighbors */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
@@ -4096,7 +4096,7 @@ function recordExtras(table, id) {
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
-    h += styleChainHtml('prospects', sid) + buildingChainHtml('prospects', sid);
+    h += prospectChainHtml(sid);
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
     if (px) {
       var t = triageOf(px);
@@ -4372,6 +4372,41 @@ function offmarketChainHtml(oid) {
   h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid);
   return h;
 }
+/* Prospect + transaction architect-tag chains (2026-07-24, gap fix): setRecordArchitect() was
+   already generic across tables, and convergenceSignals()/styleNeighbors() were already scanning
+   prospects for extra.architect — but no prospect UI ever rendered a way to SET it, so that field
+   could never actually get populated from the Prospects tab. Same generic "tap to tag" pattern as
+   offmarketChainHtml, just pointed at 'prospects'. Style/building chains for prospects already
+   existed (styleChainHtml/buildingChainHtml calls in recordExtras) — this just adds the missing
+   third leg so all three chain types work identically across listings/offmarket/prospects. */
+function prospectChainHtml(pid) {
+  var p = recOf('prospects', pid); if (!p) return '';
+  var architect = p.extra && p.extra.architect;
+  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  h += architect
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')">&#65291; Set architect</button>';
+  h += styleChainHtml('prospects', pid) + buildingChainHtml('prospects', pid);
+  return h;
+}
+/* Transaction chain (2026-07-24, gap fix): closed deals had NO chain UI at all and were excluded
+   from every chain-matching scan (styleNeighbors/buildingNeighbors/convergenceSignals all only
+   looked at listings/prospects/offmarket). Sold listings stay in DATA.listings so they were
+   already covered there -- but a deal like 4961 Cromwell Ave, which is filed ONLY as a
+   transactions row (buyer intentionally not in the CRM, no listing/offmarket record exists), had
+   no way to be tagged for future chain-prospecting even though the PROPERTY's architecture is not
+   sensitive, only the buyer's identity is. Tagging the transaction's style/architect lets a future
+   Chislehurst-style match surface without touching the private buyer info on that same row. */
+function transactionChainHtml(tid) {
+  var t = recOf('transactions', tid); if (!t) return '';
+  var architect = t.extra && t.extra.architect;
+  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  h += architect
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')">&#65291; Set architect</button>';
+  h += styleChainHtml('transactions', tid) + buildingChainHtml('transactions', tid);
+  return h;
+}
 function toggleChainChecked(sid) {
   var l = recOf('listings', sid); if (!l) return;
   l.extra = Object.assign({}, l.extra || {});
@@ -4431,7 +4466,7 @@ function styleNeighbors(table, id) {
   var addr = r.address || r.address_area;
   var pp = propPoint({ address: addr }); if (!pp) return [];
   var out = [];
-  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
     (DATA[t] || []).forEach(function (o) {
       if (t === table && String(o.id) === String(id)) return;
       if (!o.extra || !o.extra.style) return;
@@ -4487,7 +4522,7 @@ function buildingNeighbors(table, id) {
   var r = recOf(table, id); if (!r || !r.extra || !r.extra.building) return [];
   var name = String(r.extra.building).toLowerCase();
   var out = [];
-  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
     (DATA[t] || []).forEach(function (o) {
       if (t === table && String(o.id) === String(id)) return;
       if (!o.extra || !o.extra.building || String(o.extra.building).toLowerCase() !== name) return;
