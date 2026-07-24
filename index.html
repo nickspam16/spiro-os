@@ -534,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.118.0';
+var APP_VERSION = 'v5.120.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1036,6 +1036,10 @@ function renderIntel() { try {
     return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.id)) + '\')"><div class="txt"><div class="t1">' + esc(r.name) + ' <span class="hint">→ open</span></div><div class="t2">' + r.count + ' match' + (r.count === 1 ? '' : 'es') + ' · best ' + r.best + '/10 · ' + esc(r.reasons.join(', ')) + '</div></div></div>';
   }).join('');
   if (leads) html += '<div class="qi deadline" style="cursor:pointer;" onclick="setTab(\'prospects\')"><div class="txt"><div class="t1">' + leads + ' seller lead' + (leads === 1 ? '' : 's') + ' to review <span class="hint">→ open</span></div><div class="t2">Expired/withdrawn + probate — triage them in your Prospects tab</div></div></div>';
+  var needChain = listingsNeedingChainCheck();
+  if (needChain.length) html += needChain.slice(0, 3).map(function (l) {
+    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + esc(String(l.id)) + '\')"><div class="txt"><div class="t1">Chain-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.extra.architect) + ' — architect/neighborhood chain not run yet</div></div></div>';
+  }).join('');
   var reactivate = reactivationSignals();
   if (reactivate.length) {
     html += '<div class="flabel" style="margin-top:14px;">Worth a re-touch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; they passed, something changed since</span></div>';
@@ -3527,7 +3531,7 @@ function recordExtras(table, id) {
     more += buyerCriteriaHtml(sid); /* Showings + Timeline deliberately dropped from the buyer card per Nick's call — not useful there; sharing now lives in the Share Links panel */
   }
   if (table === 'offmarket') {
-    h += listAgentHtml(sid) + leadBuyersHtml(sid);
+    h += listAgentHtml(sid) + leadBuyersHtml(sid) + offmarketChainHtml(sid);
     var lsug = leadSuggestedBuyersHtml(sid);
     if (lsug.count) {
       var lsid = 'sugg-offmarket-' + sid;
@@ -3537,13 +3541,18 @@ function recordExtras(table, id) {
   }
   if (table === 'agents') {
     h += agentContactFlagHtml(sid) + agentDealsHtml(sid);
-    more += agentSuggestHtml(sid) + agentSignalsHtml(sid) + agentAreasHtml(sid) + agentLeadsHtml(sid) + agentSharesHtml(sid);
+    more += agentSuggestHtml(sid) + agentSignalsHtml(sid) + agentAreasHtml(sid) + agentLeadsHtml(sid) + agentSharesHtml(sid) + agentIgFeaturesHtml(sid);
   }
   if (table === 'transactions') { h += escrowExtras(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
-  if (table === 'listings') { h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid); more += listingMarketingUrlHtml(sid); }
+  if (table === 'listings') {
+    var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
+    h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null);
+    more += listingMarketingUrlHtml(sid);
+  }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
+    h += styleChainHtml('prospects', sid);
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
     if (px) {
       var t = triageOf(px);
@@ -3770,6 +3779,239 @@ function listingPrepChecklistHtml(sid) {
     }).join('');
     h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();prepAddTask(\'' + esc(sid) + '\',\'' + esc(cat) + '\')">&#65291; Add</button>';
   });
+  return h;
+}
+
+/* ===== Architect + neighborhood chain auto-flag (2026-07-24) =====
+   No new tables — architect + chain_checked live on listings.extra (same jsonb-no-migration
+   convention as prep_tasks/marketing_url). A listing with an architect set and not yet
+   chain-checked surfaces in the "Needs you" pulse bar the moment it's signed (the listing row
+   exists) — Spiro OS can't run the actual web research itself (static PWA, no LLM/search of its
+   own), so this only auto-FLAGS the need; a Claude session or Nick still does the research and
+   taps "Chain checked" when done. See CLAUDE.md "Prospecting chains" for the full workflow. */
+function listingsNeedingChainCheck() {
+  return (DATA.listings || []).filter(function (l) { return l.extra && l.extra.architect && !l.extra.chain_checked; });
+}
+function setListingArchitect(sid) {
+  var l = recOf('listings', sid); if (!l) return;
+  var cur = (l.extra && l.extra.architect) || '';
+  var v = prompt('Architect for this listing (leave blank to clear):', cur);
+  if (v === null) return;
+  l.extra = Object.assign({}, l.extra || {});
+  l.extra.architect = v.trim() || null;
+  if (!l.extra.architect) l.extra.chain_checked = false; /* clearing the architect un-flags any check */
+  sb.from('listings').update({ extra: l.extra, updated_at: nowStamp() }).eq('id', sid).then(function () { toast('Saved ✓'); renderBrowse(); });
+}
+/* Generic architect tag for tables other than listings (2026-07-24, per Nick — offmarket leads
+   should carry the tag too, not just be matched against ones set elsewhere). No chain_checked/
+   pulse-flag semantics here — that auto-flag is specifically tied to a SIGNED listing (see
+   listingsNeedingChainCheck); an offmarket lead's architect tag just feeds the matching engine
+   (architect-chain lookups you run by hand, and styleNeighbors' scan) until/unless it becomes an
+   actual listing, at which point setListingArchitect + the real chain-check flag take over. */
+function setRecordArchitect(table, id) {
+  var r = recOf(table, id); if (!r) return;
+  var cur = (r.extra && r.extra.architect) || '';
+  var v = prompt('Architect (leave blank to clear):', cur);
+  if (v === null) return;
+  r.extra = Object.assign({}, r.extra || {});
+  r.extra.architect = v.trim() || null;
+  sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Saved ✓'); renderBrowse(); });
+}
+function offmarketChainHtml(oid) {
+  var o = recOf('offmarket', oid); if (!o) return '';
+  var architect = o.extra && o.extra.architect;
+  var h = '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
+  h += architect
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Set architect</button>';
+  h += styleChainHtml('offmarket', oid);
+  return h;
+}
+function toggleChainChecked(sid) {
+  var l = recOf('listings', sid); if (!l) return;
+  l.extra = Object.assign({}, l.extra || {});
+  l.extra.chain_checked = !l.extra.chain_checked;
+  sb.from('listings').update({ extra: l.extra, updated_at: nowStamp() }).eq('id', sid).then(function () { renderBrowse(); });
+}
+/* Style/era chain (2026-07-24, per Nick — Cromwell/Chislehurst case): architect identity is too
+   narrow a key on its own. 4961 Cromwell (Marshall P. Wilkinson) and 2258 Chislehurst (different
+   architect, same Tudor-ish style, next door) are both real chain candidates even though they
+   don't share an architect. `extra.style` is a free-text tag usable on listings AND prospects;
+   styleNeighbors finds other tagged records that share a style AND resolve to the same
+   neighborhood centroid. Honest limit: propPoint only has true lat/lng if MLS ever supplies it —
+   for everything else it resolves to a NEIGHBORHOOD centroid, not an exact parcel, so this can
+   say "same style, same neighborhood," not "literally next door." Real block-level adjacency
+   would need the regrid_parcels geocode adapter (already wired in enrich_v8) run on both records
+   for true lat/lng. Cromwell itself is intentionally NOT filed in Spiro OS (off-market, ultra-
+   private buyers, Nick will not use it to market his services) — style tagging works fine without
+   it existing as a record; Chislehurst just carries the tag on its own. */
+function setRecordStyle(table, id) {
+  var r = recOf(table, id); if (!r) return;
+  var cur = (r.extra && r.extra.style) || '';
+  var v = prompt('Architectural style/era tag (e.g. "Tudor Revival") — leave blank to clear:', cur);
+  if (v === null) return;
+  r.extra = Object.assign({}, r.extra || {});
+  r.extra.style = v.trim() || null;
+  sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Saved ✓'); renderBrowse(); });
+}
+/* Style FAMILIES (2026-07-24, per Nick — Cromwell is Mansard, Chislehurst is Tudor Revival, but
+   buyers for either aren't searching by exact taxonomy; they're after "good bones, old house,
+   character" vs. "clean-lined mid-century" vs. new construction, etc. Store the EXACT style as
+   entered (that stays the source of truth, shown first) but widen MATCHING to also catch same-
+   family records, not just same-label ones. Keyword buckets below are a starting curation from
+   real architectural vocabulary, not exhaustive — add keywords as new styles get tagged and don't
+   fit. A record can match a neighbor two ways: exact style (tightest — labeled "same style") or
+   same family only (broader — labeled "same family: X" so Nick can see it's a looser match, not
+   pretend precision the tag doesn't have). */
+var STYLE_FAMILIES = {
+  'Period / old-world character': ['tudor', 'mansard', 'second empire', 'french normandy', 'normandy', 'provincial', 'storybook', 'chateau', 'chateauesque', 'english cottage', 'cottage', 'colonial revival', 'georgian', 'jacobethan'],
+  'Spanish / Mediterranean': ['spanish', 'mediterranean', 'hacienda', 'monterey'],
+  'Mid-century modern': ['mid-century', 'midcentury', 'mid century', 'modern', 'post and beam', 'post & beam', 'ranch modern', 'case study'],
+  'Craftsman / bungalow': ['craftsman', 'bungalow', 'arts and crafts', 'arts & crafts'],
+  'Contemporary / new construction': ['contemporary', 'new construction', 'newly built', 'transitional']
+};
+function styleFamilyOf(styleText) {
+  var s = String(styleText || '').toLowerCase(); if (!s) return null;
+  var found = null;
+  Object.keys(STYLE_FAMILIES).forEach(function (fam) {
+    if (found) return;
+    if (STYLE_FAMILIES[fam].some(function (kw) { return s.indexOf(kw) !== -1; })) found = fam;
+  });
+  return found;
+}
+function styleNeighbors(table, id) {
+  var r = recOf(table, id); if (!r || !r.extra || !r.extra.style) return [];
+  var style = String(r.extra.style).toLowerCase();
+  var family = styleFamilyOf(r.extra.style);
+  var addr = r.address || r.address_area;
+  var pp = propPoint({ address: addr }); if (!pp) return [];
+  var out = [];
+  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (o) {
+      if (t === table && String(o.id) === String(id)) return;
+      if (!o.extra || !o.extra.style) return;
+      var oStyle = String(o.extra.style).toLowerCase();
+      var exact = oStyle.indexOf(style) !== -1 || style.indexOf(oStyle) !== -1;
+      var famMatch = family && styleFamilyOf(o.extra.style) === family;
+      if (!exact && !famMatch) return;
+      var op = propPoint({ address: o.address || o.address_area }); if (!op) return;
+      var d = haversineKm(pp, op); if (d > 2) return;
+      out.push({ table: t, id: o.id, address: o.address || o.address_area, style: o.extra.style, distance_km: d, matchType: exact ? 'exact' : 'family', family: family });
+    });
+  });
+  out.sort(function (a, b) { return (a.matchType === b.matchType ? 0 : a.matchType === 'exact' ? -1 : 1) || a.distance_km - b.distance_km; });
+  return out;
+}
+function styleChainHtml(table, id) {
+  var r = recOf(table, id); if (!r) return '';
+  var style = r.extra && r.extra.style;
+  var h = '<div class="flabel" style="margin-top:12px;">Style / era chain</div>';
+  if (!style) {
+    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Tag style</button>';
+    return h;
+  }
+  var family = styleFamilyOf(style);
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(style) + '</div><div class="t2">' + (family ? 'Family: ' + esc(family) + ' · ' : '') + 'tap to edit</div></div></div>';
+  var neighbors = styleNeighbors(table, id);
+  if (neighbors.length) {
+    h += neighbors.slice(0, 6).map(function (n) {
+      var tag = n.matchType === 'exact' ? 'same style' : 'same family: ' + esc(n.family || '');
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(n.style) + ' — ' + tag + ' · ' + n.distance_km.toFixed(1) + 'km away</div></div></div>';
+    }).join('');
+  }
+  return h;
+}
+
+function listingChainHtml(sid) {
+  var l = recOf('listings', sid); if (!l) return '';
+  var architect = l.extra && l.extra.architect;
+  var checked = !!(l.extra && l.extra.chain_checked);
+  var h = '<div class="flabel" style="margin-top:12px;">Architect / neighborhood chain</div>';
+  if (!architect) {
+    h += '<button class="qbtn" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')">&#65291; Set architect</button>';
+  } else {
+    h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
+    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" onclick="event.stopPropagation();toggleChainChecked(\'' + esc(sid) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark chain checked') + '</button>';
+  }
+  h += styleChainHtml('listings', sid);
+  return h;
+}
+
+/* ===== Comps-authority (2026-07-24) =====
+   No new schema. Every escrow (Pending or Sold — real contract prices, not asking prices) near a
+   given address is reusable pricing evidence for the next CMA/pitch in that pocket. Distance via
+   the existing centroid/haversine machinery (propPoint/haversineKm), same "same neighborhood"
+   radius convention as areaProximity. Scoped by Nick 2026-07-24: Pending only counts if a real
+   contract_price is on file — an asking price alone is not a comp, so a Pending escrow missing
+   contract_price_num prompts to enter it rather than silently using the list price. */
+function compsSignals(address, excludeTxId) {
+  var pp = propPoint({ address: address }); if (!pp) return [];
+  var out = [];
+  (DATA.transactions || []).forEach(function (tx) {
+    if (excludeTxId && String(tx.id) === String(excludeTxId)) return;
+    if (txIsClosed && !txIsClosed(tx) && String(tx.status || '').toLowerCase().indexOf('escrow') === -1) return; /* only real escrows: Pending-ish or closed */
+    var p2 = propPoint({ address: tx.address }); if (!p2) return;
+    var d = haversineKm(pp, p2); if (d > 3) return; /* ~ same pocket */
+    var lst = null; (DATA.listings || []).forEach(function (l) { if (l.property_id && tx.property_id && String(l.property_id) === String(tx.property_id)) lst = l; });
+    var sqftNum = lst && lst.sqft ? parseFloat(String(lst.sqft).replace(/[^0-9.]/g, '')) : null;
+    out.push({
+      tx_id: tx.id, address: tx.address, price_num: tx.contract_price_num || null, sqft: sqftNum,
+      pps: (tx.contract_price_num && sqftNum) ? Math.round(tx.contract_price_num / sqftNum) : null,
+      status: tx.status, closing_date: tx.closing_date, distance_km: d, needs_price: !tx.contract_price_num
+    });
+  });
+  out.sort(function (a, b) { return (b.closing_date || b.tx_id || '').localeCompare(a.closing_date || a.tx_id || ''); });
+  return out;
+}
+async function promptEscrowPrice(txId) {
+  var tx = recOf('transactions', txId); if (!tx) return;
+  var v = prompt('Contract price in escrow for ' + (tx.address || 'this deal') + ':', tx.contract_price || '');
+  if (v === null) return;
+  var n = numFrom(v);
+  if (n === null) { toast('Could not read that as a price'); return; }
+  var r = await sb.from('transactions').update({ contract_price: Math.round(n).toLocaleString('en-US'), contract_price_num: n, updated_at: nowStamp() }).eq('id', txId).select('id');
+  if (r.error) { toast('Could not save'); return; }
+  await loadAll(false); toast('Comp price saved ✓');
+}
+function compsHtml(address, excludeTxId) {
+  var comps = compsSignals(address, excludeTxId); if (!comps.length) return '';
+  var h = '<div class="flabel" style="margin-top:12px;">Comps nearby <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; real escrow prices, within ~3km</span></div>';
+  h += comps.slice(0, 6).map(function (c) {
+    if (c.needs_price) {
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + '</div><div class="t2">' + esc(c.status || 'In escrow') + ' — no contract price on file</div></div><button class="qbtn" onclick="event.stopPropagation();promptEscrowPrice(\'' + esc(String(c.tx_id)) + '\')">Enter price</button></div>';
+    }
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + ' &middot; ' + esc(Number(c.price_num).toLocaleString('en-US')) + (c.pps ? ' &middot; $' + c.pps.toLocaleString('en-US') + '/sqft' : '') + '</div><div class="t2">' + esc(c.status || '') + (c.closing_date ? ' · ' + esc(c.closing_date) : '') + ' · ' + c.distance_km.toFixed(1) + 'km away</div></div></div>';
+  }).join('');
+  return h;
+}
+
+/* ===== Agent-relationship / IG-feature credit log (2026-07-24) =====
+   Featuring another agent's listing on the Instagram account (with required credit, per the NAR
+   Article 12 compliance pillar) is a relationship deposit — worth a durable record on the agent's
+   own card, same jsonb-extra convention as everything else here. Log only, no reciprocity
+   nudge (Nick's call, 2026-07-24) — keeps it simple; revisit if it turns out to need a prompt. */
+function agentIgFeatures(aid) {
+  var a = recOf('agents', aid);
+  return (a && a.extra && Array.isArray(a.extra.ig_features)) ? a.extra.ig_features : [];
+}
+function logIgFeature(aid) {
+  var a = recOf('agents', aid); if (!a) return;
+  var listing = prompt('Which listing/post was featured?', '');
+  if (!listing) return;
+  var note = prompt('Any note (optional)?', '') || '';
+  a.extra = Object.assign({}, a.extra || {});
+  a.extra.ig_features = (Array.isArray(a.extra.ig_features) ? a.extra.ig_features : []).concat([{ date: todayIso(), listing: listing.trim(), note: note.trim() }]);
+  sb.from('agents').update({ extra: a.extra, updated_at: nowStamp() }).eq('id', aid).then(function () { toast('Logged ✓'); renderBrowse(); });
+}
+function agentIgFeaturesHtml(aid) {
+  var list = agentIgFeatures(aid);
+  var h = '<div class="flabel" style="margin-top:12px;">Instagram features</div>';
+  if (list.length) {
+    h += list.slice().reverse().slice(0, 6).map(function (f) {
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(f.listing || '') + '</div><div class="t2">' + esc(f.date || '') + (f.note ? ' · ' + esc(f.note) : '') + '</div></div></div>';
+    }).join('');
+  } else h += '<div class="hint">Not featured yet.</div>';
+  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logIgFeature(\'' + esc(aid) + '\')">&#65291; Log a feature</button>';
   return h;
 }
 function editShareBlurb(sid) {
