@@ -346,6 +346,7 @@
             <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowCoverage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Data Coverage <span id="more-menu-coverage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowClimate()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Climate &amp; Rates</a>
             <a href="javascript:void(0)" onclick="menuShowStats()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">All stats</a>
           </div>
         </div>
@@ -528,6 +529,20 @@
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Climate & Rates (2026-07-24, per Nick): low-priority, dropdown-only, "mostly for machine
+         learning" -- two free $0 enrichment feeds surfaced in one panel rather than as portal-facing
+         features. Mortgage rates: fred-sync already runs weekly (Fridays) into market_rates, this
+         just reads the latest 30yr/15yr readings -- no new backend needed, just the first UI on it.
+         Flood risk: fema-flood-lookup (built same day) queries FEMA's free NFHL by point and caches
+         forever; this panel lazy-looks-up flood zone for every listing/off-market record that has a
+         geocoded lat/lng (from the Mapbox/Census wiring shipped the same day), so it costs nothing on
+         repeat opens once a property's zone is cached. -->
+    <div class="card" id="climate-card" style="display:none;">
+      <h2>Climate &amp; Rates <button class="hbtn" onclick="event.stopPropagation();renderClimateCard(true)" title="Refresh">&#8635;</button></h2>
+      <div class="hint" style="margin:-6px 0 10px;">Free $0 feeds — current mortgage rates (FRED) and flood-zone risk (FEMA) for your geocoded listings and off-market prospects. Low-priority, enrichment-focused — not buyer-facing.</div>
+      <div id="climate-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <div class="card" id="form-card" style="display:none;">
       <h2 id="form-title"></h2>
       <div id="form-fields"></div>
@@ -576,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.131.0';
+var APP_VERSION = 'v5.132.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -660,7 +675,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -1048,8 +1063,8 @@ async function loadAll(manual) {
   var res = await Promise.all([
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
     sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true),
-    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at').not('archived', 'is', true),
-    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,follow_up_date,converted,notes,list_agent_id,property_id,updated_at').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true),
+    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('transactions').select('*').not('archived', 'is', true),
     sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
@@ -7195,6 +7210,99 @@ function renderMarketReview() {
       + MARKET.config.map(function (c) { return esc(c.neighborhood) + ' (alerts from ' + fmtMoney(c.luxury_floor) + ')'; }).join(' · ') + '</div>';
   }
   body.innerHTML = h;
+}
+
+/* ===== Climate & Rates (2026-07-24) =====
+   Low-priority, dropdown-only, "mostly for machine learning" per Nick -- surfaces two free $0
+   enrichment feeds rather than building them as portal-facing features. Mortgage rates already sync
+   weekly into market_rates via the existing fred-sync fn (built earlier, never had a UI); flood risk
+   is the new fema-flood-lookup fn, looked up per geocoded record and cached forever so repeat opens
+   cost nothing after the first lookup. */
+var FEMA_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/fema-flood-lookup';
+var FRED_SYNC_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/fred-sync';
+async function femaLookupCall(lat, lng, entityType, entityId) {
+  try {
+    var s = await sb.auth.getSession();
+    var tok = s.data && s.data.session && s.data.session.access_token;
+    if (!tok) return null;
+    var r = await withTimeout(fetch(FEMA_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ lat: lat, lng: lng, entity_type: entityType, entity_id: entityId }) }), 15000, { ok: false });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+function floodZoneLabel(g) {
+  if (!g) return 'Lookup failed';
+  if (!g.nfhl_coverage) return 'No NFHL data for this area';
+  var z = g.fld_zone || '?';
+  return z + (g.in_special_flood_hazard_area ? ' — special flood hazard area' : ' — minimal/no hazard');
+}
+async function renderClimateCard(force) {
+  var body = document.getElementById('climate-body'); if (!body) return;
+  body.innerHTML = '<div class="empty">Loading&hellip;</div>';
+
+  /* Mortgage rates -- read the latest reading per series from market_rates. fred-sync already runs
+     weekly (Fridays); "Sync now" below hits it on demand for a fresher read, same $0 public feed. */
+  var ratesH = '<div class="bucket">Mortgage rates <button class="hbtn" onclick="event.stopPropagation();fredSyncNow()" title="Sync latest from FRED">&#8635; Sync now</button></div>';
+  var rr = await sb.from('market_rates').select('series,rate_date,value').order('rate_date', { ascending: false }).limit(20);
+  if (!rr.error && rr.data && rr.data.length) {
+    var bySeries = {};
+    rr.data.forEach(function (row) { if (!bySeries[row.series]) bySeries[row.series] = row; });
+    var labels = { MORTGAGE30US: '30-yr fixed', MORTGAGE15US: '15-yr fixed' };
+    var keys = Object.keys(bySeries);
+    if (keys.length) {
+      ratesH += keys.map(function (k) {
+        var row = bySeries[k];
+        return '<div class="qi"><div class="txt"><div class="t1">' + esc(labels[k] || k) + ': ' + row.value + '%</div><div class="t2">as of ' + esc(row.rate_date) + '</div></div></div>';
+      }).join('');
+    } else {
+      ratesH += '<div class="empty">No rate readings yet — tap Sync now.</div>';
+    }
+  } else {
+    ratesH += '<div class="empty">No rate readings yet — tap Sync now.</div>';
+  }
+
+  /* Flood risk -- every geocoded listing/off-market record (extra.lat/extra.lng, from the Mapbox/
+     Census wiring shipped the same day). Lazy per-row lookups so a panel with zero geocoded records
+     yet doesn't stall on nothing; each row patches in place once its lookup resolves. */
+  var geocoded = [];
+  (DATA.listings || []).forEach(function (l) { var e = l.extra || {}; if (e.lat != null && e.lng != null) geocoded.push({ table: 'listings', id: l.id, address: l.address, lat: e.lat, lng: e.lng }); });
+  (DATA.offmarket || []).forEach(function (l) { var e = l.extra || {}; if (e.lat != null && e.lng != null) geocoded.push({ table: 'offmarket', id: l.id, address: l.address_area, lat: e.lat, lng: e.lng }); });
+
+  var floodH = '<div class="bucket" style="margin-top:16px;">Flood risk (FEMA) — ' + geocoded.length + ' geocoded ' + (geocoded.length === 1 ? 'record' : 'records') + '</div>';
+  if (!geocoded.length) {
+    floodH += '<div class="empty">Nothing geocoded yet — new/edited listings and off-market leads pick up coordinates automatically on save.</div>';
+  } else {
+    floodH += geocoded.map(function (g, i) {
+      return '<div class="qi" id="fema-row-' + i + '"><div class="txt"><div class="t1">' + esc(g.address || '(no address)') + '</div><div class="t2" id="fema-zone-' + i + '">Checking&hellip;</div></div></div>';
+    }).join('');
+  }
+
+  body.innerHTML = ratesH + floodH;
+
+  /* Fire off the per-row FEMA lookups now that the rows exist in the DOM -- small concurrency cap
+     so a large book of business doesn't fire 100 requests at once (cached rows resolve near-instant
+     regardless, so the cap mostly matters on first-ever run for a given property). */
+  var CONCURRENCY = 4, idx = 0;
+  async function nextFema() {
+    var i = idx++; if (i >= geocoded.length) return;
+    var g = geocoded[i];
+    var res = await femaLookupCall(g.lat, g.lng, g.table, g.id);
+    var el = document.getElementById('fema-zone-' + i);
+    if (el) el.textContent = floodZoneLabel(res);
+    return nextFema();
+  }
+  var workers = []; for (var w = 0; w < CONCURRENCY; w++) workers.push(nextFema());
+  await Promise.all(workers);
+}
+async function fredSyncNow() {
+  try {
+    await withTimeout(fetch(FRED_SYNC_FN + '?series=MORTGAGE30US,MORTGAGE15US&sinceDays=45', { method: 'POST' }), 15000, { ok: false });
+  } catch (e) {}
+  renderClimateCard(true);
+}
+function menuShowClimate() {
+  openPanel('climate-card');
+  renderClimateCard(false);
 }
 var browseHot = false;
 var propSeg = 'active';   /* #7: which layer of the Listings hub is showing: active listings | escrow | past */
