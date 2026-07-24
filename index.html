@@ -591,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.136.0';
+var APP_VERSION = 'v5.137.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -4588,7 +4588,14 @@ function anchorCandidates(bid) {
   var aParts = streetParts(b.extra.anchor_address);
   var pp = propPoint({ address: b.extra.anchor_address }); /* may be null — only used as a secondary signal */
   var out = [];
-  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+  /* 2026-07-24, per Nick: include transactions here too — matching is address-only (street+number
+     or lat/lng), same as every other table in this loop. The result objects below only ever carry
+     {table, id, address, numDelta, distance_km, matchType} — no client_name/contact/buyer fields
+     are read or copied out of the transaction row, so a private off-book deal (e.g. Cromwell) can
+     surface as "something nearby" without leaking who was on it. Opening the actual record via
+     jumpToRecord still shows Nick the full transaction (as it should — he's the one using this),
+     this just controls what the CHAIN MATCH itself exposes. */
+  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
     (DATA[t] || []).forEach(function (o) {
       var addr = o.address || o.address_area; if (!addr) return;
       if (propKey(addr) === anchorKey) return; /* skip the anchor property itself if it's in the DB */
