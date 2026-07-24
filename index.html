@@ -534,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.120.0';
+var APP_VERSION = 'v5.121.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1008,6 +1008,62 @@ function reactivationSignals() {
   return out;
 }
 
+/* Convergence signal (2026-07-24) — the chains above (architect/style, comps/neighborhood,
+   buyer-reactivation) run independently; this is the one place they get cross-referenced. Pure
+   computed aggregation of what those chains already produce, grouped by neighborhood centroid —
+   no new reasoning, no LLM, nothing speculative. When 2+ distinct chain types are live in the same
+   area at once, that's worth Nick's attention even if no single chain alone would have surfaced
+   it. Satisfies the "extract a primitive on the third real use" rule in CLAUDE.md: this is the
+   third+ real signal source (architect/style tags, real escrow prices, buyer passes), not a
+   speculative fourth thing bolted on ahead of evidence. */
+function areaKeyOf(address) {
+  var pp = propPoint({ address: address });
+  return (pp && pp.name) ? pp.name : null;
+}
+function convergenceSignals() {
+  var byArea = {};
+  function add(area, kind, item) {
+    if (!area) return;
+    byArea[area] = byArea[area] || { architect: [], style: [], deals: [], reactivation: [] };
+    byArea[area][kind].push(item);
+  }
+  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (r) {
+      var addr = r.address || r.address_area, area = areaKeyOf(addr);
+      if (!area) return;
+      if (r.extra && r.extra.architect) add(area, 'architect', { table: t, id: r.id, address: addr, label: r.extra.architect });
+      if (r.extra && r.extra.style) add(area, 'style', { table: t, id: r.id, address: addr, label: r.extra.style });
+    });
+  });
+  (DATA.transactions || []).forEach(function (tx) {
+    if (!tx.contract_price_num) return;
+    var area = areaKeyOf(tx.address); if (!area) return;
+    add(area, 'deals', { id: tx.id, address: tx.address, label: Number(tx.contract_price_num).toLocaleString('en-US') });
+  });
+  reactivationSignals().forEach(function (r) {
+    var area = areaKeyOf(r.addr); if (!area) return;
+    add(area, 'reactivation', { buyer_id: r.buyer_id, address: r.addr, label: recLabel('buyers', r.buyer_id) || 'a buyer' });
+  });
+  var out = [];
+  Object.keys(byArea).forEach(function (area) {
+    var b = byArea[area];
+    var kinds = Object.keys(b).filter(function (k) { return b[k].length; });
+    if (kinds.length >= 2) out.push({ area: area, kinds: kinds, detail: b });
+  });
+  out.sort(function (a, b) { return b.kinds.length - a.kinds.length; });
+  return out;
+}
+var CONVERGENCE_LABEL = { architect: 'architect tag', style: 'style tag', deals: 'real escrow price', reactivation: 'buyer passed, then something changed' };
+function convergenceHtml() {
+  var hits = convergenceSignals(); if (!hits.length) return '';
+  var h = '<div class="flabel" style="margin-top:14px;">Converging signals <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; 2+ chains active in the same area at once</span></div>';
+  h += hits.slice(0, 5).map(function (hit) {
+    var parts = hit.kinds.map(function (k) { return hit.detail[k].length + ' ' + CONVERGENCE_LABEL[k] + (hit.detail[k].length === 1 ? '' : 's'); });
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(hit.area) + '</div><div class="t2">' + esc(parts.join(' · ')) + '</div></div></div>';
+  }).join('');
+  return h;
+}
+
 /* "Who to call" — computed client-side from already-loaded buyers + matches + prospects. try/catch so it can never break render(). */
 function renderIntel() { try {
   var el = document.getElementById('intel-body'); if (!el) return;
@@ -1048,6 +1104,7 @@ function renderIntel() { try {
       return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' passed on ' + esc(r.addr) + ' <span class="hint">→ open</span></div><div class="t2">Now: ' + esc(String(r.status || '—')) + (r.price ? ' · ' + esc(String(r.price)) : '') + ' — updated since they passed</div></div></div>';
     }).join('');
   }
+  html += convergenceHtml();
   /* Routine, auto-generated follow-ups (mailer nudges, buyer check-ins, response call-backs) live
      here now instead of cluttering Today's Focus (2026-07-23) — collapsed by default since there
      can be dozens; a tap expands the full list, each row still completable/snoozable in place. */
