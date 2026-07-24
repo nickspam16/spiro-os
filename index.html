@@ -534,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.117.0';
+var APP_VERSION = 'v5.118.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -841,8 +841,8 @@ async function loadAll(manual) {
   var res = await Promise.all([
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
     sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true),
-    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id').not('archived', 'is', true),
-    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,follow_up_date,converted,notes,list_agent_id,property_id').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at').not('archived', 'is', true),
+    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,follow_up_date,converted,notes,list_agent_id,property_id,updated_at').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('transactions').select('*').not('archived', 'is', true),
     sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
@@ -983,6 +983,31 @@ function renderPulse() {
     + items.slice(0, 3).join(' <span style="color:var(--muted);">&middot;</span> ') + '</div>';
 }
 
+/* Buyer-loss / showing-reactivation chain (2026-07-24): a buyer who explicitly passed on something
+   (matches.response === 'passed') is not dead — if that target listing/offmarket record has been
+   touched since (price cut, status change, relist) it's worth a re-touch. No new schema: reuses
+   matches.response/response_at (already tracked via the existing "passed/interested" flow) plus
+   updated_at on listings/offmarket (added to the initial select above). This can't know WHAT
+   changed (no price-history table), only THAT the record changed after they passed — surfaced
+   honestly as "updated since they passed" rather than claiming a specific price-drop detection
+   this data can't actually support. */
+function reactivationSignals() {
+  var out = [];
+  (DATA.matches || []).forEach(function (m) {
+    if (m.response !== 'passed' || !m.response_at) return;
+    var t = recOf(m.target_type, m.target_id);
+    if (!t || !t.updated_at || t.updated_at <= m.response_at) return;
+    out.push({
+      buyer_id: m.buyer_id, target_type: m.target_type, target_id: m.target_id,
+      addr: t.address || t.address_area || recLabel(m.target_type, m.target_id) || 'that property',
+      status: t.status || t.priority || '', price: t.price || t.price_num || '',
+      response_at: m.response_at, updated_at: t.updated_at
+    });
+  });
+  out.sort(function (a, b) { return String(b.updated_at).localeCompare(String(a.updated_at)); });
+  return out;
+}
+
 /* "Who to call" — computed client-side from already-loaded buyers + matches + prospects. try/catch so it can never break render(). */
 function renderIntel() { try {
   var el = document.getElementById('intel-body'); if (!el) return;
@@ -1011,6 +1036,14 @@ function renderIntel() { try {
     return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.id)) + '\')"><div class="txt"><div class="t1">' + esc(r.name) + ' <span class="hint">→ open</span></div><div class="t2">' + r.count + ' match' + (r.count === 1 ? '' : 'es') + ' · best ' + r.best + '/10 · ' + esc(r.reasons.join(', ')) + '</div></div></div>';
   }).join('');
   if (leads) html += '<div class="qi deadline" style="cursor:pointer;" onclick="setTab(\'prospects\')"><div class="txt"><div class="t1">' + leads + ' seller lead' + (leads === 1 ? '' : 's') + ' to review <span class="hint">→ open</span></div><div class="t2">Expired/withdrawn + probate — triage them in your Prospects tab</div></div></div>';
+  var reactivate = reactivationSignals();
+  if (reactivate.length) {
+    html += '<div class="flabel" style="margin-top:14px;">Worth a re-touch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; they passed, something changed since</span></div>';
+    html += reactivate.slice(0, 5).map(function (r) {
+      var buyerName = recLabel('buyers', r.buyer_id) || 'Buyer';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' passed on ' + esc(r.addr) + ' <span class="hint">→ open</span></div><div class="t2">Now: ' + esc(String(r.status || '—')) + (r.price ? ' · ' + esc(String(r.price)) : '') + ' — updated since they passed</div></div></div>';
+    }).join('');
+  }
   /* Routine, auto-generated follow-ups (mailer nudges, buyer check-ins, response call-backs) live
      here now instead of cluttering Today's Focus (2026-07-23) — collapsed by default since there
      can be dozens; a tap expands the full list, each row still completable/snoozable in place. */
