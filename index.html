@@ -576,7 +576,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.130.0';
+var APP_VERSION = 'v5.131.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1921,6 +1921,10 @@ async function saveForm() {
   }
   if (editing.table === 'offmarket') { await applyLeadAgent(editing.row ? editing.row.id : r.data[0].id, vals.list_agent, editing.row); } /* link the listing agent from the form */
   if (editing.table === 'listings') { await maybeOpenEscrowOnPending(editing.row ? editing.row.id : r.data[0].id, vals.status, vals.address); } /* listing → Pending: offer to open the linked escrow */
+  if (editing.table === 'offmarket' || editing.table === 'listings') {
+    var geoAddr = editing.table === 'listings' ? vals.address : vals.address_area;
+    geocodeRecordInBackground(editing.table, editing.row ? editing.row.id : r.data[0].id, geoAddr);
+  }
   var saved = (editing.row ? 'Updated ' : 'Added ') + TITLES[editing.table];
   var firstKey = FORM_SPECS[editing.table][0][0];
   logEvent(editing.table, editing.row ? editing.row.id : b.payload.id,
@@ -2361,6 +2365,7 @@ function initOmni() {
 /* ---------- In-app walk-by photo capture (same result as the Drive/email pipeline, from the omnibox) ---------- */
 var REVGEO_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/revgeo';
 var CENSUS_GEOCODE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/census_geocode';
+var MAPBOX_GEOCODE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/mapbox-geocode';
 var OMNI_PHOTO = null, omniPhotoBusy = false;
 async function revgeoCall(body) {
   try {
@@ -2390,6 +2395,56 @@ async function forwardGeocode(body) {
   var census = await censusGeocodeCall(body);
   if (census && census.status === 'OK') return census;
   return await revgeoCall(body);
+}
+async function mapboxGeocodeCall(body) {
+  try {
+    var s = await sb.auth.getSession();
+    var tok = s.data && s.data.session && s.data.session.access_token;
+    if (!tok) return null;
+    var r = await withTimeout(fetch(MAPBOX_GEOCODE_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+/* Geocoding for anything PERSISTED to a row (offmarket/listings extra.lat/extra.lng) -- separate
+   from forwardGeocode() above, which is the walk-by-photo display flow and stays Census/Google
+   only. Persisted coordinates go Census first (free, permanent, no cost risk) and only fall to
+   Mapbox (the mapbox-geocode function, itself cache-permanent + MONTHLY_CALL_CAP-guarded) when
+   Census has no TIGER/Line match -- most LA-area residential addresses hit Census, so this keeps
+   real Mapbox spend low per Nick's cost concern. Google/revgeo is intentionally NEVER used here --
+   it's display-only and uncached, wrong for anything written to a row. Returns {lat,lng,formatted,source}
+   or null if no provider could resolve it (caller should just leave the neighborhood-centroid fallback in place). */
+async function geocodeForPersist(address) {
+  address = String(address || '').trim();
+  if (!address) return null;
+  try {
+    var census = await censusGeocodeCall({ address: address });
+    if (census && census.status === 'OK' && census.lat != null && census.lng != null) {
+      return { lat: census.lat, lng: census.lng, formatted: census.formatted || address, source: 'census' };
+    }
+  } catch (e) {}
+  try {
+    var mb = await mapboxGeocodeCall({ address: address });
+    if (mb && !mb.error && mb.lat != null && mb.lng != null) {
+      return { lat: mb.lat, lng: mb.lng, formatted: mb.formatted_address || address, source: 'mapbox' };
+    }
+  } catch (e) {}
+  return null;
+}
+/* Fire-and-forget: geocode a just-saved offmarket/listings row and merge lat/lng into its extra
+   jsonb, without blocking the save/close/toast flow the user already saw complete. Never clobbers
+   other extra fields (re-reads the row's current extra right before writing). Silent on failure --
+   propPoint() already has the neighborhood-centroid fallback for exactly this case. */
+function geocodeRecordInBackground(table, id, address) {
+  if (!id || !address) return;
+  geocodeForPersist(address).then(function (g) {
+    if (!g) return;
+    return sb.from(table).select('extra').eq('id', id).single().then(function (fresh) {
+      var extra = (fresh && fresh.data && fresh.data.extra) || {};
+      extra = Object.assign({}, extra, { lat: g.lat, lng: g.lng, geocoded_address: g.formatted, geocode_source: g.source });
+      return sb.from(table).update({ extra: extra }).eq('id', id);
+    });
+  }).catch(function () {});
 }
 function omniPhotoPick() { var f = document.getElementById('omni-file'); if (f) { f.value = ''; f.click(); } }
 async function omniPhoto(file) {
