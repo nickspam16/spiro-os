@@ -591,7 +591,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.137.0';
+var APP_VERSION = 'v5.138.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1325,7 +1325,7 @@ function convergenceSignals() {
   var byArea = {};
   function add(area, kind, item) {
     if (!area) return;
-    byArea[area] = byArea[area] || { architect: [], style: [], deals: [], reactivation: [] };
+    byArea[area] = byArea[area] || { architect: [], style: [], deals: [], reactivation: [], propensity: [] };
     byArea[area][kind].push(item);
   }
   ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
@@ -1334,6 +1334,13 @@ function convergenceSignals() {
       if (!area) return;
       if (r.extra && r.extra.architect) add(area, 'architect', { table: t, id: r.id, address: addr, label: r.extra.architect });
       if (r.extra && r.extra.style) add(area, 'style', { table: t, id: r.id, address: addr, label: r.extra.style });
+      /* Propensity as a convergence kind too (2026-07-24, chain audit #1) -- a Medium/High
+         sell-propensity lead sitting in the SAME area as an architect/style tag or a real escrow
+         price is worth more attention than either signal alone. The dedicated hot-pocket view
+         below (propensityHotPockets) catches areas where propensity is the ONLY signal repeating;
+         this catches it combining with the other three. */
+      var sell = r.extra && r.extra.propensity && r.extra.propensity.sell;
+      if (sell && (sell.category === 'High' || sell.category === 'Medium')) add(area, 'propensity', { table: t, id: r.id, address: addr, label: sell.category + ' sell propensity' });
     });
   });
   (DATA.transactions || []).forEach(function (tx) {
@@ -1354,13 +1361,115 @@ function convergenceSignals() {
   out.sort(function (a, b) { return b.kinds.length - a.kinds.length; });
   return out;
 }
-var CONVERGENCE_LABEL = { architect: 'architect tag', style: 'style tag', deals: 'real escrow price', reactivation: 'buyer passed, then something changed' };
+var CONVERGENCE_LABEL = { architect: 'architect tag', style: 'style tag', deals: 'real escrow price', reactivation: 'buyer passed, then something changed', propensity: 'sell-propensity lead' };
 function convergenceHtml() {
   var hits = convergenceSignals(); if (!hits.length) return '';
   var h = '<div class="flabel" style="margin-top:14px;">Converging signals <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; 2+ chains active in the same area at once</span></div>';
   h += hits.slice(0, 5).map(function (hit) {
     var parts = hit.kinds.map(function (k) { return hit.detail[k].length + ' ' + CONVERGENCE_LABEL[k] + (hit.detail[k].length === 1 ? '' : 's'); });
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(hit.area) + '</div><div class="t2">' + esc(parts.join(' · ')) + '</div></div></div>';
+  }).join('');
+  return h;
+}
+
+/* ===== Propensity hot-pocket chain (2026-07-24, chain audit #1) ===== Tracerfy sell-propensity
+   scores live per-record only today -- nothing groups "3 Medium/High sell-propensity leads on the
+   same block" the way convergenceSignals already groups architect/style/deal tags. A cluster of
+   propensity signals in one area is itself a farming target, independent of whether any of those
+   leads also happen to carry an architect/style tag (that overlap case is now handled separately,
+   as the new 'propensity' kind inside convergenceSignals above). Scoped to prospects + offmarket
+   only -- listings are already actively for sale, so a "sell propensity" score there isn't a new
+   opportunity, just a description of a deal already in motion. Needs 2+ Medium/High leads in the
+   same area to count as a "pocket" -- a single scored lead is just a lead, not a cluster. */
+function propensityHotPockets() {
+  var byArea = {};
+  ['prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (r) {
+      var sell = r.extra && r.extra.propensity && r.extra.propensity.sell;
+      if (!sell || (sell.category !== 'High' && sell.category !== 'Medium')) return;
+      var addr = r.address || r.address_area, area = areaKeyOf(addr);
+      if (!area) return;
+      byArea[area] = byArea[area] || { high: [], medium: [] };
+      byArea[area][sell.category === 'High' ? 'high' : 'medium'].push({ table: t, id: r.id, address: addr, score: sell.score });
+    });
+  });
+  var out = [];
+  Object.keys(byArea).forEach(function (area) {
+    var b = byArea[area], total = b.high.length + b.medium.length;
+    if (total < 2) return; /* 2+ required -- a lone scored lead isn't a "pocket" */
+    out.push({ area: area, high: b.high, medium: b.medium, total: total });
+  });
+  out.sort(function (a, b) { return (b.high.length - a.high.length) || (b.total - a.total); });
+  return out;
+}
+function propensityHotPocketsHtml() {
+  var hits = propensityHotPockets(); if (!hits.length) return '';
+  var h = '<div class="flabel" style="margin-top:14px;">Propensity hot pockets <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; 2+ medium/high sell-propensity leads, same area</span></div>';
+  h += hits.slice(0, 5).map(function (hit) {
+    var parts = [];
+    if (hit.high.length) parts.push(hit.high.length + ' high');
+    if (hit.medium.length) parts.push(hit.medium.length + ' medium');
+    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + esc(hit.high[0] ? hit.high[0].table : hit.medium[0].table) + '\',\'' + esc(String(hit.high[0] ? hit.high[0].id : hit.medium[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(hit.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + esc(parts.join(' · ')) + ' sell-propensity leads</div></div></div>';
+  }).join('');
+  return h;
+}
+
+/* ===== Owner-portfolio chain (2026-07-24, chain audit #2) ===== A single owner/investor holding
+   several properties Spiro OS already knows about is only visible today if a human has already
+   linked them to the SAME contact_id (otherRolesHtml/personRoles handles that case). This chain
+   catches the case BEFORE that manual link happens -- 2+ prospect/offmarket records sharing a
+   normalized owner name that aren't already fully linked to one shared contact. Deliberately
+   labeled "possible" and never auto-merged: owner NAME alone is a real but weak signal (common
+   names collide), so this surfaces candidates for Nick to confirm, not a conclusion. Tracerfy's
+   `mailing_address` field (a stronger signal -- an owner's mailing address matching across two
+   different properties is a much tighter tell than a name match) isn't persisted into `extra`
+   anywhere in this app yet, so that half of the match is wired here for forward-compatibility
+   (checked via extra.mailing_address, same propKey() normalization used for street addresses) but
+   will simply never fire until/unless a future Tracerfy write starts saving it -- worth revisiting
+   once that happens, since it would upgrade a lot of these from "possible" to "confirmed". */
+function possibleOwnerPortfolios() {
+  var recs = [];
+  ['prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (r) {
+      var name = r.owner_name ? String(r.owner_name).toLowerCase().trim() : null;
+      var mail = (r.extra && r.extra.mailing_address) ? propKey(r.extra.mailing_address) : null;
+      if (!name && !mail) return;
+      recs.push({ table: t, id: r.id, address: r.address || r.address_area, contactId: r.owner_contact_id || null, name: name, mail: mail });
+    });
+  });
+  function groupsFor(keyFn, matchType, seen) {
+    var byKey = {};
+    recs.forEach(function (r) { var k = keyFn(r); if (k) (byKey[k] = byKey[k] || []).push(r); });
+    var out = [];
+    Object.keys(byKey).forEach(function (k) {
+      var group = byKey[k]; if (group.length < 2) return;
+      var dedupeKey = matchType + ':' + k; if (seen[dedupeKey]) return;
+      /* Skip groups that are ALREADY fully linked to one shared contact -- otherRolesHtml already
+         surfaces those; this chain is only for what isn't linked yet. */
+      var contactIds = group.map(function (g) { return g.contactId; }).filter(Boolean);
+      var uniqueContacts = contactIds.filter(function (v, i, a) { return a.indexOf(v) === i; });
+      if (contactIds.length === group.length && uniqueContacts.length === 1) return;
+      seen[dedupeKey] = true;
+      out.push({ matchType: matchType, records: group });
+    });
+    return out;
+  }
+  var seen = {};
+  /* Mailing-address matches first (stronger signal) so a group that qualifies both ways is labeled
+     by the stronger match, not the weaker one. */
+  var out = groupsFor(function (r) { return r.mail; }, 'mailing address', seen)
+    .concat(groupsFor(function (r) { return r.name; }, 'owner name', seen));
+  return out;
+}
+function ownerPortfolioHtml() {
+  var groups = possibleOwnerPortfolios(); if (!groups.length) return '';
+  var h = '<div class="flabel" style="margin-top:14px;">Possible same owner <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; not yet linked, worth confirming</span></div>';
+  h += groups.slice(0, 5).map(function (g) {
+    var conf = g.matchType === 'mailing address' ? '' : ' — name only, confirm before assuming it\'s the same person';
+    var links = g.records.map(function (r) {
+      return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(r.table) + '\',\'' + esc(String(r.id)) + '\')">' + esc(r.address || '') + '</span>';
+    }).join('');
+    return '<div class="qi"><div class="txt"><div class="t1">Same ' + esc(g.matchType) + conf + '</div><div class="t2">' + links + '</div></div></div>';
   }).join('');
   return h;
 }
@@ -1420,6 +1529,8 @@ function renderIntel() { try {
       return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(a.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' <span class="hint">→ open</span></div><div class="t2">' + a.count + ' propert' + (a.count === 1 ? 'y' : 'ies') + ' near ' + esc(a.anchor) + '</div></div></div>';
     }).join('');
   }
+  html += propensityHotPocketsHtml();
+  html += ownerPortfolioHtml();
   html += convergenceHtml();
   /* Routine, auto-generated follow-ups (mailer nudges, buyer check-ins, response call-backs) live
      here now instead of cluttering Today's Focus (2026-07-23) — collapsed by default since there
