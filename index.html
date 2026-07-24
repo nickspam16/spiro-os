@@ -534,7 +534,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.121.0';
+var APP_VERSION = 'v5.123.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1096,12 +1096,27 @@ function renderIntel() { try {
   if (needChain.length) html += needChain.slice(0, 3).map(function (l) {
     return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + esc(String(l.id)) + '\')"><div class="txt"><div class="t1">Chain-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.extra.architect) + ' — architect/neighborhood chain not run yet</div></div></div>';
   }).join('');
+  var needPress = listingsNeedingPressCheck();
+  if (needPress.length) {
+    html += '<div class="flabel" style="margin-top:14px;">Press-check needed <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; deal closed/pending, no press pass run yet</span></div>';
+    html += needPress.slice(0, 3).map(function (l) {
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + esc(String(l.id)) + '\')"><div class="txt"><div class="t1">Press-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.status || '') + ' — worth a press-mention search</div></div></div>';
+    }).join('');
+  }
   var reactivate = reactivationSignals();
   if (reactivate.length) {
     html += '<div class="flabel" style="margin-top:14px;">Worth a re-touch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; they passed, something changed since</span></div>';
     html += reactivate.slice(0, 5).map(function (r) {
       var buyerName = recLabel('buyers', r.buyer_id) || 'Buyer';
       return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' passed on ' + esc(r.addr) + ' <span class="hint">→ open</span></div><div class="t2">Now: ' + esc(String(r.status || '—')) + (r.price ? ' · ' + esc(String(r.price)) : '') + ' — updated since they passed</div></div></div>';
+    }).join('');
+  }
+  var anchors = anchorSignals();
+  if (anchors.length) {
+    html += '<div class="flabel" style="margin-top:14px;">Adjacency watch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; approximate, not parcel-confirmed</span></div>';
+    html += anchors.slice(0, 5).map(function (a) {
+      var buyerName = recLabel('buyers', a.buyer_id) || 'Buyer';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(a.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' <span class="hint">→ open</span></div><div class="t2">' + a.count + ' propert' + (a.count === 1 ? 'y' : 'ies') + ' near ' + esc(a.anchor) + '</div></div></div>';
     }).join('');
   }
   html += convergenceHtml();
@@ -3584,7 +3599,7 @@ function recordExtras(table, id) {
       var bsid = 'sugg-buyers-' + sid;
       h += secToggleHtml(bsid, bsug.count + ' suggested match' + (bsug.count === 1 ? '' : 'es')) + secBodyOpen(bsid) + bsug.html + '</div>';
     }
-    h += buyerPortalHtml(sid);
+    h += buyerPortalHtml(sid) + anchorChainHtml(sid);
     more += buyerCriteriaHtml(sid); /* Showings + Timeline deliberately dropped from the buyer card per Nick's call — not useful there; sharing now lives in the Share Links panel */
   }
   if (table === 'offmarket') {
@@ -3600,16 +3615,16 @@ function recordExtras(table, id) {
     h += agentContactFlagHtml(sid) + agentDealsHtml(sid);
     more += agentSuggestHtml(sid) + agentSignalsHtml(sid) + agentAreasHtml(sid) + agentLeadsHtml(sid) + agentSharesHtml(sid) + agentIgFeaturesHtml(sid);
   }
-  if (table === 'transactions') { h += escrowExtras(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
+  if (table === 'transactions') { h += escrowExtras(sid) + pressMentionsHtml('transactions', sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null);
+    h += buildablePanel('listings', sid) + previewSuggestHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
   if (table === 'prospects') {
-    h += styleChainHtml('prospects', sid);
+    h += styleChainHtml('prospects', sid) + buildingChainHtml('prospects', sid);
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
     if (px) {
       var t = triageOf(px);
@@ -3881,7 +3896,7 @@ function offmarketChainHtml(oid) {
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Set architect</button>';
-  h += styleChainHtml('offmarket', oid);
+  h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid);
   return h;
 }
 function toggleChainChecked(sid) {
@@ -3979,6 +3994,139 @@ function styleChainHtml(table, id) {
   return h;
 }
 
+/* ===== Building/complex chain (2026-07-24) ===== No new schema — `extra.building` is a free-text
+   tag (e.g. "Sun Tech Townhomes") usable on listings/prospects/offmarket, same convention as
+   architect/style. A listing in a tagged building (esp. a landmarked one, like 2433 28th St's
+   Sun Tech Townhomes) makes every OTHER unit's owner a natural prospect — small pool, real
+   icebreaker ("I have the listing in your building"). Matched by exact building-name text only,
+   no distance check needed (same building name is already as specific a signal as this app has —
+   tighter than any centroid-based proximity check could add). */
+function setRecordBuilding(table, id) {
+  var r = recOf(table, id); if (!r) return;
+  var cur = (r.extra && r.extra.building) || '';
+  var v = prompt('Building/complex name (leave blank to clear):', cur);
+  if (v === null) return;
+  r.extra = Object.assign({}, r.extra || {});
+  r.extra.building = v.trim() || null;
+  sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Saved ✓'); renderBrowse(); });
+}
+function buildingNeighbors(table, id) {
+  var r = recOf(table, id); if (!r || !r.extra || !r.extra.building) return [];
+  var name = String(r.extra.building).toLowerCase();
+  var out = [];
+  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (o) {
+      if (t === table && String(o.id) === String(id)) return;
+      if (!o.extra || !o.extra.building || String(o.extra.building).toLowerCase() !== name) return;
+      out.push({ table: t, id: o.id, address: o.address || o.address_area, building: o.extra.building });
+    });
+  });
+  return out;
+}
+function buildingChainHtml(table, id) {
+  var r = recOf(table, id); if (!r) return '';
+  var building = r.extra && r.extra.building;
+  var h = '<div class="flabel" style="margin-top:12px;">Building / complex</div>';
+  if (!building) {
+    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordBuilding(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Tag building</button>';
+    return h;
+  }
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordBuilding(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(building) + '</div><div class="t2">tap to edit</div></div></div>';
+  var neighbors = buildingNeighbors(table, id);
+  if (neighbors.length) {
+    h += neighbors.map(function (n) {
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">Same building — other unit to prospect</div></div></div>';
+    }).join('');
+  } else h += '<div class="hint">No other tagged units in this building yet.</div>';
+  return h;
+}
+
+/* ===== Adjacency-buyer chain (2026-07-24, per Nick) ===== Some HNW buyers want ANY property
+   contiguous with a specific parcel they already own — for privacy, not floor plan (2620 Benedict;
+   same instinct behind Cromwell). `extra.anchor_address` on a buyer records that standing interest;
+   anchorCandidates finds nearby prospects/listings/offmarket. SHIPPED APPROXIMATE, on purpose, per
+   Nick (2026-07-24) — but corrected 2026-07-24 before ship: the first draft matched via propPoint
+   neighborhood-centroid distance, which is WRONG for this chain (verified against real data before
+   shipping, not shipped blind): most street addresses (e.g. "2620 Benedict Canyon Dr") don't match
+   any area_centroids/area_aliases name at all (Benedict, Cromwell aren't registered neighborhoods),
+   so propPoint returns null and the chain would silently find nothing for Nick's own example. Worse,
+   when an address DOES match a centroid, propPoint collapses it to the neighborhood's single lat/lng
+   point, so every other property in that same (often huge) named area would read as "0m away" —
+   false adjacency, not real proximity. Fixed to match on same-street-name + nearby house number
+   instead (streetParts()), which is what "next door" usually means on a numbered block, and is a much
+   closer proxy for contiguity than a neighborhood centroid. Kept propPoint/haversine as a secondary,
+   clearly-lower-confidence signal for the rare case both addresses do resolve to real lat/lng. True
+   adjacency still needs the regrid_parcels adapter (already wired in enrich_v8, dormant, pricing not
+   yet confirmed — see CLAUDE.md budget notes) for real lot geometry — every result here is labeled
+   "approximate — not confirmed parcel-contiguous" so it's never mistaken for the real thing. */
+function streetParts(address) {
+  var k = propKey(address);
+  var m = k.match(/^(\d+)\s+(.*)$/);
+  if (!m) return { num: null, street: k };
+  return { num: parseInt(m[1], 10), street: m[2].trim() };
+}
+function setBuyerAnchor(bid) {
+  var b = recOf('buyers', bid); if (!b) return;
+  var cur = (b.extra && b.extra.anchor_address) || '';
+  var v = prompt('Anchor property this buyer wants to stay adjacent to (leave blank to clear):', cur);
+  if (v === null) return;
+  b.extra = Object.assign({}, b.extra || {});
+  b.extra.anchor_address = v.trim() || null;
+  sb.from('buyers').update({ extra: b.extra, updated_at: nowStamp() }).eq('id', bid).then(function () { toast('Saved ✓'); renderBrowse(); });
+}
+function anchorCandidates(bid) {
+  var b = recOf('buyers', bid); if (!b || !b.extra || !b.extra.anchor_address) return [];
+  var anchorKey = propKey(b.extra.anchor_address);
+  var aParts = streetParts(b.extra.anchor_address);
+  var pp = propPoint({ address: b.extra.anchor_address }); /* may be null — only used as a secondary signal */
+  var out = [];
+  ['listings', 'prospects', 'offmarket'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (o) {
+      var addr = o.address || o.address_area; if (!addr) return;
+      if (propKey(addr) === anchorKey) return; /* skip the anchor property itself if it's in the DB */
+      var oParts = streetParts(addr);
+      var numDelta = (aParts.num != null && oParts.num != null) ? Math.abs(aParts.num - oParts.num) : null;
+      var streetMatch = aParts.street && oParts.street && aParts.street === oParts.street && numDelta != null && numDelta <= 40;
+      var d = null, geoMatch = false;
+      if (pp) { var op = propPoint({ address: addr }); if (op) { d = haversineKm(pp, op); geoMatch = d <= 0.4; } }
+      if (!streetMatch && !geoMatch) return;
+      out.push({ table: t, id: o.id, address: addr, numDelta: numDelta, distance_km: d, matchType: streetMatch ? 'street' : 'geo' });
+    });
+  });
+  out.sort(function (a, b2) {
+    if (a.matchType !== b2.matchType) return a.matchType === 'street' ? -1 : 1;
+    return a.matchType === 'street' ? (a.numDelta - b2.numDelta) : (a.distance_km - b2.distance_km);
+  });
+  return out;
+}
+function anchorSignals() {
+  var out = [];
+  (DATA.buyers || []).forEach(function (b) {
+    if (!b.extra || !b.extra.anchor_address) return;
+    var hits = anchorCandidates(b.id);
+    if (hits.length) out.push({ buyer_id: b.id, anchor: b.extra.anchor_address, count: hits.length });
+  });
+  return out;
+}
+function anchorChainHtml(bid) {
+  var b = recOf('buyers', bid); if (!b) return '';
+  var anchor = b.extra && b.extra.anchor_address;
+  var h = '<div class="flabel" style="margin-top:12px;">Adjacency watch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; approximate, not parcel-confirmed</span></div>';
+  if (!anchor) {
+    h += '<button class="qbtn" onclick="event.stopPropagation();setBuyerAnchor(\'' + esc(bid) + '\')">&#65291; Set anchor property</button>';
+    return h;
+  }
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setBuyerAnchor(\'' + esc(bid) + '\')"><div class="txt"><div class="t1">' + esc(anchor) + '</div><div class="t2">wants anything nearby — tap to edit</div></div></div>';
+  var hits = anchorCandidates(bid);
+  if (hits.length) {
+    h += hits.slice(0, 6).map(function (n) {
+      var label = n.matchType === 'street' ? ('same street, ' + n.numDelta + ' address' + (n.numDelta === 1 ? '' : 'es') + ' away') : ('~' + Math.round(n.distance_km * 1000) + 'm away (same area)');
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(label) + ' — approximate, not confirmed parcel-contiguous</div></div></div>';
+    }).join('');
+  } else h += '<div class="hint">Nothing nearby in Spiro OS yet.</div>';
+  return h;
+}
+
 function listingChainHtml(sid) {
   var l = recOf('listings', sid); if (!l) return '';
   var architect = l.extra && l.extra.architect;
@@ -3990,7 +4138,56 @@ function listingChainHtml(sid) {
     h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
     h += '<button class="qbtn ' + (checked ? '' : 'done') + '" onclick="event.stopPropagation();toggleChainChecked(\'' + esc(sid) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark chain checked') + '</button>';
   }
-  h += styleChainHtml('listings', sid);
+  h += styleChainHtml('listings', sid) + buildingChainHtml('listings', sid);
+  return h;
+}
+
+/* ===== Press-mention log + auto-flag (2026-07-24) =====
+   No new tables — extra.press_mentions (array of {date, outlet, url}) lives on listings AND
+   transactions (same jsonb-no-migration convention as ig_features). Same auto-flag pattern as the
+   architect chain: once a listing is a real deal (Pending or Sold — an active listing hasn't
+   "happened" yet) and hasn't been press-checked, it surfaces in "Who to call" as a research
+   follow-up. Spiro OS can't run the actual press search itself (static PWA, no search of its own)
+   — this only auto-FLAGS the need; a Claude session or Nick does the lookup and taps
+   "Mark press-checked" when done, same division of labor as the architect chain. */
+function listingsNeedingPressCheck() {
+  return (DATA.listings || []).filter(function (l) { return (l.status === 'Pending' || l.status === 'Sold') && !(l.extra && l.extra.press_checked); });
+}
+function togglePressChecked(sid) {
+  var l = recOf('listings', sid); if (!l) return;
+  l.extra = Object.assign({}, l.extra || {});
+  l.extra.press_checked = !l.extra.press_checked;
+  sb.from('listings').update({ extra: l.extra, updated_at: nowStamp() }).eq('id', sid).then(function () { renderBrowse(); });
+}
+function pressMentions(table, id) {
+  var r = recOf(table, id);
+  return (r && r.extra && Array.isArray(r.extra.press_mentions)) ? r.extra.press_mentions : [];
+}
+function logPressMention(table, id) {
+  var r = recOf(table, id); if (!r) return;
+  var outlet = prompt('Outlet name (e.g. "LA Times", "Dirt", "Architectural Digest")?', '');
+  if (!outlet) return;
+  var url = prompt('URL (optional)?', '') || '';
+  r.extra = Object.assign({}, r.extra || {});
+  r.extra.press_mentions = (Array.isArray(r.extra.press_mentions) ? r.extra.press_mentions : []).concat([{ date: todayIso(), outlet: outlet.trim(), url: url.trim() }]);
+  sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Logged ✓'); renderBrowse(); });
+}
+function pressMentionsHtml(table, id) {
+  var list = pressMentions(table, id);
+  var h = '<div class="flabel" style="margin-top:12px;">Press mentions</div>';
+  if (list.length) {
+    h += list.slice().reverse().slice(0, 6).map(function (p) {
+      var line = esc(p.outlet || '') + (p.date ? ' · ' + esc(p.date) : '');
+      var clickable = p.url ? ' style="cursor:pointer;" onclick="event.stopPropagation();window.open(\'' + esc(p.url) + '\',\'_blank\')"' : '';
+      return '<div class="qi"' + clickable + '><div class="txt"><div class="t1">' + line + '</div>' + (p.url ? '<div class="t2">' + esc(p.url) + '</div>' : '') + '</div></div>';
+    }).join('');
+  } else h += '<div class="hint">No press mentions logged yet.</div>';
+  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logPressMention(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Log a mention</button>';
+  if (table === 'listings') {
+    var l = recOf('listings', id);
+    var checked = !!(l && l.extra && l.extra.press_checked);
+    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" style="margin-top:4px;" onclick="event.stopPropagation();togglePressChecked(\'' + esc(id) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark press-checked') + '</button>';
+  }
   return h;
 }
 
