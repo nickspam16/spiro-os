@@ -330,6 +330,8 @@
         <div class="menu-wrap" id="more-menu-wrap" style="position:relative;">
           <button class="refresh" id="more-menu-btn" onclick="event.stopPropagation();toggleMoreMenu()" title="More" style="border:1px solid var(--line);border-radius:var(--radius);width:38px;height:38px;">&#8942;</button>
           <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
+            <a href="javascript:void(0)" onclick="goDashboard()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Dashboard</a>
+            <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Relationships <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
@@ -560,7 +562,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.127.0';
+var APP_VERSION = 'v5.129.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -603,6 +605,15 @@ document.addEventListener('click', function (e) {
   if (wrap && !wrap.contains(e.target)) closeMoreMenu();
 });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMoreMenu(); });
+/* "Dashboard" is always the first dropdown entry (2026-07-24, per Nick) -- a guaranteed way back
+   to the home/splash screen from wherever the dropdown itself is reachable, independent of the
+   per-panel "← Back to Spiro OS" button (which lives inside #panel-view and is what this calls
+   under the hood). No-ops safely if already on the dashboard. */
+function goDashboard() {
+  closeMoreMenu();
+  closePanel();
+  window.scrollTo(0, 0);
+}
 /* ===== Panel navigation (2026-07-23) =====
    Nick's framing: "the function of the dropdown menu is to help me navigate off the home page
    and into a subsection... deemed important enough to access readily but not keep on the home
@@ -3922,7 +3933,7 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + pricingPreviewLinkHtml(sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
