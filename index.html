@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.148.0';
+var APP_VERSION = 'v5.149.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1162,7 +1162,26 @@ var browseTab = 'listings';
 var NL2 = String.fromCharCode(10, 10);
 var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-function esc(s) { return String(s == null ? '' : s).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;').split("'").join('&#39;'); }
+function esc(s) { return String(s == null ? '' : s).split('\\').join('&#92;').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;').split("'").join('&#39;'); }
+/* SECURITY (2026-07-27): esc() is for HTML TEXT and QUOTED ATTRIBUTE VALUES only. It is the WRONG
+   escaper inside an on*="..." handler body, because the HTML parser entity-decodes the attribute
+   BEFORE the JS is compiled -- so esc()'s &#39; becomes a real apostrophe and closes the JS string
+   early. That was both a live bug (a buyer named O'Brien broke their own Link button) and a
+   script-injection path. escJs() emits \xHH hex escapes for every quote/angle/ampersand, so its
+   output can never contain a raw quote to close the attribute, nor an entity that decodes into one.
+   Use escJs() for values interpolated into a JS string literal inside an attribute; esc() for text. */
+function escJs(s) {
+  return String(s == null ? '' : s)
+    .split('\\').join('\\x5C')
+    .split("'").join('\\x27')
+    .split('"').join('\\x22')
+    .split('&').join('\\x26')
+    .split('<').join('\\x3C')
+    .split('>').join('\\x3E')
+    .split('`').join('\\x60')
+    .split('\r').join('\\r')
+    .split('\n').join('\\n');
+}
 function isoLocal(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function todayIso() { return isoLocal(new Date()); }
 function addDaysIso(iso, n) { var p = iso.split('-'); return isoLocal(new Date(+p[0], +p[1] - 1, +p[2] + n)); }
@@ -1301,7 +1320,29 @@ async function verifyCode() {
   if (r.error) { err.textContent = r.error.message; return; }
   enterApp();
 }
-async function signOut() { await sb.auth.signOut(); show('screen-email'); }
+async function signOut() {
+  /* SECURITY (2026-07-27): sb.auth.signOut() clears only supabase-js's own session key, and show()
+     just toggles display:none. Everything else survived a "Sign out": spiro_brief_text and
+     spiro_focus_text are the AI brief/focus in plain text (verbatim client names, deal status),
+     spiro_dismissed_captures holds row ids, the in-memory DATA global still held every buyer,
+     listing, deal and contact, and the fully-rendered app DOM was still in the document. On a
+     shared, borrowed or lost device that is a real disclosure. Clear the PII keys and hard-reload
+     so DATA and the rendered DOM go with it.
+     Deliberate exception: spiro_offline_captures is KEPT if it still holds unsynced captures --
+     clearing it would silently destroy work Nick typed offline that never reached Supabase. */
+  try { await sb.auth.signOut(); } catch (e) { /* still clear locally */ }
+  try {
+    var pending = [];
+    try { pending = JSON.parse(localStorage.getItem('spiro_offline_captures') || '[]'); } catch (e2) { pending = []; }
+    localStorage.removeItem('spiro_brief_text');
+    localStorage.removeItem('spiro_focus_text');
+    localStorage.removeItem('spiro_dismissed_captures');
+    if (pending && pending.length) alert('Signed out. ' + pending.length + ' unsynced capture(s) were kept on this device and will upload at next sign-in.');
+    else localStorage.removeItem('spiro_offline_captures');
+    sessionStorage.removeItem('spiro_unlocked');
+  } catch (e3) { /* storage unavailable -- nothing to clear */ }
+  location.reload();
+}
 
 /* ---------- data ---------- */
 async function loadAll(manual) {
@@ -1458,9 +1499,11 @@ function render() {
   if (moreCalSugN) { var pendingSug = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending' || (s.status === 'confirmed' && s.flag); }); moreCalSugN.textContent = pendingSug.length ? String(pendingSug.length) : ''; }
   var calSugCard = document.getElementById('calendar-suggestions-card');
   if (calSugCard && calSugCard.style.display !== 'none') renderCalendarSuggestionsCard();
-  /* SECURITY: APP_VERSION is the full internal build changelog (client names, deal specifics,
-     negotiation notes) — never render it whole on the public page. Only the leading "vX.Y.Z"
-     token is public-facing; the rest stays in source for Claude/Nick's own reference. */
+  /* SECURITY: APP_VERSION must stay a bare version tag -- see the note at its declaration. It is
+     NO LONGER the internal changelog (removed 2026-07-23). This split() is kept purely as defence
+     in depth, so that if anything is ever appended, only the leading "vX.Y.Z" token can reach the
+     DOM. Do not re-add changelog text there: this whole file is public via view-source, so the
+     split protects the DOM but would NOT protect the string itself. */
   document.getElementById('ver').textContent = 'Spiro OS ' + (String(APP_VERSION).split(' - ')[0] || '');
   if (sy) window.scrollTo(0, sy);
 }
@@ -3589,7 +3632,7 @@ function dsExtractAddress(docName) {
   return (m[1] + ' ' + m[2]).replace(/\s+/g, ' ').trim();
 }
 /* Match to the Property spine by looking for the property's house-number AND street word as substrings
-   of the (de-glued) title — robust for "12506_appletondocuments" / "RPA_12506Appleton_Neale". Falls back
+   of the (de-glued) title — robust for "12345_maindocuments" / "RPA_12345Main_Lastname". Falls back
    to proposing a NEW property from the cleanly-extracted address when nothing on the spine matches. */
 function dsMatchProperty(docName, extractedAddr) {
   var dn = (' ' + String(docName || '') + ' ').replace(/[_|#]/g, ' ')
@@ -6423,7 +6466,7 @@ function renderPortal() { try {
     /* The only client-facing send on this card. Explicit button + confirm — never automatic. */
     var announce = hot ? '<button class="qbtn" onclick="announceToBuyer(' + "'" + esc(b.id) + "'," + (b.unnotified || 0) + ')">Announce ' + b.unnotified + ' new</button>' : '';
     var showBtn = '<button class="qbtn" onclick="portalTogglePick(' + "'" + esc(b.id) + "'" + ')">' + (PORTAL_PICK[b.id] ? 'Done' : '&#65291; Show a listing') + '</button>';
-    var linkBtn = pid.state === 'auto_linkable' ? '<button class="qbtn done" onclick="event.stopPropagation();linkBuyer(\'' + esc(b.id) + '\',\'' + esc(pid.crmId) + '\',\'' + esc(pid.crmName) + '\')">Link to ' + esc(pid.crmName) + '</button>' : '';
+    var linkBtn = pid.state === 'auto_linkable' ? '<button class="qbtn done" onclick="event.stopPropagation();linkBuyer(\'' + escJs(b.id) + '\',\'' + escJs(pid.crmId) + '\',\'' + escJs(pid.crmName) + '\')">Link to ' + esc(pid.crmName) + '</button>' : '';
     var activeBtn = '<button class="qbtn" onclick="event.stopPropagation();setBuyerActive(\'' + esc(b.id) + '\',' + (b.active ? 'false' : 'true') + ')">' + (b.active ? 'Deactivate' : 'Activate') + '</button>';
     var resetBtn = pid.state === 'demo' ? '' : '<button class="qbtn" onclick="event.stopPropagation();resetBuyerPassword(\'' + esc(b.id) + '\')">Reset password</button>';
     var head = '<div class="qi' + (hot ? ' deadline' : '') + '"><div class="txt"><div class="t1">' +
@@ -8631,7 +8674,7 @@ async function renderClimateCard(force) {
     if (keys.length) {
       ratesH += keys.map(function (k) {
         var row = bySeries[k];
-        return '<div class="qi"><div class="txt"><div class="t1">' + esc(labels[k] || k) + ': ' + row.value + '%</div><div class="t2">as of ' + esc(row.rate_date) + '</div></div></div>';
+        return '<div class="qi"><div class="txt"><div class="t1">' + esc(labels[k] || k) + ': ' + esc(row.value) + '%</div><div class="t2">as of ' + esc(row.rate_date) + '</div></div></div>';
       }).join('');
     } else {
       ratesH += '<div class="empty">No rate readings yet — tap Sync now.</div>';
@@ -9460,7 +9503,12 @@ function printBuildable(table, id) {
   var b = x.extra.buildable, s = buildableSummary(b), addr = esc(x.address || 'This property');
   var rows = [['Lot size', b.lot_sqft.toLocaleString() + ' sq ft'], ['Zoning', b.zone || '—'], ['Allowable floor area (est.)', '~' + b.max_sqft.toLocaleString() + ' sq ft'], ['Existing home', '~' + b.existing_sqft.toLocaleString() + ' sq ft'], ['Untapped potential', '~' + b.untapped_sqft.toLocaleString() + ' sq ft'], ['ADU potential', b.adu_sqft ? 'up to ' + b.adu_sqft.toLocaleString() + ' sq ft' : 'not included']];
   if (b.upzone) rows.splice(2, 0, ['Zoning note', upzoneNote(b)]);
-  var body = rows.map(function (r) { return '<tr><td>' + r[0] + '</td><td style="text-align:right;">' + r[1] + '</td></tr>'; }).join('');
+  /* SECURITY (2026-07-27): these cells carry values from the buildable_lookup edge fn (LA County /
+     SCAG GIS) -- external data this app does not control, notably b.zone. The HTML below is opened
+     via URL.createObjectURL, and a blob: document INHERITS THIS ORIGIN, so unescaped markup here
+     executes as same-origin script and can read the Supabase session token from localStorage.
+     The sibling exporter exportPursuingLetters() already escapes correctly; this one did not. */
+  var body = rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td style="text-align:right;">' + esc(r[1]) + '</td></tr>'; }).join('');
   var html = '<!doctype html><html><head><meta charset="utf-8"><title>Buildable — ' + addr + '</title>'
     + '<style>@page{margin:1in}body{font-family:Baskerville,Georgia,serif;color:#26281F;margin:0}'
     + '.mast{border-bottom:2px solid #2C3B2D;padding-bottom:8px;margin-bottom:18px}.mast .k{letter-spacing:.16em;text-transform:uppercase;font-size:11px;color:#8A8273}.mast h1{margin:2px 0 0;font-size:22px}'
