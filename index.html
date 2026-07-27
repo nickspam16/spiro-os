@@ -345,7 +345,9 @@
             <a href="javascript:void(0)" onclick="menuShowBrief()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Morning Brief</a>
             <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuShowAsk()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Ask Spiro</a>
             <a href="javascript:void(0)" onclick="menuShowCoverage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Data Coverage <span id="more-menu-coverage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowTcTemplates()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">TC Templates <span id="more-menu-tctemplates-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowClimate()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Climate &amp; Rates</a>
             <a href="javascript:void(0)" onclick="menuShowStats()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">All stats</a>
           </div>
@@ -530,6 +532,34 @@
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Ask Spiro (AI ADOPT #1, v18, 2026-07-27): dedicated multi-turn query surface, separate from
+         the quick single-shot omnibox answer. Follow-up questions carry conversation history (last
+         4 exchanges) so "what about the other one" actually works; answers render clickable
+         citations back to the real record they're about, via the shared renderAskAnswerHtml above.
+         Thread is session-only (not persisted) -- a deliberate simple default, reversible if Nick
+         wants history saved across visits later. -->
+    <div class="card" id="ask-card" style="display:none;">
+      <h2>Ask Spiro <button class="hbtn" onclick="event.stopPropagation();newAskThread()" title="Start a new conversation">New</button></h2>
+      <div class="hint" style="margin:-6px 0 10px;">Ask anything about your data — follow-up questions keep context, and answers link back to the real records they're about.</div>
+      <div id="ask-thread"></div>
+      <div style="display:flex;gap:6px;align-items:flex-end;margin-top:8px;">
+        <textarea id="ask-input" rows="1" placeholder="Ask a question…" style="flex:1;" oninput="omniGrow(this)" onkeydown="askThreadKey(event)"></textarea>
+        <button class="primary" onclick="askThreadSend()">Send</button>
+      </div>
+    </div>
+
+    <!-- TC Templates (Piece D, 2026-07-24): the 29-row transaction-task template library, grouped
+         by deal kind. Nick's real brokerage compliance manual is the only source of truth for which
+         "generic — confirm" templates actually match his brokerage's policy (Phase 4 of the TC
+         mini-roadmap, explicitly blocked on his own input) -- this panel doesn't guess at that, it
+         just gives him a fast one-tap-per-row way to record "yes, I checked this one" once he does
+         the manual review, and surfaces which ones are still unconfirmed. -->
+    <div class="card" id="tc-templates-card" style="display:none;">
+      <h2>TC Templates <button class="hbtn" onclick="event.stopPropagation();renderTcTemplates()" title="Refresh">&#8635;</button></h2>
+      <div class="hint" style="margin:-6px 0 10px;">The task templates behind every escrow's checklist. "Confirmed" means you've checked it against your real brokerage compliance manual — not yet checked doesn't mean wrong, just means Spiro OS can't vouch for it.</div>
+      <div id="tc-templates-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <!-- Climate & Rates (2026-07-24, per Nick): low-priority, dropdown-only, "mostly for machine
          learning" -- two free $0 enrichment feeds surfaced in one panel rather than as portal-facing
          features. Mortgage rates: fred-sync already runs weekly (Fridays) into market_rates, this
@@ -592,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.144.0';
+var APP_VERSION = 'v5.147.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -676,7 +706,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -944,6 +974,134 @@ function menuShowCoverage() {
   if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_coverage_open', '1'); } catch (e) {} }
   renderCoverage(); /* card was hidden -> render() skips it (see the perf note there); force one fresh render now that it's visible */
 }
+/* AI ADOPT #1 (2026-07-27): dedicated "Ask Spiro" multi-turn query surface -- see the ask-card
+   comment above for why this exists alongside the quick omnibox answer. ASK_THREAD is a plain
+   client array of {role:'user'|'assistant', text}, session-only by design (cleared on reload or
+   "New"). History sent to the server is built from this array, not re-derived from the DOM. */
+var ASK_THREAD = [];
+function menuShowAsk() {
+  openPanel('ask-card');
+  renderAskThread();
+  var input = document.getElementById('ask-input');
+  if (input) setTimeout(function () { input.focus(); }, 50);
+}
+function newAskThread() {
+  ASK_THREAD = [];
+  renderAskThread();
+  var input = document.getElementById('ask-input');
+  if (input) { input.value = ''; input.focus(); }
+}
+function renderAskThread() {
+  var el = document.getElementById('ask-thread'); if (!el) return;
+  if (!ASK_THREAD.length) { el.innerHTML = '<div class="empty">Ask anything — "which buyers need a follow-up", "how\'s Bel Air doing", "what\'s due this week".</div>'; return; }
+  el.innerHTML = ASK_THREAD.map(function (m) {
+    if (m.role === 'user') return '<div style="margin:10px 0 4px;font-weight:600;">' + esc(m.text) + '</div>';
+    return '<div class="hint" style="white-space:pre-wrap;margin-bottom:4px;">' + renderAskAnswerHtml(m.text) + '</div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function askThreadKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askThreadSend(); } }
+async function askThreadSend() {
+  var input = document.getElementById('ask-input'); if (!input) return;
+  var q = input.value.trim(); if (!q) return;
+  if (!navigator.onLine) { toast('You’re offline — try again once you’re back online'); return; }
+  var history = ASK_THREAD.map(function (m) { return { role: m.role, content: m.text }; });
+  ASK_THREAD.push({ role: 'user', text: q });
+  ASK_THREAD.push({ role: 'assistant', text: 'Thinking…' });
+  input.value = ''; omniGrow(input);
+  renderAskThread();
+  var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'ask', text: q, history: history } }), 20000, { error: { message: 'timed out — check your connection and try again' } });
+  var last = ASK_THREAD[ASK_THREAD.length - 1];
+  if (r.error || !r.data || r.data.error) {
+    last.text = 'AI error: ' + ((r.data && r.data.error) || (r.error && r.error.message) || 'unknown');
+  } else {
+    last.text = r.data.answer || '';
+    logEvent('system', null, 'ai.asked', q.slice(0, 100));
+  }
+  renderAskThread();
+}
+/* Piece D (2026-07-24): TC Templates review panel -- see the card's own comment above for why
+   this exists. Deal-kind grouping order matches TC_PHASE_ORDER's underlying data model (traditional
+   sale is the overwhelmingly common case for Nick's book, so it sorts first). */
+var TC_DEAL_KIND_ORDER = ['traditional_sale', 'trust_sale', 'lease'];
+var TC_DEAL_KIND_LABELS = { traditional_sale: 'Traditional sale', trust_sale: 'Trust sale', lease: 'Lease' };
+function menuShowTcTemplates() {
+  openPanel('tc-templates-card');
+  renderTcTemplates();
+}
+function renderTcTemplates() {
+  var el = document.getElementById('tc-templates-body'); if (!el) return;
+  var rows = DATA.tc_task_templates || [];
+  if (!rows.length) { el.innerHTML = '<div class="empty">No templates loaded.</div>'; return; }
+  var confirmedN = rows.filter(function (r) { return r.broker_confirmed; }).length;
+  var nEl = document.getElementById('more-menu-tctemplates-n');
+  if (nEl) nEl.textContent = confirmedN + '/' + rows.length + ' confirmed';
+  var byKind = {};
+  rows.forEach(function (r) {
+    var kinds = r.deal_kinds || [];
+    if (!kinds.length) kinds = ['(no deal_kinds set)'];
+    kinds.forEach(function (k) { (byKind[k] = byKind[k] || []).push(r); });
+  });
+  var order = TC_DEAL_KIND_ORDER.filter(function (k) { return byKind[k]; }).concat(Object.keys(byKind).filter(function (k) { return TC_DEAL_KIND_ORDER.indexOf(k) === -1; }));
+  var h = '<div class="hint" style="margin-bottom:10px;">' + confirmedN + ' of ' + rows.length + ' templates confirmed against your brokerage compliance manual.</div>';
+  order.forEach(function (kind) {
+    var items = byKind[kind].slice().sort(function (a, b) { return (a.phase || '').localeCompare(b.phase || '') || (a.label || '').localeCompare(b.label || ''); });
+    h += '<div style="font-weight:600;margin:14px 0 6px;">' + esc(TC_DEAL_KIND_LABELS[kind] || kind) + ' <span style="color:var(--muted);font-weight:400;font-size:12.5px;">(' + items.length + ')</span></div>';
+    items.forEach(function (t) {
+      var fb = (DATA.tc_template_feedback || []).filter(function (f) { return f.template_key === t.template_key; });
+      h += '<div style="padding:8px 0;border-bottom:1px solid var(--line);">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
+      h += '<div style="flex:1;min-width:0;"><div style="font-size:14px;">' + esc(t.label || t.template_key) + '</div>';
+      if (t.notes) h += '<div style="color:var(--muted);font-size:12px;margin-top:2px;">' + esc(t.notes) + '</div>';
+      h += '</div>';
+      if (t.broker_confirmed) {
+        h += '<button class="hbtn" style="white-space:nowrap;color:var(--ok,#2a8);" onclick="toggleBrokerConfirmed(\'' + esc(t.template_key) + '\', false)">&#10003; Confirmed</button>';
+      } else {
+        h += '<button class="hbtn" style="white-space:nowrap;" onclick="toggleBrokerConfirmed(\'' + esc(t.template_key) + '\', true)">Mark confirmed</button>';
+      }
+      h += '</div>';
+      if (fb.length) {
+        h += '<div style="margin-top:4px;">' + fb.map(function (f) {
+          return '<div class="hint" style="margin-top:2px;">&#8226; ' + esc(f.note) + (f.source && f.source !== 'nick' ? ' <span style="opacity:.7;">(' + esc(f.source) + ')</span>' : '') + '</div>';
+        }).join('') + '</div>';
+      }
+      h += '<div style="margin-top:4px;"><a href="javascript:void(0)" class="hint" style="text-decoration:underline;" onclick="tcTemplateNoteForm(\'' + esc(t.template_key) + '\')">+ add a note</a><div id="tfb-' + esc(t.template_key) + '"></div></div>';
+      h += '</div>';
+    });
+  });
+  el.innerHTML = h;
+}
+async function toggleBrokerConfirmed(templateKey, toConfirmed) {
+  var t = (DATA.tc_task_templates || []).find(function (r) { return r.template_key === templateKey; });
+  if (!t) return;
+  var prevConfirmed = t.broker_confirmed, prevAt = t.broker_confirmed_at;
+  t.broker_confirmed = toConfirmed; t.broker_confirmed_at = toConfirmed ? nowStamp() : null;
+  renderTcTemplates();
+  var r = await sb.from('tc_task_templates').update({ broker_confirmed: toConfirmed, broker_confirmed_at: t.broker_confirmed_at }).eq('template_key', templateKey).select('template_key');
+  if (r.error) { t.broker_confirmed = prevConfirmed; t.broker_confirmed_at = prevAt; renderTcTemplates(); toast('Could not save — try again'); }
+  else logEvent('tc_task_templates', templateKey, toConfirmed ? 'tc_template.broker_confirmed' : 'tc_template.broker_unconfirmed', t.label || templateKey);
+}
+/* Piece E (2026-07-26): free-text notes against a template -- groundwork for Phase 5a (see
+   tc_template_feedback's migration comment). Deliberately just capture, no auto-application of
+   any note's content back onto the template -- that stays a human decision. */
+function tcTemplateNoteForm(templateKey) {
+  var box = document.getElementById('tfb-' + templateKey); if (!box) return;
+  var taId = 'tfb-input-' + templateKey;
+  var saveAttr = 'event.stopPropagation();saveTcTemplateNote(\'' + templateKey + '\',\'' + taId + '\')';
+  var cancelAttr = 'event.stopPropagation();var b=document.getElementById(\'tfb-' + templateKey + '\');if(b)b.innerHTML=\'\';';
+  box.innerHTML = '<textarea id="' + taId + '" placeholder="e.g. our outside TC always adds a step here that we don’t have a template for..." style="width:100%;margin-top:4px;min-height:50px;"></textarea>'
+    + '<div style="margin-top:4px;"><button class="qbtn done" onclick="' + esc(saveAttr) + '">Save note</button> <button class="qbtn" onclick="' + esc(cancelAttr) + '">Cancel</button></div>';
+}
+async function saveTcTemplateNote(templateKey, taId) {
+  var ta = document.getElementById(taId); if (!ta) return;
+  var note = (ta.value || '').trim();
+  if (!note) { toast('Enter a note first'); return; }
+  var r = await sb.from('tc_template_feedback').insert({ template_key: templateKey, note: note, source: 'nick' }).select('*');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  DATA.tc_template_feedback = [r.data[0]].concat(DATA.tc_template_feedback || []);
+  logEvent('tc_task_templates', templateKey, 'tc_template.note_added', note.slice(0, 80));
+  renderTcTemplates();
+}
 /* "All stats" is a strip, not a card of its own — no natural standalone page, so it stays a
    reveal-in-place-on-the-home-page toggle rather than forcing it into #panel-view. */
 function menuShowStats() {
@@ -993,7 +1151,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [] };
+var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1186,9 +1344,23 @@ async function loadAll(manual) {
        (line above, status='archived' pulled separately) so swiped-away prospects/leads land
        somewhere restorable in-app instead of only being reachable via a direct Supabase edit. */
     sb.from('prospects').select('id,address,owner_name,priority,notes,archived_at,updated_at').eq('archived', true).order('archived_at', { ascending: false }).limit(200),
-    sb.from('offmarket').select('id,address_area,price,priority,notes,archived_at,updated_at').eq('archived', true).order('archived_at', { ascending: false }).limit(200)
+    sb.from('offmarket').select('id,address_area,price,priority,notes,archived_at,updated_at').eq('archived', true).order('archived_at', { ascending: false }).limit(200),
+    /* TC task engine (2026-07-24, mini-roadmap Phase 1) -- per-escrow generated task instances.
+       Small per-deal row counts (10-15 today, capped well under the full ~198 scope per the
+       three-lens "start small" recommendation), safe to load in full every time. */
+    sb.from('transaction_tasks').select('*'),
+    /* Piece D (2026-07-24): the 29-row template library itself, so the client can show broker-
+       confirmed status inline on generated tasks and power the "review templates" panel. Tiny
+       table, safe to load in full every time same as transaction_tasks above. */
+    sb.from('tc_task_templates').select('*'),
+    /* Piece C (2026-07-26): commission/disbursement line items per escrow. Small per-deal row
+       counts, same safe-to-load-in-full reasoning as transaction_tasks. */
+    sb.from('transaction_commission_items').select('*'),
+    /* Piece E (2026-07-26): Phase 5a groundwork notes -- see tc_template_feedback's own migration
+       comment. Small table, loaded in full. */
+    sb.from('tc_template_feedback').select('*').order('created_at', { ascending: false })
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback'];
   var okCount = 0;
   for (var i = 0; i < res.length; i++) {
     if (!res[i].error && res[i].data) { DATA[names[i]] = res[i].data; okCount++; }
@@ -2678,6 +2850,32 @@ async function aiApply(i) {
 }
 function aiSkip(i) { if (AI_PROPOSALS[i]) { AI_PROPOSALS[i].error = 'skipped'; renderProposals(); } }
 
+/* v18 AI ADOPT #1 (2026-07-27): citation rendering shared by the quick omnibox answer and the new
+   dedicated "Ask Spiro" panel below. The ask edge fn's system prompt instructs the model to emit
+   inline [[type:id]] markers after any claim naming a specific record -- this turns each one into
+   a clickable pill via jumpToRecord, but ONLY when that exact type+id actually resolves to a real
+   record in DATA right now (recLabel returns null otherwise). A hallucinated, stale, or archived
+   id silently drops the marker rather than rendering a link to nothing -- a broken citation is a
+   worse failure than no citation. Only known citation types are honored; anything else drops too.
+   Regex only captures safe id chars (alnum + hyphen, i.e. UUID shape), so nothing from model output
+   ever reaches the onclick attribute unescaped. */
+var ASK_CITE_TYPES = ['transactions', 'listings', 'offmarket', 'prospects', 'buyers', 'agents'];
+function renderAskAnswerHtml(text) {
+  text = String(text || '');
+  var re = /\[\[(\w+):([a-zA-Z0-9-]+)\]\]/g;
+  var out = '', last = 0, m;
+  while ((m = re.exec(text))) {
+    out += esc(text.slice(last, m.index));
+    last = re.lastIndex;
+    var type = m[1], id = m[2];
+    if (ASK_CITE_TYPES.indexOf(type) !== -1) {
+      var label = recLabel(type, id);
+      if (label) out += '<span class="pill" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + type + '\',\'' + esc(id) + '\')">' + esc(label) + '</span>';
+    }
+  }
+  out += esc(text.slice(last));
+  return out;
+}
 async function askAI() {
   var q = document.getElementById('omni-text').value.trim();
   if (!q) return;
@@ -2686,7 +2884,7 @@ async function askAI() {
   out.textContent = 'Thinking…'; omniBusy(true, 'Thinking…');
   var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'ask', text: q } }), 20000, { error: { message: 'timed out — check your connection and try again' } });
   if (r.error || !r.data || r.data.error) { omniBusy(false); out.textContent = 'AI error: ' + ((r.data && r.data.error) || (r.error && r.error.message) || 'unknown'); return; }
-  omniBusy(false); out.textContent = r.data.answer || '';
+  omniBusy(false); out.innerHTML = renderAskAnswerHtml(r.data.answer || '');
   logEvent('system', null, 'ai.asked', q.slice(0, 100));
 }
 
@@ -4054,6 +4252,10 @@ function escrowExtras(sid) {
   h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();prepareEnvelopeForm(' + q + ')">Prepare a document for signature</button></div>';
   h += '<div id="pe-' + esc(sid) + '"></div>';
 
+  h += tcTasksHtml(tx);
+
+  h += tcCommissionHtml(tx);
+
   var fus = escrowFollowups(sid, tx.address);
   h += '<div class="flabel" style="margin-top:12px;">Checklist</div>';
   if (fus.length) {
@@ -4069,6 +4271,342 @@ function escrowExtras(sid) {
   }
   return h;
 }
+
+/* ---------- Commission & disbursement (Piece C, 2026-07-26 marathon) ----------
+   Gap #3 from the original 4-gaps list. transactions.commission_pct already existed in the schema
+   but had zero UI and was null on every real row (verified live) -- this doesn't assume or backfill
+   any commission figure, it's a plain editable field plus a new transaction_commission_items table
+   for tracking who gets paid what once Nick enters his real numbers. Gross commission is clearly
+   labeled as a CALCULATION (price × pct), never presented as a fact pulled from anywhere. */
+function tcCommissionHtml(tx) {
+  var sid = String(tx.id);
+  var pct = (tx.commission_pct !== null && tx.commission_pct !== undefined && tx.commission_pct !== '') ? Number(tx.commission_pct) : null;
+  var priceNum = tx.contract_price_num;
+  var gross = (pct !== null && !isNaN(pct) && priceNum) ? priceNum * pct / 100 : null;
+  var items = (DATA.transaction_commission_items || []).filter(function (i) { return String(i.transaction_id) === sid; });
+  var paidTotal = items.filter(function (i) { return i.status === 'paid'; }).reduce(function (s, i) { return s + (Number(i.amount) || 0); }, 0);
+  var h = '<div class="flabel" style="margin-top:12px;">Commission &amp; disbursement</div>';
+  h += '<div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">';
+  h += '<span class="hint">Commission %:</span> <input type="text" inputmode="decimal" placeholder="e.g. 2.5" value="' + esc(tx.commission_pct || '') + '" style="width:70px;" onblur="saveCommissionPct(' + "'" + esc(sid) + "'" + ', this.value)">';
+  h += priceNum ? '<span class="hint">on ' + money(priceNum) + ' contract price</span>' : '<span class="hint">(no contract price on file yet)</span>';
+  h += '</div>';
+  if (gross !== null) {
+    h += '<div class="hint" style="margin-bottom:8px;">Calculated gross commission: <strong>' + money(gross) + '</strong> (price × pct — not a figure from your brokerage statement, verify before relying on it)</div>';
+  }
+  if (items.length) {
+    h += '<div onclick="event.stopPropagation()">' + items.map(tcCommissionItemRowHtml).join('') + '</div>';
+    if (gross !== null) h += '<div class="hint" style="margin-top:4px;">' + money(paidTotal) + ' paid of ' + money(gross) + ' calculated gross' + (paidTotal > gross ? ' — exceeds the calculated gross, double-check the split' : '') + '</div>';
+  } else {
+    h += '<span class="hint">no disbursement line items yet</span>';
+  }
+  h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();addCommissionItemForm(' + "'" + esc(sid) + "'" + ')">Add a disbursement line</button></div>';
+  h += '<div id="ci-' + esc(sid) + '"></div>';
+  return h;
+}
+function tcCommissionItemRowHtml(i) {
+  var pill = i.status === 'paid' ? '<span class="pill ok">Paid</span>' : i.status === 'invoiced' ? '<span class="pill warn">Invoiced</span>' : '<span class="pill">Pending</span>';
+  var meta = [i.amount ? money(i.amount) : (i.pct_of_gross ? i.pct_of_gross + '% of gross' : null), i.paid_date ? 'paid ' + fmtDate(i.paid_date) : null, i.notes || null].filter(Boolean).join(' · ');
+  var iq = "'" + esc(i.id) + "'";
+  var next = i.status === 'pending' ? 'invoiced' : i.status === 'invoiced' ? 'paid' : null;
+  var act = (next ? '<button class="qbtn done" onclick="event.stopPropagation();setCommissionItemStatus(' + iq + ",'" + next + "')\">Mark " + next + '</button> ' : '')
+    + (i.status !== 'pending' ? '<button class="qbtn" onclick="event.stopPropagation();setCommissionItemStatus(' + iq + ",'pending')\">Undo</button> " : '')
+    + '<button class="qbtn" onclick="event.stopPropagation();deleteCommissionItem(' + iq + ",'" + esc(String(i.transaction_id)) + "')\">Remove</button>";
+  return '<div class="qi"><div class="txt"><div class="t1">' + esc(i.payee_label) + ' ' + pill + '</div><div class="t2">' + esc(meta) + '</div></div>' + act + '</div>';
+}
+async function saveCommissionPct(sid, val) {
+  val = (val || '').trim();
+  var n = val === '' ? null : Number(val);
+  if (val !== '' && (isNaN(n) || n < 0 || n > 100)) { toast('Enter a percent between 0 and 100'); render(); return; }
+  var r = await sb.from('transactions').update({ commission_pct: val === '' ? null : val, updated_at: nowStamp() }).eq('id', sid).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
+  if (tx) tx.commission_pct = val === '' ? null : val;
+  logEvent('transactions', sid, 'txn.commission_pct_set', val ? 'Commission % set to ' + val : 'Commission % cleared');
+  render();
+}
+function addCommissionItemForm(sid) {
+  var box = document.getElementById('ci-' + sid); if (!box) return;
+  var saveAttr = 'event.stopPropagation();saveCommissionItem(\'' + sid + '\')';
+  var cancelAttr = 'event.stopPropagation();cancelCommissionItemForm(\'' + sid + '\')';
+  var html = '<div onclick="event.stopPropagation();" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:var(--radius);">'
+    + '<input type="text" id="ci-label-' + sid + '" placeholder="Payee (e.g. Brokerage split, Co-op agent, Referral fee)" style="width:100%;margin-bottom:6px;">'
+    + '<input type="text" inputmode="decimal" id="ci-amount-' + sid + '" placeholder="Amount $ (optional)" style="width:48%;margin-right:4%;">'
+    + '<input type="text" inputmode="decimal" id="ci-pct-' + sid + '" placeholder="% of gross (optional)" style="width:48%;">'
+    + '<input type="text" id="ci-notes-' + sid + '" placeholder="Notes (optional)" style="width:100%;margin-top:6px;">'
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="' + esc(saveAttr) + '">Save</button> <button class="qbtn" onclick="' + esc(cancelAttr) + '">Cancel</button></div>'
+    + '</div>';
+  box.innerHTML = html;
+}
+function cancelCommissionItemForm(sid) {
+  var box = document.getElementById('ci-' + sid); if (box) box.innerHTML = '';
+}
+async function saveCommissionItem(sid) {
+  var label = (document.getElementById('ci-label-' + sid).value || '').trim();
+  if (!label) { toast('Enter who this line item is for'); return; }
+  var amountRaw = (document.getElementById('ci-amount-' + sid).value || '').trim();
+  var pctRaw = (document.getElementById('ci-pct-' + sid).value || '').trim();
+  var notes = (document.getElementById('ci-notes-' + sid).value || '').trim();
+  var patch = {
+    transaction_id: sid, payee_label: label,
+    amount: amountRaw ? Number(amountRaw) : null,
+    pct_of_gross: pctRaw ? Number(pctRaw) : null,
+    notes: notes || null,
+  };
+  var r = await sb.from('transaction_commission_items').insert(patch).select('*');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  DATA.transaction_commission_items = (DATA.transaction_commission_items || []).concat(r.data);
+  logEvent('transactions', sid, 'txn.commission_item_added', label);
+  document.getElementById('ci-' + sid).innerHTML = '';
+  render();
+}
+async function setCommissionItemStatus(id, status) {
+  var patch = { status: status, updated_at: nowStamp() };
+  if (status === 'paid') patch.paid_date = nowStamp().slice(0, 10);
+  else patch.paid_date = null;
+  var r = await sb.from('transaction_commission_items').update(patch).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var it = null; (DATA.transaction_commission_items || []).forEach(function (x) { if (String(x.id) === id) it = x; });
+  if (it) { it.status = status; it.paid_date = patch.paid_date; }
+  render();
+}
+async function deleteCommissionItem(id, sid) {
+  if (!window.confirm('Remove this disbursement line item?')) return;
+  var r = await sb.from('transaction_commission_items').delete().eq('id', id).select('id');
+  if (r.error) { toast('Could not remove — try again'); return; }
+  DATA.transaction_commission_items = (DATA.transaction_commission_items || []).filter(function (x) { return String(x.id) !== id; });
+  logEvent('transactions', sid, 'txn.commission_item_removed', id);
+  render();
+}
+
+/* ---------- TC task engine client (2026-07-24, mini-roadmap Phases 1-3) ----------
+   Deal-kind prompt (plain-language, three toggles, per the UX/technophobic-client lenses) ->
+   instantiation via fn_generate_transaction_tasks -> phase-grouped checklist (only
+   overdue+due-this-week expanded by default, per the UX-lens clutter finding) -> gated tasks
+   get a real confirmation-record mini-form, never a plain checkbox -> linked_doc tasks get an
+   explicit envelope-link dropdown (exact match only, never fuzzy, per the CTO-lens hard rule).
+   assigned_to renders as a badge, not a second grouping axis, per the UX-lens finding. */
+var TC_PHASE_ORDER = ['pre_listing', 'active', 'pending', 'closing', 'post_closing'];
+var TC_PHASE_LABELS = { pre_listing: 'Pre-listing', active: 'Active', pending: 'Pending', closing: 'Closing', post_closing: 'Post-closing' };
+function tcTasksForTx(sid) { return (DATA.transaction_tasks || []).filter(function (t) { return String(t.transaction_id) === sid; }); }
+/* Compact one-line summary for the Escrows list row (collapsed state) -- percent complete plus
+   the single next thing that matters (a gated/high-stakes task wins over an earlier plain one,
+   since "wire verification due" is worth surfacing ahead of "order HOA docs" even if the HOA
+   task's date is sooner). Empty string (renders nothing) when no tasks exist yet, so escrows
+   that haven't set a deal_kind/generated tasks don't show a misleading "0%". */
+function tcEscrowGlanceLine(sid) {
+  var tasks = tcTasksForTx(String(sid));
+  if (!tasks.length) return '';
+  var doneN = tasks.filter(function (t) { return t.status === 'done' || t.status === 'na'; }).length;
+  var pct = Math.round(doneN / tasks.length * 100);
+  var open = tasks.filter(function (t) { return t.status === 'open'; })
+    .sort(function (a, b) { return String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')); });
+  var gatedOpen = open.filter(function (t) { return t.severity === 'gated'; });
+  var next = gatedOpen[0] || open[0];
+  return pct + '% TC tasks' + (next ? ' · next: ' + next.label : '');
+}
+function tcTasksHtml(tx) {
+  var sid = String(tx.id);
+  var h = '<div class="flabel" style="margin-top:12px;">TC Tasks</div>';
+  if (!tx.deal_kind) {
+    h += '<div class="hint" style="margin-bottom:6px;">What kind of deal is this? Sets up the right task checklist — not compliance homework, just a way to see what an outside TC should be tracking.</div>'
+      + '<button class="qbtn" onclick="event.stopPropagation();setDealKind(' + "'" + sid + "','traditional_sale')\">Traditional sale</button> "
+      + '<button class="qbtn" onclick="event.stopPropagation();setDealKind(' + "'" + sid + "','trust_sale')\">Trust or estate sale</button> "
+      + '<button class="qbtn" onclick="event.stopPropagation();setDealKind(' + "'" + sid + "','lease')\">Lease</button>"
+      + '<div id="tct-' + esc(sid) + '"></div>';
+    return h;
+  }
+  var tasks = tcTasksForTx(sid);
+  if (!tasks.length) {
+    return h + '<div class="hint" style="margin-bottom:6px;">No tasks generated yet.</div>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();generateTcTasks(' + "'" + sid + "')\">Generate tasks</button>"
+      + '<div id="tct-' + esc(sid) + '"></div>';
+  }
+  var doneN = tasks.filter(function (t) { return t.status === 'done' || t.status === 'na'; }).length;
+  var pct = Math.round(doneN / tasks.length * 100);
+  h += '<div class="hint" style="margin-bottom:4px;">' + doneN + ' of ' + tasks.length + ' on track (' + pct + '%) &middot; <a href="#" onclick="event.stopPropagation();generateTcTasks(' + "'" + sid + "');return false;\">regenerate</a></div>"
+    + '<div style="height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pct + '%;background:var(--green);"></div></div>';
+  h += tcComplianceRollupHtml(tasks);
+  h += tcReminderButtonsHtml(tx);
+
+  var wk = addDaysIso(todayIso(), 7);
+  var byPhase = {};
+  tasks.forEach(function (t) { (byPhase[t.phase] = byPhase[t.phase] || []).push(t); });
+  h += '<div onclick="event.stopPropagation()">' + TC_PHASE_ORDER.filter(function (p) { return byPhase[p] && byPhase[p].length; }).map(function (phase) {
+    var items = byPhase[phase].slice().sort(function (a, b) { return String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')); });
+    var pDone = items.filter(function (t) { return t.status === 'done' || t.status === 'na'; }).length;
+    var hasUrgent = items.some(function (t) { return t.status === 'open' && t.due_date && t.due_date <= wk; });
+    var secId = 'tcphase-' + sid + '-' + phase;
+    var open = hasUrgent || !!openSections[secId];
+    if (open) openSections[secId] = true;
+    return '<div class="hint" style="cursor:pointer;margin:10px 0 2px;font-weight:600;" onclick="toggleSec(' + "'" + secId + "')\">"
+      + '<span id="' + secId + '-c">' + (open ? '&#9662;' : '&#9656;') + '</span> ' + TC_PHASE_LABELS[phase] + ' <span style="font-weight:400;color:var(--muted);">(' + pDone + '/' + items.length + ' done)</span></div>'
+      + '<div id="' + secId + '" style="display:' + (open ? 'block' : 'none') + ';">' + items.map(tcTaskRowHtml).join('') + '</div>';
+  }).join('') + '</div>';
+  return h;
+}
+/* Compliance-completeness rollup (2026-07-24, party-notification/compliance gaps from the
+   original 4-gaps list): isolates category='compliance' specifically, since "is this file
+   compliance-clean" is a distinct question from "are all TC tasks of every kind done" -- a deal
+   can be 100% on schedule and still be missing a required compliance document. */
+function tcComplianceRollupHtml(tasks) {
+  var comp = tasks.filter(function (t) { return t.category === 'compliance'; });
+  if (!comp.length) return '';
+  var done = comp.filter(function (t) { return t.status === 'done' || t.status === 'na'; }).length;
+  var allDone = done === comp.length;
+  return '<div class="hint" style="margin-bottom:8px;">' + (allDone ? '<span class="pill ok">Compliance</span>' : '<span class="pill warn">Compliance</span>') + ' ' + done + ' of ' + comp.length + ' compliance items done' + (allDone ? '' : ' — not yet ready to close on the compliance side') + '</div>';
+}
+/* Party-notification drafts (2026-07-24, gap #2 from the original 4-gaps list) -- draft-and-
+   confirm ONLY, matching the doc's own recommended safe default given the reputational stakes of
+   an AI-drafted message reaching a client or another agent unreviewed. Mirrors the existing
+   draftLetter()/copyLetter() pattern used for prospect outreach -- a copyable textarea, nothing
+   ever sends itself. */
+function tcNextUrgentItem(sid) {
+  var open = tcTasksForTx(sid).filter(function (t) { return t.status === 'open' && t.due_date; });
+  var gated = open.filter(function (t) { return t.severity === 'gated'; });
+  var pool = (gated.length ? gated : open).slice().sort(function (a, b) { return String(a.due_date).localeCompare(String(b.due_date)); });
+  return pool[0] || null;
+}
+function tcReminderButtonsHtml(tx) {
+  var sid = String(tx.id);
+  var hasClient = !!(tx.client_contact_id || tx.client_name);
+  var hasCoop = !!tx.coop_agent_id;
+  if (!hasClient && !hasCoop) return '';
+  var h = '<div style="margin:2px 0 4px;">';
+  if (hasClient) h += '<button class="qbtn" onclick="event.stopPropagation();draftTcReminder(' + "'" + sid + "','client')\">Draft a reminder → client</button> ";
+  if (hasCoop) h += '<button class="qbtn" onclick="event.stopPropagation();draftTcReminder(' + "'" + sid + "','coop')\">Draft a reminder → other-side agent</button>";
+  h += '</div><div id="tcremind-' + esc(sid) + '"></div>';
+  return h;
+}
+function draftTcReminder(sid, target) {
+  var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
+  if (!tx) return;
+  var box = document.getElementById('tcremind-' + sid); if (!box) return;
+  var item = tcNextUrgentItem(sid);
+  var who = target === 'client'
+    ? (tx.client_contact_id ? contactLabel(tx.client_contact_id) : tx.client_name)
+    : (tx.coop_agent_id ? recLabel('agents', tx.coop_agent_id) : null);
+  var firstName = who ? String(who).trim().split(' ')[0] : '';
+  var body = item
+    ? '"' + item.label + '" is coming up' + (item.due_date ? ' (due ' + fmtDate(item.due_date) + ')' : '') + ' on ' + (tx.address || 'the transaction') + '. Let me know if there is anything you need from me to keep things moving.'
+    : 'Just checking in on ' + (tx.address || 'the transaction') + ' — let me know if you need anything from my end.';
+  var draft = (firstName ? 'Hi ' + firstName + ',\n\n' : 'Hi,\n\n') + body + '\n\nBest,\nNick';
+  box.innerHTML = '<textarea class="letterbox" id="tcr-' + esc(sid) + '" onclick="event.stopPropagation();">' + esc(draft) + '</textarea>'
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();copyTcReminder(' + "'" + sid + "')\">Copy</button>"
+    + '<span class="hint" style="margin-left:8px;">Editable draft — copy and send yourself. Nothing is sent automatically.</span></div>';
+  logEvent('transactions', sid, 'txn.reminder_drafted', 'Drafted a ' + target + ' reminder' + (item ? ' re: ' + item.label : ''));
+}
+function copyTcReminder(sid) {
+  var t = document.getElementById('tcr-' + sid); if (!t) return;
+  t.select();
+  try { document.execCommand('copy'); toast('Reminder copied ✓'); }
+  catch (e) { if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { toast('Reminder copied ✓'); }); }
+}
+function tcTaskRowHtml(t) {
+  var done = t.status === 'done' || t.status === 'na';
+  var n = t.due_date ? daysUntil(t.due_date) : null;
+  var when = (n === null) ? '' : countdownPhrase(n);
+  var cls = (!done && n !== null && n <= 3) ? ' hot' : '';
+  var gated = t.severity === 'gated';
+  var tmpl = (DATA.tc_task_templates || []).find(function (x) { return x.template_key === t.template_key; });
+  var unconfirmedHint = (tmpl && !tmpl.broker_confirmed)
+    ? ' <span class="hint" title="Not yet checked against your brokerage compliance manual">policy not yet confirmed</span>'
+    : '';
+  var badges = (gated && !done ? ' <span class="pill warn">Verify to complete</span>' : '')
+    + (t.assigned_to && t.assigned_to !== 'nick' ? ' <span class="pill">' + (t.assigned_to === 'outside_tc' ? 'Outside TC' : 'Spiro OS') + '</span>' : '')
+    + (t.completion_source === 'linked_deadline' && done ? ' <span class="hint">(auto from deadline)</span>' : '')
+    + (t.completion_source === 'linked_doc' && t.linked_envelope_id && done ? ' <span class="hint">(auto from document)</span>' : '')
+    + unconfirmedHint;
+  var right = gated && !done
+    ? '<button class="qbtn done" onclick="event.stopPropagation();tcGateForm(' + "'" + t.id + "')\">Verify &amp; complete</button>"
+    : done
+      ? '<button class="qbtn" onclick="event.stopPropagation();setTcTaskStatus(' + "'" + t.id + "','open')\">Undo</button>"
+      : '<button class="qbtn done" onclick="event.stopPropagation();setTcTaskStatus(' + "'" + t.id + "','done')\">&#10003;</button>";
+  var linkBtn = (t.completion_source === 'linked_doc' && !t.linked_envelope_id && !done)
+    ? ' <button class="qbtn" onclick="event.stopPropagation();tcLinkEnvelope(' + "'" + t.id + "','" + t.transaction_id + "')\">Link a document</button>"
+    : '';
+  var confNote = (gated && t.confirmation)
+    ? '<div class="hint" style="width:100%;margin-top:4px;">Verified by ' + esc(t.confirmation.verified_by || '') + (t.confirmation.method ? ' &mdash; ' + esc(t.confirmation.method) : '') + (t.confirmation.verified_at ? ' on ' + esc(fmtDate(String(t.confirmation.verified_at).slice(0, 10))) : '') + '</div>'
+    : '';
+  return '<div class="qi' + (done ? '' : ' deadline') + '"><div class="txt"><div class="t1"' + (done ? ' style="text-decoration:line-through;opacity:.55;"' : '') + '>' + esc(t.label) + badges + '</div>'
+    + (t.due_date ? '<div class="t2">' + esc(fmtDate(t.due_date)) + '</div>' : '<div class="t2 hint">no date yet</div>') + '</div>'
+    + (done ? '' : '<span class="pill' + cls + '" style="margin-right:6px;">' + esc(when || '—') + '</span>') + right + linkBtn
+    + '<div id="tcg-' + t.id + '"></div>' + confNote + '</div>';
+}
+async function setDealKind(sid, kind) {
+  var r = await sb.from('transactions').update({ deal_kind: kind, updated_at: nowStamp() }).eq('id', sid).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
+  if (tx) tx.deal_kind = kind;
+  logEvent('transactions', sid, 'txn.deal_kind_set', 'Deal kind set to ' + kind);
+  await generateTcTasks(sid, true);
+}
+async function generateTcTasks(sid, silent) {
+  var r = await sb.rpc('fn_generate_transaction_tasks', { p_transaction_id: sid, p_commit: true });
+  if (r.error) { toast('Could not generate tasks — try again'); return; }
+  if (r.data && r.data.error) { toast(r.data.error); return; }
+  var t = await sb.from('transaction_tasks').select('*').eq('transaction_id', sid);
+  if (!t.error && t.data) {
+    DATA.transaction_tasks = (DATA.transaction_tasks || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(t.data);
+  }
+  logEvent('transactions', sid, 'txn.tasks_generated', (r.data && r.data.tasks_generated || 0) + ' TC tasks generated');
+  if (!silent) toast('Tasks generated');
+  render();
+}
+async function setTcTaskStatus(id, status) {
+  var r = await sb.from('transaction_tasks').update({ status: status, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
+  if (t) t.status = status;
+  render();
+}
+function tcGateForm(id) {
+  var box = document.getElementById('tcg-' + id); if (!box) return;
+  box.innerHTML = '<div style="margin-top:6px;padding:8px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);width:100%;" onclick="event.stopPropagation()">'
+    + '<div class="hint" style="margin-bottom:6px;">This step protects real money or a real legal signature — confirm you actually verified it, not just checking a box.</div>'
+    + '<label class="hint">Verified by </label><input type="text" id="tcg-by-' + id + '" value="Nick" style="margin:0 8px 6px 0;width:100px;">'
+    + '<label class="hint">How </label><input type="text" id="tcg-method-' + id + '" placeholder="e.g. called escrow officer at the number on file" style="margin:0 8px 6px 0;width:240px;"><br>'
+    + '<button class="qbtn done" onclick="event.stopPropagation();tcGateSubmit(' + "'" + id + "')\">Confirm &amp; complete</button> "
+    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(' + "'tcg-" + id + "').innerHTML=''\">Cancel</button></div>";
+}
+async function tcGateSubmit(id) {
+  var by = (document.getElementById('tcg-by-' + id) || {}).value || 'Nick';
+  var method = (document.getElementById('tcg-method-' + id) || {}).value || '';
+  if (!method.trim()) { toast('Describe how it was verified — this record matters'); return; }
+  var confirmation = { verified_by: by, method: method, verified_at: nowStamp() };
+  var r = await sb.from('transaction_tasks').update({ status: 'done', confirmation: confirmation, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
+  if (t) { t.status = 'done'; t.confirmation = confirmation; }
+  logEvent('transaction_tasks', id, 'tc_task.gated_complete', 'Gated task verified by ' + by + ': ' + method);
+  toast('Verified ✓');
+  render();
+}
+function tcLinkEnvelope(taskId, sid) {
+  var box = document.getElementById('tcg-' + taskId); if (!box) return;
+  var envs = (DATA.esign_envelopes || []).filter(function (e) { return String(e.transaction_id) === String(sid); });
+  if (!envs.length) { box.innerHTML = '<div class="hint" style="margin-top:4px;">No documents staged yet for this escrow — prepare one above first.</div>'; return; }
+  var opts = envs.map(function (e) { return '<option value="' + esc(e.id) + '">' + esc(e.doc_name || 'Document') + ' (' + esc(e.status || '') + ')</option>'; }).join('');
+  box.innerHTML = '<div style="margin-top:4px;width:100%;" onclick="event.stopPropagation()"><select id="tcle-' + taskId + '">' + opts + '</select> '
+    + '<button class="qbtn" onclick="event.stopPropagation();tcLinkEnvelopeSubmit(' + "'" + taskId + "')\">Link</button></div>";
+}
+async function tcLinkEnvelopeSubmit(taskId) {
+  var envId = (document.getElementById('tcle-' + taskId) || {}).value;
+  if (!envId) return;
+  var r = await sb.from('transaction_tasks').update({ linked_envelope_id: envId, updated_at: nowStamp() }).eq('id', taskId).select('id');
+  if (r.error) { toast('Could not link — try again'); return; }
+  var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === taskId) t = x; });
+  if (t) t.linked_envelope_id = envId;
+  /* The DB trigger (fn_tc_task_complete_on_envelope_done) only fires on a FUTURE envelope
+     status change -- if the envelope is already 'completed' at link time, reflect that now. */
+  var env = (DATA.esign_envelopes || []).filter(function (e) { return String(e.id) === envId; })[0];
+  if (env && env.status === 'completed' && t) {
+    t.status = 'done';
+    await sb.from('transaction_tasks').update({ status: 'done', updated_at: nowStamp() }).eq('id', taskId);
+  }
+  toast('Linked');
+  render();
+}
+
 function ucCancel(sid) { var b = document.getElementById('uc-' + sid); if (b) b.innerHTML = ''; }
 function underContractForm(sid) {
   var box = document.getElementById('uc-' + sid); if (!box) return;
@@ -10152,7 +10690,12 @@ function renderBrowse() {
          escrows that mismatch is exactly what makes them hard to tell apart at a glance. Now reads
          from the same nextEscrowDeadline() both the pulse bar and Today's Focus already use. */
       var nextDl = nextEscrowDeadline(x);
-      sub = [x.status, x.client_name, nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : '')].filter(Boolean).join(' · ');
+      /* "Active escrows at a glance" (2026-07-24, mini-roadmap Phase 2 addition, per the
+         multi-escrow review's own recommendation): with 2+ concurrent deals, comparing TC
+         task progress meant opening each one. Only on the live Escrows segment -- past sales
+         don't need this front-and-center. */
+      var tcGlance = (propSeg === 'escrow') ? tcEscrowGlanceLine(x.id) : '';
+      sub = [x.status, x.client_name, nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : ''), tcGlance].filter(Boolean).join(' · ');
       det = [x.contingency_date ? 'Contingency: ' + fmtDate(x.contingency_date) : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'agents') {
       nm = x.name || x.email || 'Agent';
