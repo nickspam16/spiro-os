@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.147.0';
+var APP_VERSION = 'v5.148.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -5329,7 +5329,7 @@ function offmarketChainHtml(oid) {
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Set architect</button>';
-  h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid);
+  h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid) + chainMatchListHtml('offmarket', oid);
   return h;
 }
 /* Prospect + transaction architect-tag chains (2026-07-24, gap fix): setRecordArchitect() was
@@ -5346,7 +5346,7 @@ function prospectChainHtml(pid) {
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')">&#65291; Set architect</button>';
-  h += styleChainHtml('prospects', pid) + buildingChainHtml('prospects', pid);
+  h += styleChainHtml('prospects', pid) + buildingChainHtml('prospects', pid) + chainMatchListHtml('prospects', pid);
   return h;
 }
 /* Transaction chain (2026-07-24, gap fix): closed deals had NO chain UI at all and were excluded
@@ -5364,7 +5364,7 @@ function transactionChainHtml(tid) {
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
     : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')">&#65291; Set architect</button>';
-  h += styleChainHtml('transactions', tid) + buildingChainHtml('transactions', tid);
+  h += styleChainHtml('transactions', tid) + buildingChainHtml('transactions', tid) + chainMatchListHtml('transactions', tid);
   return h;
 }
 function toggleChainChecked(sid) {
@@ -5419,46 +5419,22 @@ function styleFamilyOf(styleText) {
   });
   return found;
 }
-function styleNeighbors(table, id) {
-  var r = recOf(table, id); if (!r || !r.extra || !r.extra.style) return [];
-  var style = String(r.extra.style).toLowerCase();
-  var family = styleFamilyOf(r.extra.style);
-  var addr = r.address || r.address_area;
-  var pp = propPoint({ address: addr }); if (!pp) return [];
-  var out = [];
-  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
-    (DATA[t] || []).forEach(function (o) {
-      if (t === table && String(o.id) === String(id)) return;
-      if (!o.extra || !o.extra.style) return;
-      var oStyle = String(o.extra.style).toLowerCase();
-      var exact = oStyle.indexOf(style) !== -1 || style.indexOf(oStyle) !== -1;
-      var famMatch = family && styleFamilyOf(o.extra.style) === family;
-      if (!exact && !famMatch) return;
-      var op = propPoint({ address: o.address || o.address_area }); if (!op) return;
-      var d = haversineKm(pp, op); if (d > 2) return;
-      out.push({ table: t, id: o.id, address: o.address || o.address_area, style: o.extra.style, distance_km: d, matchType: exact ? 'exact' : 'family', family: family });
-    });
-  });
-  out.sort(function (a, b) { return (a.matchType === b.matchType ? 0 : a.matchType === 'exact' ? -1 : 1) || a.distance_km - b.distance_km; });
-  return out;
-}
+/* Chain consolidation (2026-07-27): styleNeighbors' matching logic (exact-or-family, 2km cap)
+   now lives inside chainMatches() below rather than as its own scanner -- see that function's
+   comment for why. styleChainHtml keeps ONLY the tag-setting/display row (per the scope doc: "the
+   tag-setting UI stays exactly as-is; only the neighbor-results list underneath gets merged into
+   one"); the merged neighbor list itself now renders once via chainMatchListHtml, shared across
+   architect/style/building, appended after all three tag rows in each record-type function below. */
 function styleChainHtml(table, id) {
   var r = recOf(table, id); if (!r) return '';
   var style = r.extra && r.extra.style;
-  var h = '<div class="flabel" style="margin-top:12px;">Style / era chain</div>';
+  var h = '<div class="flabel" style="margin-top:12px;">Style / era</div>';
   if (!style) {
     h += '<button class="qbtn" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Tag style</button>';
     return h;
   }
   var family = styleFamilyOf(style);
   h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(style) + '</div><div class="t2">' + (family ? 'Family: ' + esc(family) + ' · ' : '') + 'tap to edit</div></div></div>';
-  var neighbors = styleNeighbors(table, id);
-  if (neighbors.length) {
-    h += neighbors.slice(0, 6).map(function (n) {
-      var tag = n.matchType === 'exact' ? 'same style' : 'same family: ' + esc(n.family || '');
-      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(n.style) + ' — ' + tag + ' · ' + n.distance_km.toFixed(1) + 'km away</div></div></div>';
-    }).join('');
-  }
   return h;
 }
 
@@ -5478,19 +5454,9 @@ function setRecordBuilding(table, id) {
   r.extra.building = v.trim() || null;
   sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Saved ✓'); renderBrowse(); });
 }
-function buildingNeighbors(table, id) {
-  var r = recOf(table, id); if (!r || !r.extra || !r.extra.building) return [];
-  var name = String(r.extra.building).toLowerCase();
-  var out = [];
-  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
-    (DATA[t] || []).forEach(function (o) {
-      if (t === table && String(o.id) === String(id)) return;
-      if (!o.extra || !o.extra.building || String(o.extra.building).toLowerCase() !== name) return;
-      out.push({ table: t, id: o.id, address: o.address || o.address_area, building: o.extra.building });
-    });
-  });
-  return out;
-}
+/* buildingNeighbors' exact-match scan now lives inside chainMatches() below (see that function's
+   comment); buildingChainHtml keeps only the tag-setting/display row, same treatment as
+   styleChainHtml above. */
 function buildingChainHtml(table, id) {
   var r = recOf(table, id); if (!r) return '';
   var building = r.extra && r.extra.building;
@@ -5500,12 +5466,85 @@ function buildingChainHtml(table, id) {
     return h;
   }
   h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordBuilding(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(building) + '</div><div class="t2">tap to edit</div></div></div>';
-  var neighbors = buildingNeighbors(table, id);
-  if (neighbors.length) {
-    h += neighbors.map(function (n) {
-      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">Same building — other unit to prospect</div></div></div>';
-    }).join('');
-  } else h += '<div class="hint">No other tagged units in this building yet.</div>';
+  return h;
+}
+/* ===== Combined chain match list (2026-07-27, Nick-requested consolidation) =====
+   Replaces the three separate neighbor scanners (architect had none before this -- it was only
+   ever surfaced at the area level via convergenceSignals, never as a per-record list; style used
+   styleNeighbors; building used buildingNeighbors) with one core scan producing ONE ranked,
+   deduped list of related records, each annotated with every reason it matched. A record matching
+   on 2+ tags outranks a record matching on just 1 -- directly resolves the "three sections that
+   mean the same thing" clutter flagged in the three-lens review. adjacency (anchorCandidates,
+   buyer-to-property) and comps/press (not a matching chain at all) are deliberately NOT folded in
+   here -- both are a different kind of thing, per the scope doc's own reasoning; folding them in
+   would misrepresent what's actually being matched.
+   MATCH RULES, decided with Nick (2026-07-27) before writing this:
+   - architect: EXACT match only, no distance check -- a specific architect's body of work across
+     the whole city is treated as a meaningful signal regardless of how far apart two tagged
+     records are (same rule as building, chosen explicitly over style's 2km radius).
+   - style: exact text OR same style-family (STYLE_FAMILIES), AND within 2km (propPoint
+     neighborhood-centroid distance) -- unchanged from styleNeighbors' original rule.
+   - building: exact building-name match, no distance check -- unchanged from buildingNeighbors'
+     original rule (same building name is already a precise-enough signal on its own). */
+function chainMatches(table, id) {
+  var r = recOf(table, id); if (!r) return [];
+  var architect = r.extra && r.extra.architect;
+  var style = r.extra && r.extra.style;
+  var building = r.extra && r.extra.building;
+  if (!architect && !style && !building) return [];
+  var styleFamily = style ? styleFamilyOf(style) : null;
+  var pp = style ? propPoint({ address: r.address || r.address_area }) : null;
+  var byKey = {};
+  function addReason(o, t, reason) {
+    var key = t + ':' + o.id;
+    if (!byKey[key]) byKey[key] = { table: t, id: o.id, address: o.address || o.address_area, reasons: [] };
+    byKey[key].reasons.push(reason);
+  }
+  ['listings', 'prospects', 'offmarket', 'transactions'].forEach(function (t) {
+    (DATA[t] || []).forEach(function (o) {
+      if (t === table && String(o.id) === String(id)) return;
+      var oe = o.extra || {};
+      if (architect && oe.architect && String(oe.architect).toLowerCase() === String(architect).toLowerCase()) {
+        addReason(o, t, { type: 'architect', label: 'same architect: ' + oe.architect, distance_km: null });
+      }
+      if (style && oe.style) {
+        var oStyle = String(oe.style).toLowerCase(), sLower = String(style).toLowerCase();
+        var exact = oStyle.indexOf(sLower) !== -1 || sLower.indexOf(oStyle) !== -1;
+        var famMatch = !exact && styleFamily && styleFamilyOf(oe.style) === styleFamily;
+        if ((exact || famMatch) && pp) {
+          var op = propPoint({ address: o.address || o.address_area });
+          if (op) {
+            var d = haversineKm(pp, op);
+            if (d <= 2) addReason(o, t, { type: 'style', label: (exact ? 'same style' : 'same family: ' + styleFamily) + ' · ' + d.toFixed(1) + 'km away', distance_km: d });
+          }
+        }
+      }
+      if (building && oe.building && String(oe.building).toLowerCase() === String(building).toLowerCase()) {
+        addReason(o, t, { type: 'building', label: 'same building: ' + oe.building, distance_km: null });
+      }
+    });
+  });
+  var out = Object.keys(byKey).map(function (k) { return byKey[k]; });
+  out.forEach(function (m) { m.score = m.reasons.length; });
+  out.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score; /* more ways it matches wins */
+    var ad = a.reasons.filter(function (x) { return x.distance_km != null; })[0];
+    var bd = b.reasons.filter(function (x) { return x.distance_km != null; })[0];
+    if (ad && bd) return ad.distance_km - bd.distance_km;
+    return String(a.address || '').localeCompare(String(b.address || ''));
+  });
+  return out;
+}
+function chainMatchListHtml(table, id) {
+  var matches = chainMatches(table, id);
+  if (!matches.length) return '';
+  var h = '<div class="flabel" style="margin-top:12px;">Related records</div>';
+  h += matches.slice(0, 8).map(function (m) {
+    var badge = m.score > 1 ? ' <span class="pill ok">' + m.score + ' ways</span>' : '';
+    var reasonLine = m.reasons.map(function (x) { return x.label; }).join(' · ');
+    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(m.table) + '\',\'' + esc(String(m.id)) + '\')"><div class="txt"><div class="t1">' + esc(m.address || '') + badge + ' <span class="hint">→ open</span></div><div class="t2">' + esc(reasonLine) + '</div></div></div>';
+  }).join('');
+  if (matches.length > 8) h += '<div class="hint" style="margin-top:4px;">+' + (matches.length - 8) + ' more not shown</div>';
   return h;
 }
 
@@ -5613,7 +5652,7 @@ function listingChainHtml(sid) {
     h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
     h += '<button class="qbtn ' + (checked ? '' : 'done') + '" onclick="event.stopPropagation();toggleChainChecked(\'' + esc(sid) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark chain checked') + '</button>';
   }
-  h += styleChainHtml('listings', sid) + buildingChainHtml('listings', sid);
+  h += styleChainHtml('listings', sid) + buildingChainHtml('listings', sid) + chainMatchListHtml('listings', sid);
   return h;
 }
 
@@ -8674,6 +8713,13 @@ var propSeg = 'active';   /* #7: which layer of the Listings hub is showing: act
 var rowTable = 'buyers';  /* the table the current rows actually belong to (differs from browseTab inside the hub) */
 function isPastTx(t) { return /closed|sold/i.test(String((t && t.status) || '')); }
 function isPrepListing(l) { return !!(l && l.status === 'Prep'); }
+/* Listings status display order (2026-07-27): Pending, Active, Coming Soon, Off Market, then
+   any other status sorts last (rather than in random/insertion order). */
+var LISTING_STATUS_ORDER = { 'Pending': 0, 'Active': 1, 'Coming Soon': 2, 'Off Market': 3 };
+function listingStatusRank(status) {
+  var r = LISTING_STATUS_ORDER[status];
+  return r == null ? 99 : r;
+}
 function setPropSeg(s) { propSeg = s; openRids = {}; renderTabs(); renderBrowse(); }
 function propNav() {
   function seg(k, lab, n) { return '<span class="filter-chip" onclick="setPropSeg(\'' + k + '\')" style="cursor:pointer;' + (propSeg === k ? 'font-weight:600;border-color:var(--ink);' : '') + '">' + lab + (n != null ? ' ' + n : '') + '</span>'; }
@@ -10637,6 +10683,14 @@ function renderBrowse() {
          : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l); })
          : (propSeg === 'escrow') ? (DATA.transactions || []).filter(function (t) { return !isPastTx(t); })
          : (DATA.transactions || []).filter(isPastTx);
+    /* Listings status order (2026-07-27, requested by Nick from a screenshot showing an
+       unordered/insertion-order list): Pending, Active, Coming Soon, Off Market, then any other
+       status (e.g. Sold showing up here would be unusual, but sorts last rather than randomly). */
+    if (propSeg === 'active') {
+      rows = rows.slice().sort(function (a, b) {
+        return listingStatusRank(a.status) - listingStatusRank(b.status);
+      });
+    }
     /* Multi-escrow concurrency fix (2026-07-24): with 2+ active escrows this used to render in
        whatever order the query happened to return, same clutter risk prospects already solved by
        sorting by score/value. Sort by nearest open deadline (soonest first) so the escrow that
