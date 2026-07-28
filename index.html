@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.149.0';
+var APP_VERSION = 'v5.150.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1151,7 +1151,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
+var DATA = { feedHealth: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1422,6 +1422,7 @@ async function loadAll(manual) {
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
+  fetchFeedHealth();       /* scheduled-job health; renders as an alert atop Today's Focus */
   flushOfflineCaptures();  /* file any notes captured while offline */
   if (manual) reconcileSpines(); /* self-heal: link any create-path misses to existing people/parcels */
   if (manual) toast('Refreshed');
@@ -2097,6 +2098,42 @@ function itemHtml(it) {
 
 var qShowAll = false;
 function toggleQueue() { qShowAll = !qShowAll; renderQueue(); }
+/* Scheduled-job health (2026-07-27). The cron jobs and edge functions that feed this app
+   (calendar sync, portal bridge, ops maintenance, backups, market syncs) all report into
+   public.feed_health, and fn_feed_health_scan() returns only the ones that are actually in
+   trouble: never_ran / errored / stale / suspicious_zero. "suspicious_zero" is the important
+   one -- it means a job returned HTTP 200 and did nothing, which is exactly how the calendar
+   listing-matcher stayed broken for weeks without anyone noticing.
+   This is deliberately rendered at the TOP of Today's Focus: a feed going dark should
+   interrupt you, not wait to be discovered. Read-only; the RPC is granted to authenticated. */
+function fetchFeedHealth() {
+  if (!sb) return;
+  sb.rpc('fn_feed_health_scan').then(function (r) {
+    if (r && !r.error && Array.isArray(r.data)) {
+      DATA.feedHealth = r.data;
+      renderQueue();
+    }
+  }, function () { /* never let a monitoring read break the dashboard */ });
+}
+var FEED_PROBLEM_LABEL = {
+  never_ran: 'has never run',
+  errored: 'is failing',
+  stale: 'has stopped running',
+  suspicious_zero: 'ran but produced nothing'
+};
+function feedHealthHtml() {
+  var rows = DATA.feedHealth || [];
+  if (!rows.length) return '';
+  return '<div class="bucket red">&#9888; Automation needs attention &middot; ' + rows.length + '</div>'
+    + rows.map(function (f) {
+        var what = FEED_PROBLEM_LABEL[f.problem] || String(f.problem || 'has a problem');
+        return '<div class="qi"><div class="txt">'
+          + '<div class="t1">' + esc(f.feed) + ' ' + esc(what) + '</div>'
+          + '<div class="t2">' + esc(f.detail || '') + '</div>'
+          + '</div></div>';
+      }).join('');
+}
+
 function renderQueue() {
   var b = queueItems();
   var groups = [['Overdue', 'red', b.overdue], ['Today', 'gold', b.today], ['This week', '', b.week]];
@@ -2116,6 +2153,9 @@ function renderQueue() {
     if (grand > 5) h += '<button class="quiet" onclick="toggleQueue()">Show top 5 only</button>';
   }
   if (!h) h = '<div class="empty">All clear. Nothing due.</div>';
+  /* Prepend, not append: a dark feed outranks any individual to-do, because it means the rest
+     of this list may itself be incomplete. */
+  h = feedHealthHtml() + h;
   if (DATA.graveyard.length) {
     h += '<button class="quiet" onclick="toggleGraveyard()">&#129702; Graveyard · ' + DATA.graveyard.length + ' auto-archived</button>';
     if (gShow) {
@@ -7049,7 +7089,12 @@ function zipformSetupHtml() {
    token (app_config.ics_feed_token) since subscribing calendar apps have no Spiro OS login. */
 var ICS_FEED_BASE = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/ics-feed';
 function icsFeedToken() { return (DATA.app_config && DATA.app_config[0] && DATA.app_config[0].ics_feed_token) || ''; }
-function icsFeedUrl(scheme) { var t = icsFeedToken(); return t ? (scheme + '://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/ics-feed?token=' + t) : ''; }
+/* 2026-07-27: emit the PATH form (/ics-feed/<token>) rather than ?token=<token>. A bearer in a
+   query string leaks into browser history, calendar-sync service logs, proxy logs and Referer
+   headers. The server still accepts the old query form, so any calendar already subscribed keeps
+   working -- but every link generated from here on is the safer shape. Re-subscribe your devices
+   from this link and the query branch can eventually be retired server-side. */
+function icsFeedUrl(scheme) { var t = icsFeedToken(); return t ? (scheme + '://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/ics-feed/' + encodeURIComponent(t)) : ''; }
 function copyIcsLink() {
   var url = icsFeedUrl('https');
   if (!url) { toast('No feed link yet — refresh and try again'); return; }
