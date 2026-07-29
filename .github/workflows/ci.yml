@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Detect what changed
+        id: diff
+        run: |
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          else
+            CHANGED=$(git ls-files)
+          fi
+          echo "$CHANGED"
+          grep -qx 'index.html' <<< "$CHANGED" && echo "app=1" >> "$GITHUB_OUTPUT" || echo "app=0" >> "$GITHUB_OUTPUT"
+          grep -qx 'sw.js'      <<< "$CHANGED" && echo "sw=1"  >> "$GITHUB_OUTPUT" || echo "sw=0"  >> "$GITHUB_OUTPUT"
+
+      - name: Run the gate
+        env:
+          SPIRO_APP_CHANGED: ${{ steps.diff.outputs.app }}
+          SPIRO_SW_CHANGED:  ${{ steps.diff.outputs.sw }}
+        run: node --test --test-reporter=spec test/
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::error::The deploy gate failed. Nothing was published."
+          echo "Run it locally with:  node --test --test-reporter=spec test/"
