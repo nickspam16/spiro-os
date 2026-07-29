@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.153.0';
+var APP_VERSION = 'v5.154.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2170,6 +2170,17 @@ function addrCandidatesHtml() {
           + '<button class="qbtn" onclick="event.stopPropagation();rejectAddr(' + Number(c.id) + ')">&#10005;</button>'
           + '</div>';
       }).join('');
+}
+/* Marks a suggested match as already shown to the buyer. Deliberately does NOT ask when it happened:
+   a date prompt is exactly the friction that stops this being used, and fn_mark_match_shown records
+   plainly that sent_at is the capture time rather than the showing time, so nothing downstream treats
+   a guess as fact. Feedback is left null — an empty field is the honest record for a conversation that
+   has not happened yet. */
+async function markShown(matchId) {
+  var r = await sb.rpc('fn_mark_match_shown', { p_match_id: matchId, p_days: 7 });
+  if (r && r.error) { toast('Could not record'); return; }
+  toast(String(r && r.data ? r.data : 'Marked shown'));
+  await loadAll(false);
 }
 async function acceptAddr(id) {
   var r = await sb.rpc('fn_accept_listing_address', { p_candidate_id: id });
@@ -7308,6 +7319,13 @@ function buyerSuggestedHtml(bid) {
     return '<div class="qi"><div class="txt"><div class="t1">' + tag + 'Suggested: ' + esc(s.label) + (s.score ? ' · fit ' + s.score + '/10' : '') + unpriced + '</div>'
       + addrLine
       + (s.rationale ? '<div class="t2">Why: ' + esc(s.rationale) + '</div>' : '') + '</div>'
+      /* "Shown" (2026-07-29): Nick had already walked Nicole and Adam through 570 Evelyn Pl, and the
+         system had no idea — it kept offering his own listing back to him as a fresh idea, and the only
+         reason it ever got recorded is that he mentioned it in conversation. One tap now does all three
+         things he did by hand: marks the pairing real, stamps that it went out, and creates the
+         follow-up that chases the feedback. Skipping that third step is how a showing becomes silence. */
+      + '<button class="qbtn" title="Already shown — records it and chases feedback"'
+      + ' onclick="event.stopPropagation();markShown(' + "'" + s.matchId + "'" + ')">&#128065;</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(' + "'" + s.matchId + "'" + ')">&#10003;</button>'
       + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(' + "'" + s.matchId + "'" + ')">&#10005;</button></div>';
   }).join('');
