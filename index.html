@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.152.0';
+var APP_VERSION = 'v5.153.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1157,7 +1157,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { feedHealth: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
+var DATA = { feedHealth: [], addrCandidates: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1428,7 +1428,7 @@ async function loadAll(manual) {
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
-  fetchFeedHealth();       /* scheduled-job health; renders as an alert atop Today's Focus */
+  fetchFeedHealth(); fetchAddressCandidates();       /* scheduled-job health; renders as an alert atop Today's Focus */
   flushOfflineCaptures();  /* file any notes captured while offline */
   if (manual) reconcileSpines(); /* self-heal: link any create-path misses to existing people/parcels */
   if (manual) toast('Refreshed');
@@ -2139,6 +2139,50 @@ var FEED_PROBLEM_LABEL = {
   stale: 'has stopped running',
   suspicious_zero: 'ran but produced nothing'
 };
+/* Postal-address resolution (2026-07-29). Nick's listings are labelled the way he talks about them --
+   "570 Evelyn Pl", "Tigertail" -- which is correct for him and useless for geography: not one of the 11
+   had a zip, so his own inventory could not be area-matched to his own buyers at all. The US Census
+   Geocoder (free, no key, PUBLIC DOMAIN so it can be cached permanently) resolves them; these are the
+   proposals, and Nick picks. Accepting NEVER overwrites listings.address -- the postal form is stored
+   in extra.postal_* purely so the matcher has coordinates. His labels stay his.
+   Google is deliberately not used here: its ToS forbids storing geocodes beyond 30 days, and this is a
+   permanent store. That is the standing rule already recorded in the roadmap. */
+function fetchAddressCandidates() {
+  if (!sb) return;
+  sb.from('listing_address_candidates')
+    .select('id,listing_id,raw_address,postal,city,zip,status')
+    .eq('status', 'pending')
+    .then(function (r) {
+      if (r && !r.error && Array.isArray(r.data)) { DATA.addrCandidates = r.data; renderQueue(); }
+    }, function () { /* never let this break the dashboard */ });
+}
+function addrCandidatesHtml() {
+  var rows = DATA.addrCandidates || [];
+  if (!rows.length) return '';
+  return '<div class="bucket gold">&#128205; Confirm listing addresses &middot; ' + rows.length + '</div>'
+    + rows.map(function (c) {
+        return '<div class="qi"><div class="txt">'
+          + '<div class="t1">' + esc(c.raw_address) + '</div>'
+          + '<div class="t2">&rarr; ' + esc(c.postal) + '</div>'
+          + '<div class="t2 hint">Confirming only adds the zip for area matching. Your listing name is unchanged.</div>'
+          + '</div>'
+          + '<button class="qbtn done" onclick="event.stopPropagation();acceptAddr(' + Number(c.id) + ')">&#10003;</button>'
+          + '<button class="qbtn" onclick="event.stopPropagation();rejectAddr(' + Number(c.id) + ')">&#10005;</button>'
+          + '</div>';
+      }).join('');
+}
+async function acceptAddr(id) {
+  var r = await sb.rpc('fn_accept_listing_address', { p_candidate_id: id });
+  if (r && r.error) { toast('Could not confirm'); return; }
+  toast(String(r && r.data ? r.data : 'Confirmed'));
+  fetchAddressCandidates(); await loadAll(false);
+}
+async function rejectAddr(id) {
+  var r = await sb.rpc('fn_reject_listing_address', { p_candidate_id: id });
+  if (r && r.error) { toast('Could not dismiss'); return; }
+  toast('Dismissed'); fetchAddressCandidates();
+}
+
 function feedHealthHtml() {
   var rows = DATA.feedHealth || [];
   if (!rows.length) return '';
@@ -2173,7 +2217,7 @@ function renderQueue() {
   if (!h) h = '<div class="empty">All clear. Nothing due.</div>';
   /* Prepend, not append: a dark feed outranks any individual to-do, because it means the rest
      of this list may itself be incomplete. */
-  h = feedHealthHtml() + h;
+  h = feedHealthHtml() + addrCandidatesHtml() + h;
   if (DATA.graveyard.length) {
     h += '<button class="quiet" onclick="toggleGraveyard()">&#129702; Graveyard · ' + DATA.graveyard.length + ' auto-archived</button>';
     if (gShow) {
