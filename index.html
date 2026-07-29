@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.151.0';
+var APP_VERSION = 'v5.152.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1369,7 +1369,7 @@ async function loadAll(manual) {
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
     sb.from('followups').select('id,action_text,record_label,updated_at').eq('status', 'archived').order('updated_at', { ascending: false }).limit(50),
     sb.from('offmarket_potential_buyers').select('offmarket_id,buyer_id,sent_at,response,response_notes,response_at'),
-    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at').neq('status', 'dismissed'),
+    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source').neq('status', 'dismissed'),
     sb.from('transaction_deadlines').select('*'),
     sb.from('esign_envelopes').select('*'),
     sb.from('showings').select('*'),
@@ -1845,10 +1845,18 @@ function buyersToCallRows() {
   var byBuyer = {};
   (DATA.matches || []).forEach(function (m) {
     if (m.status === 'dismissed') return;
-    var x = byBuyer[m.buyer_id] || (byBuyer[m.buyer_id] = { count: 0, best: 0 });
+    var x = byBuyer[m.buyer_id] || (byBuyer[m.buyer_id] = { count: 0, best: 0, bestOnMarket: 0, urgency: 4 });
     x.count++; if ((m.score || 0) > x.best) x.best = (m.score || 0);
+    if (m.target_type !== 'prospects' && (m.score || 0) > x.bestOnMarket) x.bestOnMarket = (m.score || 0);
+    if (m.urgency != null && m.urgency < x.urgency) x.urgency = m.urgency;
   });
   var rows = [];
+  /* 2026-07-29: readiness now decides who to call. The matcher scores PROPERTY FIT only, so an
+     "Asap" buyer and a "Just looking" buyer both reach 10 and the list read as undifferentiated —
+     which is how 53 perfect matches sat unreviewed for nine days. urgency comes off the match row
+     (0 Asap, 1 3-6mo, 2 Always looking, 3 Just looking, 4 unset). Score still decides WHETHER a buyer
+     appears; readiness decides the ORDER. */
+  var URG = ['ready now', 'buying in 3-6 months', 'always looking', 'just looking', ''];
   (DATA.buyers || []).forEach(function (bu) {
     var mm = byBuyer[bu.id]; if (!mm) return;
     var hasContact = !!(bu.contact && String(bu.contact).trim());
@@ -1856,10 +1864,14 @@ function buyersToCallRows() {
     if (mm.best >= 8 && !hasContact) reasons.push('strong match, no contact on file');
     else if (mm.best >= 9) reasons.push('hot match');
     if (!reasons.length) return;
+    if (URG[mm.urgency]) reasons.unshift(URG[mm.urgency]);
+    /* A buyer whose only strong matches are off-market prospects is a different conversation —
+       there is nothing to send them today — so say so rather than implying a listing is waiting. */
+    if (!mm.bestOnMarket) reasons.push('off-market prospects only');
     var pr = (mm.best >= 8 && !hasContact ? 2 : 0) + (mm.best >= 9 ? 1 : 0);
-    rows.push({ id: bu.id, name: bu.name, best: mm.best, count: mm.count, reasons: reasons, pr: pr });
+    rows.push({ id: bu.id, name: bu.name, best: mm.best, count: mm.count, reasons: reasons, pr: pr, urgency: mm.urgency });
   });
-  rows.sort(function (a, b) { return b.pr - a.pr || b.best - a.best; });
+  rows.sort(function (a, b) { return a.urgency - b.urgency || b.pr - a.pr || b.best - a.best; });
   return rows;
 }
 function renderIntel() { try {
@@ -6845,7 +6857,13 @@ function buyerLinkRows(bid) {
     if (!lab) return;
     if (m.status === 'confirmed') { seen[k] = 1; linked.push({ type: t, id: String(m.target_id), label: lab, via: 'match', matchId: m.id,
       sent_at: m.sent_at, response: m.response, response_at: m.response_at, response_notes: m.response_notes }); }
-    else suggested.push({ matchId: m.id, type: t, id: String(m.target_id), label: lab, score: m.score, rationale: m.rationale });
+    /* 2026-07-29: carry the structured fields the matcher now writes. Before this, target_ref and
+       target_address were never populated and urgency did not exist, so the app had no way to tell an
+       off-market prospect from a live listing, or a ready buyer from a browsing one. */
+    else suggested.push({ matchId: m.id, type: t, id: String(m.target_id), label: lab, score: m.score, rationale: m.rationale,
+      addr: m.target_address || '', ref: m.target_ref || '',
+      urgency: (m.urgency == null ? 4 : m.urgency), src: m.match_source || '',
+      onMarket: (t !== 'prospects') });
   });
   return { linked: linked, suggested: suggested };
 }
@@ -7223,12 +7241,28 @@ function buyerSuggestedHtml(bid) {
      via that fallback even when the address itself is missing. */
   var withAddr = r.suggested.map(function (s) {
     var rec = recOf(s.type, s.id);
-    return { s: s, hasAddr: !!(rec && String(rec.address || rec.address_area || '').trim()) };
+    return { s: s, hasAddr: !!(s.addr || (rec && String(rec.address || rec.address_area || '').trim())) };
   });
-  withAddr.sort(function (a, b) { return (b.hasAddr - a.hasAddr) || 0; }); /* stable: keeps existing relative order within each group */
+  /* 2026-07-29 ordering: addressed first (unchanged), then ON-MARKET ahead of off-market prospects,
+     then by fit. The prospect tie-break matters: prospects cap at 9 and so tie with real listings at 9,
+     and a house that is NOT for sale must never outrank one that is. Applied AFTER score so a prospect
+     scoring 9 still beats a listing scoring 6 — it only loses an otherwise-equal tie. */
+  withAddr.sort(function (a, b) {
+    return (b.hasAddr - a.hasAddr)
+        || ((b.s.score || 0) - (a.s.score || 0))            /* fit first */
+        || ((b.s.onMarket ? 1 : 0) - (a.s.onMarket ? 1 : 0)); /* THEN prefer on-market, tie-break only */
+  });
   var html = withAddr.map(function (x) {
     var s = x.s;
-    return '<div class="qi"><div class="txt"><div class="t1">Suggested: ' + esc(s.label) + (s.score ? ' · fit ' + s.score + '/10' : '') + '</div>'
+    /* An off-market prospect is a house that is NOT for sale. It is an origination signal, never
+       something to send a buyer as available, so it is labelled before anything else on the row. */
+    var tag = s.onMarket ? '' : '<span class="tag" style="background:#f3e3d6;color:#8a4a24;border-radius:3px;padding:1px 5px;font-size:10px;letter-spacing:.04em;margin-right:5px;">OFF-MARKET PROSPECT</span>';
+    var unpriced = (!s.onMarket && /UNVERIFIED/.test(s.rationale || ''))
+      ? '<span class="hint" style="color:#8a4a24;"> · no price on file</span>' : '';
+    var addrLine = (s.addr && s.addr !== s.label)
+      ? '<div class="t2">' + esc(s.addr) + (s.ref && s.onMarket && s.ref !== s.addr ? ' · MLS ' + esc(s.ref) : '') + '</div>' : '';
+    return '<div class="qi"><div class="txt"><div class="t1">' + tag + 'Suggested: ' + esc(s.label) + (s.score ? ' · fit ' + s.score + '/10' : '') + unpriced + '</div>'
+      + addrLine
       + (s.rationale ? '<div class="t2">Why: ' + esc(s.rationale) + '</div>' : '') + '</div>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(' + "'" + s.matchId + "'" + ')">&#10003;</button>'
       + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(' + "'" + s.matchId + "'" + ')">&#10005;</button></div>';
