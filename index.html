@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.150.0';
+var APP_VERSION = 'v5.151.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1087,9 +1087,15 @@ async function toggleBrokerConfirmed(templateKey, toConfirmed) {
 function tcTemplateNoteForm(templateKey) {
   var box = document.getElementById('tfb-' + templateKey); if (!box) return;
   var taId = 'tfb-input-' + templateKey;
-  var saveAttr = 'event.stopPropagation();saveTcTemplateNote(\'' + templateKey + '\',\'' + taId + '\')';
-  var cancelAttr = 'event.stopPropagation();var b=document.getElementById(\'tfb-' + templateKey + '\');if(b)b.innerHTML=\'\';';
-  box.innerHTML = '<textarea id="' + taId + '" placeholder="e.g. our outside TC always adds a step here that we don’t have a template for..." style="width:100%;margin-top:4px;min-height:50px;"></textarea>'
+  /* SECURITY (2026-07-28): templateKey/taId are interpolated INSIDE JS string literals that become an
+     on*= handler. esc() on the finished attribute is NOT sufficient protection for that: the browser
+     HTML-decodes an attribute BEFORE compiling the JS inside it, so an esc()'d &#39; decodes back to a
+     real quote and closes the literal. The value needs JS-layer escaping (escJs -> \xNN, which survives
+     the HTML decode) and the assembled attribute still needs esc() for the HTML layer. Both, in that
+     order. Do not "simplify" this to a single escape. */
+  var saveAttr = 'event.stopPropagation();saveTcTemplateNote(\'' + escJs(templateKey) + '\',\'' + escJs(taId) + '\')';
+  var cancelAttr = 'event.stopPropagation();var b=document.getElementById(\'tfb-' + escJs(templateKey) + '\');if(b)b.innerHTML=\'\';';
+  box.innerHTML = '<textarea id="' + esc(taId) + '" placeholder="e.g. our outside TC always adds a step here that we don’t have a template for..." style="width:100%;margin-top:4px;min-height:50px;"></textarea>'
     + '<div style="margin-top:4px;"><button class="qbtn done" onclick="' + esc(saveAttr) + '">Save note</button> <button class="qbtn" onclick="' + esc(cancelAttr) + '">Cancel</button></div>';
 }
 async function saveTcTemplateNote(templateKey, taId) {
@@ -4409,8 +4415,10 @@ async function saveCommissionPct(sid, val) {
 }
 function addCommissionItemForm(sid) {
   var box = document.getElementById('ci-' + sid); if (!box) return;
-  var saveAttr = 'event.stopPropagation();saveCommissionItem(\'' + sid + '\')';
-  var cancelAttr = 'event.stopPropagation();cancelCommissionItemForm(\'' + sid + '\')';
+  /* SECURITY (2026-07-28): same layering rule as tcTemplateNoteForm -- escJs() for the value going
+     inside the JS string literal, esc() for the attribute that carries it. See the note there. */
+  var saveAttr = 'event.stopPropagation();saveCommissionItem(\'' + escJs(sid) + '\')';
+  var cancelAttr = 'event.stopPropagation();cancelCommissionItemForm(\'' + escJs(sid) + '\')';
   var html = '<div onclick="event.stopPropagation();" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:var(--radius);">'
     + '<input type="text" id="ci-label-' + sid + '" placeholder="Payee (e.g. Brokerage split, Co-op agent, Referral fee)" style="width:100%;margin-bottom:6px;">'
     + '<input type="text" inputmode="decimal" id="ci-amount-' + sid + '" placeholder="Amount $ (optional)" style="width:48%;margin-right:4%;">'
