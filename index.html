@@ -639,7 +639,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.177.0';
+var APP_VERSION = 'v5.178.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -3557,45 +3557,38 @@ var REVGEO_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/revgeo';
 var CENSUS_GEOCODE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/census_geocode';
 var MAPBOX_GEOCODE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/mapbox-geocode';
 var OMNI_PHOTO = null, omniPhotoBusy = false;
-async function revgeoCall(body) {
+/* ONE SHARED EDGE CALLER (2026-07-30, silent-failure sweep).
+   revgeoCall / censusGeocodeCall / mapboxGeocodeCall / femaLookupCall were four copies of the same
+   nine lines, and all four ended `if (!r.ok) return null` / `catch { return null }`. That is the
+   exact code that made "Lookup failed" the entire visible symptom of fema-flood-lookup having no
+   CORS handling — an endpoint that had NEVER worked in six days looked identical to an address
+   with no match, because both paths return null and neither says anything to anyone.
+   The contract is unchanged (parsed JSON, or null) so no caller had to move. What is new is that a
+   TRANSPORT or HTTP failure now reports itself to client_errors, which is where fn_check_ask_health
+   and the coverage report can see it. A clean "no match" stays quiet, because that is not a fault.
+   silent-ok: the null return is deliberate and the reason is now recorded server-side. */
+async function edgeJson(url, body, label) {
   try {
     var s = await sb.auth.getSession();
     var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return null;
-    var r = await withTimeout(fetch(REVGEO_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false });
-    if (!r.ok) return null;
+    if (!tok) { reportError('edge:' + label, new Error('no session token — signed out or auth not settled')); return null; }
+    var r = await withTimeout(fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false, status: 0 });
+    if (!r.ok) { reportError('edge:' + label, new Error('HTTP ' + (r.status || 'timeout/blocked'))); return null; }
     return await r.json();
-  } catch (e) { return null; }
+  } catch (e) { reportError('edge:' + label, e); return null; }
 }
+async function revgeoCall(body) { return await edgeJson(REVGEO_FN, body, 'revgeo'); }
 /* Forward-geocode: try the free/no-key Census Bureau geocoder first (public-domain data, no ToS
    cache-expiry limit, so coordinates can be kept permanently) and fall back to Google (revgeo)
    only when Census has no TIGER/Line match for the address. Reverse geocode (GPS->street, used
    right before this in omniPhoto()) stays on revgeo/Google only -- Census can't do that lookup. */
-async function censusGeocodeCall(body) {
-  try {
-    var s = await sb.auth.getSession();
-    var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return null;
-    var r = await withTimeout(fetch(CENSUS_GEOCODE_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) { return null; }
-}
+async function censusGeocodeCall(body) { return await edgeJson(CENSUS_GEOCODE_FN, body, 'census_geocode'); }
 async function forwardGeocode(body) {
   var census = await censusGeocodeCall(body);
   if (census && census.status === 'OK') return census;
   return await revgeoCall(body);
 }
-async function mapboxGeocodeCall(body) {
-  try {
-    var s = await sb.auth.getSession();
-    var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return null;
-    var r = await withTimeout(fetch(MAPBOX_GEOCODE_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 15000, { ok: false });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) { return null; }
-}
+async function mapboxGeocodeCall(body) { return await edgeJson(MAPBOX_GEOCODE_FN, body, 'mapbox_geocode'); }
 /* Geocoding for anything PERSISTED to a row (offmarket/listings extra.lat/extra.lng) -- separate
    from forwardGeocode() above, which is the walk-by-photo display flow and stays Census/Google
    only. Persisted coordinates go Census first (free, permanent, no cost risk) and only fall to
@@ -6990,15 +6983,17 @@ async function fetchPhotoLinks(force) {
   try {
     var s = await sb.auth.getSession();
     var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return;
+    /* silent-ok: photo thumbnails are decoration — a toast mid-scroll would be worse than the
+       missing image. But it must still be DIAGNOSABLE, which it was not. (2026-07-30) */
+    if (!tok) { reportError('edge:photo_links', new Error('no session token')); return; }
     var r = await withTimeout(fetch(PORTAL_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ refs: refs, buyer_ids: bids }) }), 15000, { ok: false });
-    if (!r.ok) return;
+    if (!r.ok) { reportError('edge:photo_links', new Error('HTTP ' + (r.status || 'timeout'))); return; }
     var j = await r.json();
     if (j && (j.byRef || j.buyers)) {
       PHOTOLINKS = j.byRef || {}; PORTALBUYERS = j.buyers || {};
       photoLinksAt = Date.now(); renderBrowse();
     }
-  } catch (e) {} finally { photoLinksBusy = false; }
+  } catch (e) { reportError('edge:photo_links', e); } finally { photoLinksBusy = false; }
 }
 /* One-line portal state for a CRM property record. */
 function portalStatusHtml(table, id) {
@@ -9622,14 +9617,7 @@ function renderMarketReview() {
 var FEMA_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/fema-flood-lookup';
 var FRED_SYNC_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/fred-sync';
 async function femaLookupCall(lat, lng, entityType, entityId) {
-  try {
-    var s = await sb.auth.getSession();
-    var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return null;
-    var r = await withTimeout(fetch(FEMA_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ lat: lat, lng: lng, entity_type: entityType, entity_id: entityId }) }), 15000, { ok: false });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) { return null; }
+  return await edgeJson(FEMA_FN, { lat: lat, lng: lng, entity_type: entityType, entity_id: entityId }, 'fema_flood');
 }
 function floodZoneLabel(g) {
   if (!g) return 'Lookup failed';
