@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.165.0';
+var APP_VERSION = 'v5.167.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -4239,14 +4239,15 @@ function tracerfyBatchHtml() {
   }).join('');
   var shown = tracerfyFilterTier === 'all' ? all : all.filter(function (p) { return (p.priority || 'Cold') === tracerfyFilterTier; });
   var h = '<div class="hint" style="margin-bottom:6px;">' + all.length + ' active prospect' + (all.length === 1 ? '' : 's') + ' missing what Tracerfy actually provides (owner name + phone/email) &mdash; '
-    + s.missing.length + ' missing both, ' + s.nameOnly.length + ' have a name but no contact. Everyone else already has both, so they&rsquo;re left out of this batch.</div>';
+    + s.missing.length + ' missing both, ' + s.nameOnly.length + (s.nameOnly.length === 1 ? ' has' : ' have') + ' a name but no contact. Everyone else already has both, so they&rsquo;re left out of this batch.</div>';
   h += '<div style="margin-bottom:6px;">' + chips + '</div>';
   if (!shown.length) { h += '<div class="hint">No ' + esc(tracerfyFilterTier) + ' prospects in this batch.</div>'; }
   h += shown.map(function (p) {
     var checked = tracerfyBatch[p.id] ? ' checked' : '';
     return '<div class="qi"><div class="txt"><label style="cursor:pointer;" onclick="event.stopPropagation();">'
       + '<input type="checkbox"' + checked + ' onchange="tracerfyBatchToggle(\'' + esc(p.id) + '\')" style="margin-right:6px;">'
-      + '<span class="t1">' + esc(p.address || p.owner_name || 'Unknown') + (p.priority ? ' · ' + esc(p.priority) : '') + '</span></label>'
+      + '<span class="t1">' + esc(p.address || p.owner_name || 'Unknown') + (p.priority ? ' · ' + esc(p.priority) : '')
+      + (p.address && String(p.address).trim() ? '' : ' <span class="pill warn">no address &mdash; can&rsquo;t be looked up</span>') + '</span></label>'
       + '<div class="t2">' + (p.owner_name ? esc(p.owner_name) + ' — no phone/email on file' : 'no owner info on file') + '</div></div>'
       + '<div class="acts"><button class="qbtn" onclick="event.stopPropagation();skipTracerfyProspect(\'' + esc(p.id) + '\')">Skip</button></div></div>';
   }).join('');
@@ -4260,10 +4261,24 @@ function copyTracerfyBatch() {
   var shown = tracerfyFilterTier === 'all' ? all : all.filter(function (p) { return (p.priority || 'Cold') === tracerfyFilterTier; });
   var selIds = Object.keys(tracerfyBatch).filter(function (k) { return tracerfyBatch[k]; });
   var batch = selIds.length ? all.filter(function (p) { return tracerfyBatch[String(p.id)]; }) : shown;
-  if (!batch.length) { toast('Nothing to copy'); return; }
+  /* NO ADDRESS, NO LOOKUP (2026-07-30). This used to emit the literal string "no address on file"
+     as a batch line for any prospect without one. Tracerfy is looked up BY address, so that line
+     either burns a credit on nothing or is quietly dropped by whoever runs it — and either way Nick
+     believes he covered N when he covered fewer. Costed in real money, one step removed: nothing
+     here spends anything, but the text produced here is what gets pasted into a session that does.
+     Un-lookupable rows are held back and counted out loud rather than padded in. */
+  var noAddr = batch.filter(function (p) { return !(p.address && String(p.address).trim()); });
+  batch = batch.filter(function (p) { return p.address && String(p.address).trim(); });
+  if (!batch.length) {
+    toast(noAddr.length ? 'Nothing to copy — ' + noAddr.length + (noAddr.length === 1 ? ' has' : ' have') + ' no address on file' : 'Nothing to copy');
+    return;
+  }
   var txt = 'Send this batch to Tracerfy (' + batch.length + ' address' + (batch.length === 1 ? '' : 'es') + '):\n\n'
-    + batch.map(function (p) { return (p.address || 'no address on file') + (p.owner_name ? ' — ' + p.owner_name : ''); }).join('\n');
-  var done = function () { toast('Batch copied — paste to Claude to run it ✓'); };
+    + batch.map(function (p) { return p.address + (p.owner_name ? ' — ' + p.owner_name : ''); }).join('\n');
+  var done = function () {
+    toast('Copied ' + batch.length + ' address' + (batch.length === 1 ? '' : 'es')
+      + (noAddr.length ? ' · ' + noAddr.length + ' skipped, no address on file' : '') + ' ✓');
+  };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { toast('Could not copy — select manually'); });
 }
 
@@ -7119,7 +7134,22 @@ async function shareListing(buyerId, listingId) {
   portalAt = 0; fetchPortal(false);
 }
 async function unshareListing(buyerId, listingId) {
-  if (portalWriteBusy) return; portalWriteBusy = true;
+  if (portalWriteBusy) return;
+  /* CONFIRM ONLY WHEN THEY'VE ALREADY BEEN TOLD (2026-07-30). Removing a listing was one tap and
+     asked nothing — including for one tagged `announced`, meaning the buyer had already been
+     notified about it. Turning a buyer's access OFF asks "are you sure"; silently retracting a
+     property they have already seen did not. That asymmetry is backwards: the second one is the
+     one that produces a confused phone call after a conversation about that exact house.
+     Friction goes where the consequence is. An unannounced listing nobody has seen stays one tap. */
+  var pb = portalBuyer(buyerId);
+  var shared = ((pb && pb.shared_listings) || []).filter(function (s) { return String(s.id) === String(listingId); })[0];
+  if (shared && shared.notified) {
+    var what = shared.title || shared.area || 'this listing';
+    /* Phrased to dodge verb agreement: buyer names are as often a couple ("Nicole and Adam")
+       as a single person, and "Nicole and Adam has already been told" reads wrong. */
+    if (!confirm('Already announced to ' + (pb ? pb.name : 'this buyer') + ': “' + what + '”.\n\nRemove it from their portal anyway?')) return;
+  }
+  portalWriteBusy = true;
   var res = await portalWrite({ action: 'unshare_listing', buyer_id: buyerId, listing_id: listingId });
   portalWriteBusy = false;
   if (!res.ok) { toast('Could not remove — try again'); return; }
