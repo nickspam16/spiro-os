@@ -5,7 +5,7 @@
 // cache-first-only meant index.html updates never propagated unless CACHE was bumped —
 // that stranded users on stale builds. Fixed here.) cache:'reload' at install still
 // bypasses the CDN max-age so a fresh SW version can't cache a stale index.html.
-const CACHE = 'spiro-os-v84';
+const CACHE = 'spiro-os-v85';
 const SHELL = ['./index.html', './manifest.json', './icon.png', './supabase.js',
   './assets/ns-logo.svg', './assets/icon-192.png', './assets/icon-512.png',
   './assets/icon-192-maskable.png', './assets/icon-512-maskable.png',
