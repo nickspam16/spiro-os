@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.161.0';
+var APP_VERSION = 'v5.163.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6249,7 +6249,7 @@ var NEW_SHARE = null;
 var newShareFilterTimer = null;
 
 function openNewShare() {
-  NEW_SHARE = { step: 'recipient', recipientId: '', contentType: null, propFilter: 'offmarket', activeOnly: true, q: '', selected: {} };
+  NEW_SHARE = { step: 'recipient', recipientId: '', contentType: null, propFilter: 'offmarket', activeOnly: true, q: '', selected: {}, budgetDisplay: 'full' };
   renderShareLinks();
 }
 function cancelNewShare() { NEW_SHARE = null; renderShareLinks(); }
@@ -6423,7 +6423,36 @@ function newShareItemsStepHtml() {
   }
   h += '<input type="text" id="newshare-q" placeholder="' + (NEW_SHARE.contentType === 'buyers' ? 'Search buyers…' : 'Search address…') + '" value="' + esc(NEW_SHARE.q || '') + '" oninput="newShareFilterInput()" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:12px 10px;font-size:16px;">';
   h += '<div id="newshare-items">' + (NEW_SHARE.contentType === 'buyers' ? newShareBuyerRowsHtml() : newSharePropertyRowsHtml()) + '</div>';
+  if (NEW_SHARE.contentType === 'buyers') h += newShareBudgetPickerHtml();
   return h;
+}
+/* Per-link budget disclosure (2026-07-30). Sits on the link, not in settings, because the right
+   answer genuinely varies: a co-op partner hunting off-market should probably see the real range;
+   an agent on the other side of a deal should not learn what your buyer will actually pay.
+   Default stays the exact range, so nothing changes unless Nick chooses it. */
+var BUDGET_DISPLAY_OPTS = [
+  ['full', 'Exact range', 'e.g. $4,000,000 – $8,000,000'],
+  ['rounded', 'Rounded', 'e.g. $4M – $8M'],
+  ['from', 'Floor only', 'e.g. $4M+ — hides what they’ll actually go to'],
+  ['hidden', 'No budget', 'areas and must-haves only']
+];
+function newShareBudgetPickerHtml() {
+  var cur = NEW_SHARE.budgetDisplay || 'full';
+  var sel = BUDGET_DISPLAY_OPTS.filter(function (o) { return o[0] === cur; })[0] || BUDGET_DISPLAY_OPTS[0];
+  return '<div class="flabel" style="margin-top:14px;">Budget shown to the recipient</div>'
+    + '<div class="chip-row" style="margin-bottom:4px;">'
+    + BUDGET_DISPLAY_OPTS.map(function (o) {
+        var attr = 'newShareSetBudgetDisplay(\'' + escJs(o[0]) + '\')';
+        return '<span class="filter-chip ns-chip" style="cursor:pointer;'
+          + (cur === o[0] ? 'font-weight:600;border-color:var(--ink);' : '') + '" onclick="' + esc(attr) + '">'
+          + esc(o[1]) + '</span>';
+      }).join(' ')
+    + '</div><div class="hint">' + esc(sel[2]) + '</div>';
+}
+function newShareSetBudgetDisplay(v) {
+  if (!NEW_SHARE) return;
+  NEW_SHARE.budgetDisplay = v;
+  renderShareLinks();
 }
 
 async function newShareGenerate() {
@@ -6432,11 +6461,19 @@ async function newShareGenerate() {
   if (!ids.length) return;
   var recipientId = NEW_SHARE.recipientId || null;
   var fields, logTable, logId, logLabel;
-  if (NEW_SHARE.contentType === 'buyers') {
+  if (NEW_SHARE.contentType === 'buyers' && ids.length > 1) {
+    /* Several buyer needs, one agent (2026-07-30). Previously this branch took ids[0] and threw
+       the rest away without a word — tick three buyers, send one. Mirrors the multi-property
+       'list' kind exactly, down to the label prompt, so the two paths read the same. */
+    var mlabel = prompt('Label for this list (agents will see this as the page title):', 'What my buyers are looking for');
+    if (mlabel === null) return;
+    fields = { kind: 'buyer_list', buyer_ids: ids, label: mlabel || 'Buyer needs', budget_display: NEW_SHARE.budgetDisplay || 'full' };
+    logTable = null; logLabel = 'Share list created: ' + (mlabel || '') + ' (' + ids.length + ' buyer needs)';
+  } else if (NEW_SHARE.contentType === 'buyers') {
     var b = recOf('buyers', ids[0]); if (!b) return;
     var blabel = prompt('Label for this buyer profile (agents will see this as the page title):', 'Buyer looking in ' + (b.areas || 'the area'));
     if (blabel === null) return;
-    fields = { kind: 'buyer', buyer_id: ids[0], label: blabel || 'Buyer profile' };
+    fields = { kind: 'buyer', buyer_id: ids[0], label: blabel || 'Buyer profile', budget_display: NEW_SHARE.budgetDisplay || 'full' };
     logTable = 'buyers'; logId = ids[0]; logLabel = 'Share link created for buyer profile';
   } else if (NEW_SHARE.propFilter === 'mine') {
     var ls = recOf('listings', ids[0]); if (!ls) return;
