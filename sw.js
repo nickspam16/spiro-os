@@ -5,7 +5,16 @@
 // cache-first-only meant index.html updates never propagated unless CACHE was bumped —
 // that stranded users on stale builds. Fixed here.) cache:'reload' at install still
 // bypasses the CDN max-age so a fresh SW version can't cache a stale index.html.
-const CACHE = 'spiro-os-v85';
+// CACHE IS DELIBERATELY UNVERSIONED (2026-07-30). It used to carry a vNN that had to be bumped by
+// hand on every single deploy, enforced by a CI rule — and that rule was written for the OLD
+// cache-first worker, where index.html genuinely could not reach users without a new cache name.
+// This worker has been stale-while-revalidate since (see above): every open refreshes the cached
+// copy from the network in the background, so app updates propagate on their own. The bump was
+// solving a problem this file had already fixed, at a cost of one manual edit per deploy and a red
+// CI run every time it was forgotten — which was most times.
+// Adding or removing a SHELL asset still requires editing this file, and that edit is itself what
+// triggers install/addAll, so the shell list stays correct without a version number to maintain.
+const CACHE = 'spiro-os';
 const SHELL = ['./index.html', './manifest.json', './icon.png', './supabase.js',
   './assets/ns-logo.svg', './assets/icon-192.png', './assets/icon-512.png',
   './assets/icon-192-maskable.png', './assets/icon-512-maskable.png',
