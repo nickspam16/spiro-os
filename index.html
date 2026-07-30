@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.163.0';
+var APP_VERSION = 'v5.164.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6344,10 +6344,13 @@ function newShareToggleActiveOnly() {
   NEW_SHARE.activeOnly = !NEW_SHARE.activeOnly;
   renderShareLinks();
 }
+/* MULTI-SELECT (2026-07-30). This used to clear the whole selection on every tap —
+   `NEW_SHARE.selected = {}` — with the comment "single-select, one buyer per share". That was
+   the actual reason multiple buyers could never be shared: the create path was fixed first, on my
+   assumption that the picker already allowed ticking several, and it never did. The backend
+   branch for buyer_list was therefore unreachable. Now it toggles, exactly like properties. */
 function newSharePickBuyer(id) {
-  if (!NEW_SHARE) return;
-  NEW_SHARE.selected = {}; NEW_SHARE.selected[String(id)] = true; /* single-select — one buyer per share */
-  renderNewShareItemsOnly();
+  newShareToggleItem(id, true);
 }
 function newShareToggleItem(id, multi) {
   if (!NEW_SHARE) return;
@@ -6373,7 +6376,7 @@ function newShareBuyerRowsHtml() {
   }).join('');
   var n = Object.keys(NEW_SHARE.selected).length;
   return h + '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
-    + '<button class="qbtn done ns-btn" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link</button> '
+    + '<button class="qbtn done ns-btn" onclick="newShareGenerate()"' + (n ? '' : ' disabled') + '>Generate link' + (n > 1 ? ' (' + n + ')' : '') + '</button> '
     + '<button class="qbtn ns-btn" onclick="cancelNewShare()">Cancel</button></div>';
 }
 function newSharePropertyRowsHtml() {
