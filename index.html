@@ -100,6 +100,14 @@
      lighter than both, so filled vs. unfilled is obvious at a glance too. */
   input,select{width:100%;padding:12px 2px;border:0;border-bottom:1px solid var(--line);border-radius:0;font-size:16px;font-weight:600;font-family:inherit;color:var(--ink);background:transparent;margin-bottom:24px;transition:border-color .12s}
   input:focus,select:focus{outline:none;border-bottom-color:var(--green)}
+  /* Checkboxes and radios are not text fields (2026-07-30). The `input,select` rule above sets
+     width:100% and margin-bottom:24px, which stretched every checkbox across its entire row and
+     pushed the adjacent label text off the flex line — the "Flag for which buyer(s)?" picker
+     rendered as three nameless boxes with no buyer names at all. The share builder had already
+     been patched with an inline width/height, which is the tell that this was hit before and
+     fixed at one call site instead of at the source. Reset here so all eight checkbox sites
+     behave; the inline override still wins where it exists. */
+  input[type="checkbox"],input[type="radio"]{width:auto;min-width:0;flex:0 0 auto;margin:0;padding:0;border-bottom:0;accent-color:var(--green)}
   textarea{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:var(--radius);font-size:16px;font-weight:600;font-family:inherit;color:var(--ink);background:var(--panel);margin-bottom:14px;resize:none;min-height:70px;line-height:1.5;transition:border-color .12s}
   textarea:focus{outline:none;border-color:var(--green)}
   input::placeholder,textarea::placeholder{color:var(--faint);font-weight:400}
@@ -622,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.159.0';
+var APP_VERSION = 'v5.161.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8850,15 +8858,90 @@ var flagMarketEventId = null;
 /* Multi-buyer flag (2026-07-24, per Nick: "wanted to add one property to both Pauline and Owen") --
    checkboxes instead of a single <select>, pre-checked with whoever's already flagged so re-opening
    via "Edit" shows the current state rather than starting blank. */
+/* Rank buyers against the property being flagged (2026-07-30, per Nick: "it'd be frustrating to
+   flag a $2m property and not have my $1.5-$3m buyers suggested first").
+   This list was alphabetical, which is not an order — it is the absence of one. With 25 buyers the
+   right person sat wherever the alphabet put them, while the picker's entire job is to answer
+   "who is this for" — a question the app already holds the data to answer.
+
+   Mirrors rankAgentsForListing/rankAgentsForBuyerNeed deliberately: same {score, reasons} shape,
+   same sort, so this file has one ranking idiom rather than two.
+
+   NOBODY IS HIDDEN. Out-of-budget buyers fall to the bottom at 55% opacity; they do not disappear.
+   Nick flags things for reasons the scorer cannot see — a friend, a referral source, someone who
+   said "anything on that street" — and a picker that silently omits a buyer is one that quietly
+   loses a legitimate flag. Ranking is a suggestion; filtering would be a decision.
+
+   Each row shows its own reason, for the same purpose as the LEARNED strings on matches: an order
+   you cannot interrogate is an order you stop trusting. */
+function buyerAreaTokens(b) {
+  var out = [];
+  var crit = (b.extra && b.extra.criteria) || {};
+  if (Array.isArray(crit.areas)) crit.areas.forEach(function (a) { out.push(String(a).toLowerCase().trim()); });
+  String(b.areas || '').toLowerCase().split(/[,;/]+/).forEach(function (a) {
+    a = a.trim(); if (a.length > 2) out.push(a);
+  });
+  return out;
+}
+function rankBuyersForMarketEvent(e, already) {
+  var price = Number((e && (e.list_price != null ? e.list_price : e.sold_price)) || 0);
+  var hood = String((e && e.neighborhood) || '').toLowerCase().trim();
+  var beds = (e && e.beds != null) ? Number(e.beds) : null;
+  already = already || {};
+
+  return (DATA.buyers || []).map(function (b) {
+    var lo = b.budget_min_num != null ? Number(b.budget_min_num) : numFrom(b.budget_min);
+    var hi = b.budget_max_num != null ? Number(b.budget_max_num) : numFrom(b.budget_max);
+    var score = 0, reasons = [];
+
+    if (price > 0 && (lo || hi)) {
+      var bLo = lo || 0, bHi = hi || Infinity;
+      var band = (lo ? money(lo) : '') + (lo && hi ? '\u2013' : '') + (hi ? money(hi) : '');
+      if (price >= bLo && price <= bHi) { score += 5; reasons.push('in budget ' + band); }
+      else if (hi && price > bHi && price <= bHi * 1.15) { score += 1; reasons.push(Math.round((price / bHi - 1) * 100) + '% over ' + band); }
+      else if (lo && price < bLo && price >= bLo * 0.8) { score += 1; reasons.push('under ' + band); }
+      else { score -= 3; reasons.push('outside ' + band); }
+    } else if (price > 0) {
+      reasons.push('no budget on file');
+    }
+
+    if (hood) {
+      var toks = buyerAreaTokens(b);
+      if (toks.some(function (t) { return t && (hood.indexOf(t) >= 0 || t.indexOf(hood) >= 0); })) {
+        score += 3; reasons.push('wants ' + (e.neighborhood || ''));
+      }
+    }
+
+    var needBeds = (b.extra && b.extra.criteria && b.extra.criteria.beds_min != null)
+      ? Number(b.extra.criteria.beds_min) : null;
+    if (needBeds != null && beds != null) {
+      if (beds >= needBeds) { score += 1; reasons.push(beds + 'bd ok'); }
+      else { score -= 2; reasons.push('needs ' + needBeds + 'bd'); }
+    }
+
+    /* Already-flagged buyers pin to the top so re-opening via Edit shows the current state first
+       instead of scattering existing selections through the ranking. */
+    if (already[String(b.id)]) { score += 100; reasons.unshift('already flagged'); }
+
+    return { buyer: b, score: score, reasons: reasons };
+  }).sort(function (x, y) {
+    return (y.score - x.score) || String(x.buyer.name || '').localeCompare(String(y.buyer.name || ''));
+  });
+}
 function openFlagMarketEvent(id) {
   flagMarketEventId = id;
   var body = document.getElementById('market-body'); if (!body) return;
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
   var already = {}; (e ? marketEventFlaggedIds(e) : []).forEach(function (bid) { already[String(bid)] = true; });
-  var opts = (DATA.buyers || []).slice().sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); })
-    .map(function (b) {
+  var opts = rankBuyersForMarketEvent(e, already).map(function (rb) {
+      var b = rb.buyer;
       var checked = already[String(b.id)] ? ' checked' : '';
-      return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14.5px;"><input type="checkbox" class="market-flag-buyer-cb" value="' + esc(b.id) + '"' + checked + '> ' + esc(b.name) + '</label>';
+      var why = rb.reasons.length ? rb.reasons.join(' · ') : 'no budget on file';
+      return '<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;font-size:14.5px;'
+        + (rb.score < 0 ? 'opacity:.55;' : '') + '">'
+        + '<input type="checkbox" class="market-flag-buyer-cb" value="' + esc(b.id) + '"' + checked + ' style="margin-top:3px;">'
+        + '<span><span>' + esc(b.name) + '</span>'
+        + '<span class="hint" style="display:block;">' + esc(why) + '</span></span></label>';
     }).join('');
   var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
     + '<div class="flabel">Flag for which buyer(s)? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— pick as many as apply; tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
