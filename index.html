@@ -254,6 +254,15 @@
   @media (min-width:1000px){
     .app{max-width:1180px;padding-top:40px}
     .cols{display:grid;grid-template-columns:1fr 1.1fr;gap:40px;align-items:start}
+    /* STICKY LEFT COLUMN (2026-07-30). align-items:start is right — stretching Records to match
+       Today's Focus would just be a taller empty box. But the two columns are wildly unequal in
+       height (Records ~600px, Focus often 2000px+), so scrolling the focus list left ~700px of dead
+       cream where Records used to be, and Records itself scrolled out of reach. Sticking it means
+       the shorter column stays with you instead of abandoning the space. max-height + auto overflow
+       so a long Records list still scrolls on its own rather than being clipped, and it only applies
+       on wide screens — the phone layout is a single column and must not be touched. */
+    .cols>div:first-child{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow-y:auto;
+      scrollbar-width:thin;overscroll-behavior:contain}
     .stat .num{font-size:36px}
   }
 </style>
@@ -506,7 +515,7 @@
          picker so it's a deliberate visit, not ambient clutter. -->
     <div class="card" id="pricing-preview-card" style="display:none;">
       <h2>Pricing Preview</h2>
-      <div class="hint" id="pp-note" style="margin:-6px 0 10px;">Pick agents to preview an off-market listing to before it hits the portal — nothing sends automatically.</div>
+      <div class="hint" id="pp-note" style="margin:-6px 0 10px;">Pick agents to preview a listing to before it hits the market — nothing sends automatically.</div>
       <div id="pricing-preview-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
@@ -630,7 +639,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.170.0';
+var APP_VERSION = 'v5.175.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -694,9 +703,20 @@ function goDashboard() {
    including the Records-card jumps (Agents/Re-engage/Market/Contacts) — those used to just
    scroll to Records among everything else; now they get the same full-page treatment. */
 var PANEL_HOME = null; /* { id, parent, next } — where the moved card came from, for closePanel */
+/* PANELS REPLACE, THEY DO NOT STACK (2026-07-30, found driving the live site).
+   This appended into #panel-slot and only recorded PANEL_HOME for the FIRST card opened. Pick a
+   second item from the ⋮ menu while a panel was open and the new card was appended BELOW the one
+   still on screen — a full screen further down. Nothing appeared to happen, so the whole menu read
+   as dead; the only way through was Back-then-menu, every single time.
+   Worse, PANEL_HOME still pointed at the first card, so Back returned only that one and every
+   later card was orphaned in the slot permanently, compounding with each menu visit.
+   Fix: if a different panel is already open, send it home first (closePanel does exactly that,
+   including the hidden-by-default restore and the Records-tab reset) and then open the new one.
+   Re-opening the SAME panel is a no-op rather than a close/reopen flicker. */
 function openPanel(cardId) {
   var card = document.getElementById(cardId); if (!card) return;
   closeMoreMenu();
+  if (PANEL_HOME && PANEL_HOME.id !== cardId) closePanel();
   if (!PANEL_HOME) { PANEL_HOME = { id: cardId, parent: card.parentNode, next: card.nextSibling }; }
   card.style.display = '';
   document.getElementById('panel-slot').appendChild(card);
@@ -732,8 +752,16 @@ function closePanel() {
 function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
 function menuGoMarket() { openPanel('market-card'); renderMarketReview(); }
 function menuGoPeople() { setTab('people'); openPanel('records-card'); }
-function menuShowIntel() { openPanel('intel-card'); }
-function menuShowPortal() { openPanel('portal-card'); }
+/* RENDER ON OPEN (2026-07-30, found driving every menu item).
+   Both of these opened a card that had never been rendered and showed its literal initial markup —
+   "Loading…" — forever. Nothing was loading. render() skips hidden cards, and these two cards are
+   display:none until the menu reveals them, so the first render pass never touched them.
+   menuShowShareLinks() already carried the fix and the comment explaining it ("card was hidden ->
+   render() skips it; force one fresh render now that it's visible"); the same one-line treatment was
+   simply never applied to its two neighbours. Who to call in particular has a perfectly good empty
+   state — "No buyers need a call right now" — that no one could ever see. */
+function menuShowIntel() { openPanel('intel-card'); renderIntel(); }
+function menuShowPortal() { openPanel('portal-card'); if (PORTAL_OVERVIEW) renderPortal(); else fetchPortal(false); }
 function menuShowShareLinks() {
   openPanel('share-links-card');
   var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
@@ -964,12 +992,26 @@ function menuShowPricingPreview(presetListingId) {
 function pricingPreviewSetListing(id) { PP_SELECTED_LISTING = id || null; renderPricingPreviewCard(); }
 function renderPricingPreviewCard() {
   var el = document.getElementById('pricing-preview-body'); if (!el) return;
-  var listings = (DATA.listings || []).slice().sort(function (a, b) { return String(a.address || '').localeCompare(String(b.address || '')); });
+  /* The dropdown offered EVERY listing, including ones already Pending (2026-07-30: 220 N Cliffwood,
+     in escrow and closing in six days). Pre-marketing a deal that is already under contract is not a
+     thing you can do, so those are gone. Name-only placeholders stay — they are genuinely upcoming
+     listings — but they carry no price, and price fit is worth +3 of the agent ranking, so the
+     option says so instead of silently ranking on a blank. */
+  var listings = (DATA.listings || []).filter(function (l) {
+    return !/pending|sold|leased|closed/i.test(String(l.status || ''));
+  }).slice().sort(function (a, b) { return String(a.address || '').localeCompare(String(b.address || '')); });
   var opts = '<option value="">Choose a listing…</option>' + listings.map(function (l) {
-    return '<option value="' + esc(String(l.id)) + '"' + (PP_SELECTED_LISTING === String(l.id) ? ' selected' : '') + '>' + esc(l.address || 'Listing') + '</option>';
+    var noPrice = !(Number(l.price_num) > 0);
+    return '<option value="' + esc(String(l.id)) + '"' + (PP_SELECTED_LISTING === String(l.id) ? ' selected' : '') + '>'
+      + esc(l.address || 'Listing') + (noPrice ? ' — no price set' : '') + '</option>';
   }).join('');
   var h = '<select onchange="pricingPreviewSetListing(this.value)" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:var(--radius);margin-bottom:6px;">' + opts + '</select>';
   if (PP_SELECTED_LISTING) {
+    var picked = recOf('listings', PP_SELECTED_LISTING);
+    if (picked && !(Number(picked.price_num) > 0)) {
+      h += '<div class="t2 hint" style="margin:0 0 8px;">No price on this one yet, so the agent order below is based on area and relationship only &mdash; '
+         + 'price fit is the single biggest factor and it is sitting out. Add an asking price to the listing for a ranking you can trust.</div>';
+    }
     var body = previewSuggestHtml(PP_SELECTED_LISTING);
     h += body || '<div class="empty">No ranked agents for this listing yet.</div>';
   } else {
@@ -1119,8 +1161,16 @@ async function saveTcTemplateNote(templateKey, taId) {
 }
 /* "All stats" is a strip, not a card of its own — no natural standalone page, so it stays a
    reveal-in-place-on-the-home-page toggle rather than forcing it into #panel-view. */
+/* "All stats" IS THE ODD ONE OUT (2026-07-30, found driving every menu item in turn).
+   Every other ⋮ item calls openPanel(); this one reveals #stats, which lives INSIDE #home-view, and
+   scrolls to it. That is fine from the home page — but with any panel open, #home-view is
+   display:none, so the reveal and the scroll both land on a hidden element and the menu item does
+   absolutely nothing. No error, no movement, no panel. Dead in exactly the situation where someone
+   is browsing the menu, which is when they would use it.
+   Close the panel first, same guard openNew()/setTab() already use. */
 function menuShowStats() {
   closeMoreMenu();
+  if (PANEL_HOME) closePanel();
   var s = document.getElementById('stats');
   if (s) { s.style.display = 'flex'; s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 }
@@ -1258,6 +1308,25 @@ async function reportUnconfirmedWrite() {
    Insert-only by RLS — the app can write here and cannot read it back. Failures to report are
    swallowed on purpose: telemetry must never be able to cause the outage it is describing. */
 var _errSeen = {}, _errCount = 0;
+/* AI FAILURES MUST BE LOUD, NOT SOOTHING (2026-07-30).
+   The `ask` edge function had been returning 502 {"error":"API key is invalid."} since 2026-07-24 —
+   six days — and NOTHING in the app said so. It powers the home-screen capture box, Ask Spiro, the
+   Morning Brief and the Today's Focus triage, and every one of those failed softly with wording like
+   "AI triage unavailable right now — the sections below are still live as always." That reads as
+   weather. A revoked API key is not weather.
+   This routes every ask failure to the same client_errors telemetry as a crash, so it becomes
+   VISIBLE server-side, and returns a display string that names the real cause when the cause is a
+   configuration problem the user can act on. Transport blips still read as transport blips —
+   the distinction is the whole point. */
+function askFailure(mode, r, fallback) {
+  var raw = String((r && ((r.data && r.data.error) || (r.error && (r.error.message || r.error)))) || 'unknown');
+  reportError('ask:' + mode, new Error(raw));
+  if (/api key|unauthorized|401|invalid.*key|quota|credit|billing/i.test(raw)) {
+    return 'The AI is switched off — its API key is rejected (' + raw.slice(0, 80) + '). This needs a new key; nothing else in the app is affected.';
+  }
+  if (/timeout|timed out|network|fetch|connection/i.test(raw)) return fallback;
+  return fallback + ' (' + raw.slice(0, 80) + ')';
+}
 function reportError(source, err, page) {
   try {
     if (_errCount >= 20) return;                  /* per-session cap: a render loop must not flood */
@@ -2440,7 +2509,13 @@ function fetchDuplicateContacts() {
 function dupContactsHtml() {
   var rows = (DATA.dupContacts || []).filter(function (d) { return (d.confidence || 0) >= 6; });
   if (!rows.length) return '';
+  /* SAY IT ONCE (2026-07-30, found driving the live site). The "whichever you keep inherits..."
+     reassurance was inside the per-pair map, so with 6 pairs open it printed 6 times, four lines
+     each — 24 lines of identical text, more than the pairs themselves. It is a rule about how
+     merging works, not a fact about any one pair, so it belongs with the heading. */
   return '<div class="bucket gold">&#128101; Possible duplicate contacts &middot; ' + rows.length + '</div>'
+    + '<div class="t2 hint" style="margin:2px 0 8px;">Whichever you keep inherits the other&rsquo;s records, email and phone. '
+    + 'Nothing already filled in on the one you keep is overwritten. Undo is offered straight after.</div>'
     + rows.map(function (d) {
         /* Interpolating uuids into an on* attribute: escJs() first (the attribute is decoded as HTML
            before the JS is compiled, so esc() alone is not sound inside a handler), then esc() over
@@ -2460,8 +2535,6 @@ function dupContactsHtml() {
           + '<div class="t1">&#9312; ' + esc(clip(d.a_name)) + ' &middot; ' + la + ' linked</div>'
           + '<div class="t1">&#9313; ' + esc(clip(d.b_name)) + ' &middot; ' + lb + ' linked</div>'
           + '<div class="t2">' + esc(d.reason) + '</div>'
-          + '<div class="t2 hint">Whichever you keep inherits the other\'s records, email and phone. '
-          + 'Nothing already filled in on the one you keep is overwritten. Undo is offered straight after.</div>'
           + '</div>'
           + '<button class="qbtn done" onclick="' + esc(keepA) + '">Keep &#9312;</button>'
           + '<button class="qbtn done" onclick="' + esc(keepB) + '">Keep &#9313;</button>'
@@ -3258,7 +3331,7 @@ async function aiCapture() {
      button was removed in the omnibox simplification pass. Now it does what the other two failure
      paths above already do (offline / timeout): queue it on-device automatically so nothing is
      lost, instead of pointing at a control that no longer exists. */
-  if (!r.data || r.data.error) { AI_BUSY = false; omniBusy(false); queueOffline(text); el.value = ''; omniGrow(el); omniHint(); note.textContent = 'Couldn’t reach the AI (' + ((r.data && r.data.error) || 'unknown error') + ') — saved, it’ll retry automatically.'; return; }
+  if (!r.data || r.data.error) { AI_BUSY = false; omniBusy(false); queueOffline(text); el.value = ''; omniGrow(el); omniHint(); note.textContent = askFailure('capture', r, 'Couldn’t reach the AI — saved, it’ll retry automatically.'); return; }
   note.textContent = humanizeNote(r.data.note);
   AI_PROPOSALS = (r.data.actions || []).map(function (a) {
     var m = aiActionToPayload(a);
@@ -6795,7 +6868,7 @@ async function fetchBrief(force) {
   try {
     var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'brief', text: 'morning brief' } }), 20000, { error: { message: 'timeout' } });
     if (r.error || !r.data || r.data.error || !r.data.brief) {
-      body.textContent = 'Brief unavailable right now — your Focus list below is live as always.';
+      body.textContent = askFailure('brief', r, 'Brief unavailable right now — your Focus list below is live as always.');
     } else {
       body.textContent = r.data.brief;
       try { localStorage.setItem('spiro_brief_date', today); localStorage.setItem('spiro_brief_text', r.data.brief); } catch (e) {}
@@ -6853,7 +6926,7 @@ async function fetchAiFocus(force) {
   try {
     var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'focus', text: JSON.stringify(sections) } }), 20000, { error: { message: 'timeout' } });
     if (r.error || !r.data || r.data.error || !r.data.focus) {
-      el.textContent = 'AI triage unavailable right now — the sections below are still live as always.';
+      el.textContent = askFailure('focus', r, 'AI triage unavailable right now — the sections below are still live as always.');
     } else {
       el.textContent = r.data.focus;
       try { localStorage.setItem('spiro_focus_date', today); localStorage.setItem('spiro_focus_text', r.data.focus); } catch (e) {}
@@ -7004,7 +7077,11 @@ async function fetchPortal(force) {
   try {
     var s = await sb.auth.getSession();
     var tok = s.data && s.data.session && s.data.session.access_token;
-    if (!tok) return;
+    /* Bare `return` here left the card sitting on its literal "Loading…" markup forever — the one
+       failure path out of five that said nothing at all. Happens whenever the panel is opened before
+       auth has settled or after a session expires, and it is indistinguishable from a slow network.
+       (2026-07-30) */
+    if (!tok) { renderPortalMsg('Not signed in yet — reopen this once the app has finished signing you in.'); return; }
     var r = await withTimeout(fetch(PORTAL_BRIDGE_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ action: 'portal_overview' }) }), 15000, { ok: false });
     if (!r.ok) { renderPortalMsg('Couldn’t reach the portal — showing last known state'); return; }
     var j = await r.json();
@@ -8583,7 +8660,10 @@ function previewSuggestHtml(listingId) {
   var ranked = rankAgentsForListing(x).filter(function (r) { return r.score > 0; }).slice(0, 10);
   if (!ranked.length) return '';
   var sel = PREVIEW_SEL[listingId] || {};
-  var h = '<div class="flabel" style="margin-top:12px;">Pricing preview <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; pick agents to preview to; nothing sends</span></div>';
+  /* Ranked best-fit first by rankAgentsForListing() — price band is worth +3, area +2, then
+     relationship signals. Saying so matters: without it the order reads as arbitrary, which is
+     exactly how it looked when this panel was first driven. */
+  var h = '<div class="flabel" style="margin-top:12px;">Best fit first <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; ranked on price band, area and how you two work together. Nothing sends.</span></div>';
   h += ranked.map(function (r) {
     var aid = String(r.agent.id), on = !!sel[aid];
     var why = r.reasons.slice(0, 3).join(' · ');
@@ -9030,7 +9110,7 @@ async function fetchMarket(force) {
   try {
     var res = await Promise.all([
       sb.from('monitor_config').select('neighborhood,luxury_floor,high_dollar_sale_floor,active').eq('active', true),
-      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,flagged_buyer_id,flagged_buyer_ids,extra').order('event_date', { ascending: false }).limit(80),
+      sb.from('market_events').select('id,event_type,event_date,neighborhood,address,list_price,sold_price,days_on_market,review_status,dismiss_reason,flagged_buyer_id,flagged_buyer_ids,extra').order('event_date', { ascending: false }).limit(80),
       sb.from('market_snapshots').select('snapshot_date,neighborhood,active_count,median_list_price,months_of_inventory').order('snapshot_date', { ascending: false }).limit(30)
     ]);
     if (!res[0].error) MARKET.config = res[0].data || [];
@@ -9061,7 +9141,11 @@ function marketEventLine(e) {
     actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + esc(e.id) + '\')">&times; Not interesting</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Flag for buyer</button>';
   } else if (e.review_status === 'dismissed') {
-    actions = '<span class="hint">Dismissed</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
+    /* Show the reason back. A captured signal Nick can't see is indistinguishable from one that
+       was never captured -- which is exactly how the buyer-match version went 157 dismissals
+       without anyone noticing it had recorded nothing. */
+    var dl = MARKET_DISMISS_LABEL[e.dismiss_reason];
+    actions = '<span class="hint">Dismissed' + (dl ? ' &mdash; ' + esc(dl.toLowerCase()) : '') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
   } else if (e.review_status === 'flagged') {
     var flagNames = marketEventFlaggedIds(e).map(function (bid) { return recLabel('buyers', bid) || 'a buyer'; });
     actions = '<span class="hint">Flagged for ' + esc(flagNames.join(', ') || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>'
@@ -9080,20 +9164,58 @@ function marketEventLine(e) {
      for. Swipe right-to-left = dismiss, left-to-right = open the buyer-flag picker; buttons stay as
      the non-touch/discoverable fallback, swipe is additive not a replacement. */
   return '<div class="qi' + (pending ? ' mkt-swipe' : '') + '"' + (pending ? ' data-id="' + esc(String(e.id)) + '" data-pending="1"' : '') + '><div class="txt"><div class="t1">' + esc((e.event_type || '') + ' · ' + (e.address || e.neighborhood || '')) + '</div>'
-    + '<div class="t2">' + esc(facts) + '</div><div style="margin-top:6px;">' + actions + '</div></div></div>';
+    + '<div class="t2">' + esc(facts) + '</div><div style="margin-top:6px;">' + actions + '</div>'
+    + '<div id="mdismiss-' + esc(String(e.id)) + '" style="flex-basis:100%;"></div>'
+    + '<div id="mtrack-' + esc(String(e.id)) + '" style="flex-basis:100%;"></div>'
+    + '<div id="mflag-' + esc(String(e.id)) + '" style="flex-basis:100%;"></div></div></div>';
 }
-async function dismissMarketEvent(id) {
-  var r = await sb.from('market_events').update({ review_status: 'dismissed', reviewed_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not dismiss'); return; }
+/* MARKET DISMISS REASONS (2026-07-30, Nick: "no option of why im dismissing available in market
+   tab"). This is the surface he actually triages every day -- 62 items pending when he raised it --
+   and it recorded nothing but the fact of the dismissal. Buyer-match dismissals got reason chips in
+   Phase C; this one was missed, and it is the higher-volume of the two by an order of magnitude.
+   Tomorrow's saved-search fix takes the hotsheet from ~27 to ~194 records a day, so the amount of
+   judgement being thrown away here is about to multiply by seven. That is what made this urgent
+   rather than tidy.
+   REASONS ARE ABOUT THE PROPERTY, NOT A BUYER. "Over budget" means nothing here -- whose budget? --
+   so this is its own vocabulary in its own table, kept away from the buyer scorer. See the migration
+   comment on market_dismiss_reasons.
+   Same one-tap-no-typing rule as the buyer chips, and "Just dismiss" stays: a forced reason is a
+   wrong reason, and a wrong one is worse than none because something downstream will believe it. */
+var MARKET_DISMISS_CHIPS = [
+  ['wrong_area', 'Not my area'], ['wrong_price', 'Wrong price band'], ['wrong_type', 'Wrong property type'],
+  ['no_buyer', 'No buyer for it'], ['already_knew', 'Already knew it'], ['other', 'Something else']
+];
+var MARKET_DISMISS_LABEL = {};
+MARKET_DISMISS_CHIPS.forEach(function (c) { MARKET_DISMISS_LABEL[c[0]] = c[1]; });
+function dismissMarketEvent(id) {
+  var host = document.getElementById('mdismiss-' + id);
+  if (!host) { return sendMarketDismiss(id, null); }   /* swipe path / no room to ask — behave as before */
+  if (host.innerHTML) { host.innerHTML = ''; return; }
+  host.innerHTML = '<div class="t2 hint" style="margin:6px 0 4px;">Why not? One tap tunes what you get shown.</div>'
+    + MARKET_DISMISS_CHIPS.map(function (c) {
+        var attr = 'event.stopPropagation();sendMarketDismiss(\'' + escJs(String(id)) + '\',\'' + escJs(c[0]) + '\')';
+        return '<button class="qbtn" style="margin:0 4px 4px 0;" onclick="' + esc(attr) + '">' + esc(c[1]) + '</button>';
+      }).join('')
+    + '<button class="qbtn" style="margin:0 4px 4px 0;opacity:.7;" onclick="' + esc('event.stopPropagation();sendMarketDismiss(\'' + escJs(String(id)) + '\',null)') + '">Just dismiss</button>';
+}
+async function sendMarketDismiss(id, reason) {
+  var r = await sb.rpc('fn_dismiss_market_event', { p_id: id, p_reason: reason || null });
+  if (r && r.error) { toast('Could not dismiss'); return; }
+  var msg = String((r && r.data) || 'Dismissed');
+  if (msg.indexOf('unknown reason') === 0 || msg === 'no such event') { toast(msg); return; }
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
-  if (e) { e.review_status = 'dismissed'; }
-  renderMarketReview(); toast('Dismissed');
+  if (e) { e.review_status = 'dismissed'; e.dismiss_reason = reason || null; }
+  renderMarketReview();
+  toast(reason ? MARKET_DISMISS_LABEL[reason] + ' — noted' : 'Dismissed');
 }
 async function undoMarketEventReview(id) {
-  var r = await sb.from('market_events').update({ review_status: 'pending', flagged_buyer_id: null, flagged_buyer_ids: [], reviewed_at: null }).eq('id', id).select('id');
-  if (r.error) { toast('Could not undo'); return; }
+  /* Via the RPC so the reason is cleared with the status. Undoing a dismissal but leaving
+     dismiss_reason behind would leave a stale "not my area" attached to an event Nick just said he
+     DOES care about — and fn_market_dismiss_patterns would count it against that neighborhood. */
+  var r = await sb.rpc('fn_undismiss_market_event', { p_id: id });
+  if (r && r.error) { toast('Could not undo'); return; }
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
-  if (e) { e.review_status = 'pending'; e.flagged_buyer_id = null; e.flagged_buyer_ids = []; }
+  if (e) { e.review_status = 'pending'; e.flagged_buyer_id = null; e.flagged_buyer_ids = []; e.dismiss_reason = null; }
   renderMarketReview(); toast('Back to needs-review');
 }
 var flagMarketEventId = null;
@@ -9172,7 +9294,10 @@ function rankBuyersForMarketEvent(e, already) {
 }
 function openFlagMarketEvent(id) {
   flagMarketEventId = id;
-  var body = document.getElementById('market-body'); if (!body) return;
+  /* Same offscreen bug as Track — this inserted at the TOP of the list while you were looking at a
+     row further down, so "Flag for buyer" appeared to do nothing. Renders in the row now. */
+  var host = document.getElementById('mflag-' + id);
+  var body = document.getElementById('market-body'); if (!host && !body) return;
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
   var already = {}; (e ? marketEventFlaggedIds(e) : []).forEach(function (bid) { already[String(bid)] = true; });
   var opts = rankBuyersForMarketEvent(e, already).map(function (rb) {
@@ -9188,9 +9313,22 @@ function openFlagMarketEvent(id) {
   var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
     + '<div class="flabel">Flag for which buyer(s)? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— pick as many as apply; tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
     + '<div style="margin-top:6px;max-height:260px;overflow-y:auto;">' + opts + '</div>'
-    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="renderMarketReview()">Cancel</button></div>'
+    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="closeFlagMarketEvent(\'' + esc(String(id)) + '\')">Cancel</button></div>'
     + '</div>';
-  body.insertAdjacentHTML('afterbegin', pickerHtml);
+  if (host) {
+    if (host.innerHTML) { host.innerHTML = ''; flagMarketEventId = null; return; }
+    ['mdismiss-', 'mtrack-'].forEach(function (p) { var o = document.getElementById(p + id); if (o) o.innerHTML = ''; });
+    host.innerHTML = pickerHtml;
+    var r = host.getBoundingClientRect();
+    if (r.bottom > window.innerHeight || r.top < 0) host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  body.insertAdjacentHTML('afterbegin', pickerHtml);   /* pre-v5.175 layout — should not be reachable */
+}
+function closeFlagMarketEvent(id) {
+  var host = id ? document.getElementById('mflag-' + id) : null;
+  if (host) { host.innerHTML = ''; flagMarketEventId = null; return; }
+  renderMarketReview();
 }
 async function confirmFlagMarketEvent() {
   var boxes = Array.prototype.slice.call(document.querySelectorAll('.market-flag-buyer-cb:checked'));
@@ -9236,9 +9374,20 @@ function trackedMarketEvents() {
     .sort(function (a, b) { return String((marketEventTracking(b) || {}).tracked_at || '').localeCompare(String((marketEventTracking(a) || {}).tracked_at || '')); });
 }
 var trackMarketEventId = null;
+/* TRACK OPENED A SCREEN AWAY FROM THE BUTTON (2026-07-30, Nick: "wont let me click track on this").
+   It did let him. insertAdjacentHTML('afterbegin') put the picker at the TOP of the market list while
+   he was looking at a row further down — measured on his own session: the picker landed 887px above
+   the button he pressed, on an 880px viewport. Exactly one screen out of sight. The button took
+   focus (hence the blue ring) so it LOOKED like the click registered and did nothing, and it gets
+   worse the further down you are: 101 rows in that list today.
+   Third instance of this same bug shape today — form errors rendering above the fold, panels
+   stacking a screen below, and this. The rule: anything opened BY a row belongs INSIDE that row.
+   Renders into the row's own host now, closes any dismiss chips first so two pickers can never be
+   open at once, and scrolls itself into view as a backstop when the row is near the fold. */
 function openTrackMarketEvent(id) {
   trackMarketEventId = id;
-  var body = document.getElementById('market-body'); if (!body) return;
+  var host = document.getElementById('mtrack-' + id);
+  var body = document.getElementById('market-body'); if (!host && !body) return;
   var e = (MARKET.events || []).find(function (x) { return String(x.id) === String(id); });
   var cur = marketEventTracking(e) || {};
   var curReasons = {}; (cur.reasons || []).forEach(function (r) { curReasons[r] = true; });
@@ -9251,9 +9400,26 @@ function openTrackMarketEvent(id) {
     + '<textarea id="market-track-note" placeholder="Note (optional)" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:50px;">' + esc(cur.note || '') + '</textarea>'
     + '<div style="margin-top:10px;"><button class="primary" onclick="confirmTrackMarketEvent()">Save</button> '
     + (cur.tracked_at ? '<button class="qbtn" onclick="untrackMarketEvent(\'' + esc(id) + '\')">Remove from tracking</button> ' : '')
-    + '<button class="quiet" onclick="renderMarketReview()">Cancel</button></div>'
+    + '<button class="quiet" onclick="closeTrackMarketEvent(\'' + esc(String(id)) + '\')">Cancel</button></div>'
     + '</div>';
-  body.insertAdjacentHTML('afterbegin', pickerHtml);
+  if (host) {
+    if (host.innerHTML) { host.innerHTML = ''; trackMarketEventId = null; return; }  /* second tap closes it */
+    var dis = document.getElementById('mdismiss-' + id); if (dis) dis.innerHTML = '';
+    host.innerHTML = pickerHtml;
+    /* Only scroll if the picker would otherwise sit off the bottom — scrolling when it is already
+       visible yanks the page for no reason, which reads as its own kind of broken. */
+    var r = host.getBoundingClientRect();
+    if (r.bottom > window.innerHeight || r.top < 0) host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  body.insertAdjacentHTML('afterbegin', pickerHtml);   /* pre-v5.175 layout — should not be reachable */
+}
+/* Cancel used to call renderMarketReview(), which rebuilt the whole 100-row list and threw away the
+   scroll position — you tapped Cancel on row 40 and landed back at row 1. Just close the picker. */
+function closeTrackMarketEvent(id) {
+  var host = id ? document.getElementById('mtrack-' + id) : null;
+  if (host) { host.innerHTML = ''; trackMarketEventId = null; return; }
+  renderMarketReview();
 }
 async function confirmTrackMarketEvent() {
   var boxes = Array.prototype.slice.call(document.querySelectorAll('.market-track-reason-cb:checked'));
