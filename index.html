@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.157.0';
+var APP_VERSION = 'v5.158.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1389,7 +1389,111 @@ async function signOut() {
     else localStorage.removeItem('spiro_offline_captures');
     sessionStorage.removeItem('spiro_unlocked');
   } catch (e3) { /* storage unavailable -- nothing to clear */ }
+  /* D5 (2026-07-30): the boot cache holds every buyer, deal and contact. Same reasoning as the
+     keys above — it must not survive a sign-out on a shared or lost device. */
+  try { await clearBootCache(); } catch (e4) { /* best effort; the reload follows regardless */ }
   location.reload();
+}
+
+/* ---------- boot cache (2026-07-30, D5) ---------- */
+/* DATA has always been memory-only, so a cold open with no signal produced a fully-rendered shell
+   with nothing in it — the PWA promise breaking at precisely the moment it is worth something: a
+   showing, in a canyon, with one bar. This keeps the last successful load on the device and
+   hydrates from it at boot, then lets the network overwrite it as usual.
+ *
+ * INDEXEDDB, NOT localStorage. The review suggested "even one localStorage blob at ~1-2MB scale".
+ * Measured before choosing: the 14 largest tables alone serialise to ~1.4MB (matches 501kB and
+ * growing nightly, prospects 264kB, properties 162kB), and loadAll pulls 35 tables — call it
+ * ~1.8MB. localStorage is synchronous, so a write that size janks the main thread on a phone on
+ * every save, and iOS both caps it near 5MB and evicts it under pressure. IndexedDB is async and
+ * has room to grow.
+ *
+ * THE SERVER ALWAYS WINS. Hydration only ever fills an empty DATA — it checks lastLoad at apply
+ * time, not at call time, so a fast network response that landed during the (async) read is never
+ * clobbered by the cache. No sync semantics change, no conflict machinery, no offline writes.
+ *
+ * CLEARED ON SIGN-OUT. signOut() already deletes the AI brief/focus text and capture dismissals
+ * because, in its own words, on a shared or lost device leaving them behind "is a real
+ * disclosure". A cache holding every buyer, deal and contact is that same hole, larger — so it is
+ * dropped there too. Note this does shift the posture slightly: records now sit on the device
+ * between sessions, readable via devtools without the PIN. The PIN was already documented as a
+ * convenience lock rather than a security boundary, so this is a difference of degree, but it is a
+ * real one and worth Nick knowing rather than discovering. */
+var BOOT_CACHE_DB = 'spiro-os', BOOT_CACHE_STORE = 'cache', BOOT_CACHE_KEY = 'DATA';
+var bootCacheStamp = 0;        /* when the hydrated snapshot was taken */
+var bootedFromCache = false;   /* true until the first successful network load of this session */
+var lastCacheWrite = 0;
+var MAX_CACHE_BYTES = 8 * 1024 * 1024;   /* refuse rather than trip an opaque quota error */
+
+function idbOpen() {
+  return new Promise(function (resolve, reject) {
+    if (!window.indexedDB) return reject(new Error('no indexedDB'));
+    var req = indexedDB.open(BOOT_CACHE_DB, 1);
+    req.onupgradeneeded = function () {
+      if (!req.result.objectStoreNames.contains(BOOT_CACHE_STORE)) req.result.createObjectStore(BOOT_CACHE_STORE);
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function idbPut(key, val) {
+  return idbOpen().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(BOOT_CACHE_STORE, 'readwrite');
+      tx.objectStore(BOOT_CACHE_STORE).put(val, key);
+      tx.oncomplete = function () { db.close(); resolve(true); };
+      tx.onerror = function () { db.close(); reject(tx.error); };
+    });
+  });
+}
+function idbGet(key) {
+  return idbOpen().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(BOOT_CACHE_STORE, 'readonly');
+      var r = tx.objectStore(BOOT_CACHE_STORE).get(key);
+      r.onsuccess = function () { db.close(); resolve(r.result || null); };
+      r.onerror = function () { db.close(); reject(r.error); };
+    });
+  });
+}
+function clearBootCache() {
+  return idbPut(BOOT_CACHE_KEY, null).catch(function () {});
+}
+
+/* Written after a successful load. Throttled to once a minute: loadAll also runs after every
+   single write, and re-serialising ~2MB on each save would cost more than the feature is worth. */
+function saveBootCache(force) {
+  try {
+    if (!sb) return;
+    if (!force && Date.now() - lastCacheWrite < 60000) return;
+    var run = function () {
+      try {
+        var blob = { savedAt: Date.now(), version: APP_VERSION, data: DATA };
+        var approx = JSON.stringify(blob).length;
+        if (approx > MAX_CACHE_BYTES) { reportError('bootcache:oversize', new Error(approx + ' bytes')); return; }
+        lastCacheWrite = Date.now();
+        idbPut(BOOT_CACHE_KEY, blob).catch(function (e) { reportError('bootcache:put', e); });
+      } catch (e) { reportError('bootcache:serialise', e); }
+    };
+    if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 4000 }); else setTimeout(run, 0);
+  } catch (e) { /* caching must never break a load */ }
+}
+
+/* Hydrate at boot. Deliberately does nothing if the network already won the race. */
+async function hydrateFromCache() {
+  try {
+    var blob = await idbGet(BOOT_CACHE_KEY);
+    if (!blob || !blob.data) return false;
+    if (lastLoad) return false;                    /* network got there first — it is fresher, full stop */
+    Object.keys(blob.data).forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(DATA, k) && Array.isArray(blob.data[k])) DATA[k] = blob.data[k];
+    });
+    bootCacheStamp = blob.savedAt || 0;
+    bootedFromCache = true;
+    render();
+    renderSyncAge();
+    return true;
+  } catch (e) { reportError('bootcache:hydrate', e); return false; }
 }
 
 /* ---------- data ---------- */
@@ -1484,7 +1588,11 @@ async function loadAll(manual) {
   }
   lastLoad = Date.now();
   lastLoadPartial = okCount < res.length; /* some tables refreshed, some didn't */
+  bootedFromCache = false;   /* live data on screen now; the staleness banner stands down */
   render();
+  /* Only a COMPLETE load is worth caching. Persisting a partial one would mean a future cold
+     open silently presents a snapshot with some tables missing as though it were whole. */
+  if (!lastLoadPartial) saveBootCache(false);
   fetchPhotoLinks(manual); /* fire-and-forget; re-renders Records when thumbnails arrive */
   fetchBrief(false);       /* cached per-day; only calls AI once each morning */
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
@@ -2007,6 +2115,18 @@ function toggleIntelAuto() { intelAutoShow = !intelAutoShow; renderIntel(); }
 function renderSyncAge() {
   var el = document.getElementById('sync-age');
   if (!el) return;
+  /* Hydrated from the device, nothing fetched yet this session. Say so plainly and give the
+     time the snapshot was taken — "saved data" with no timestamp is how someone acts on a
+     week-old price at a showing. */
+  if (!lastLoad && bootedFromCache) {
+    var d = new Date(bootCacheStamp || Date.now());
+    var hh = d.getHours(), mm = ('0' + d.getMinutes()).slice(-2);
+    var ampm = hh >= 12 ? 'pm' : 'am'; hh = hh % 12; if (!hh) hh = 12;
+    var sameDay = (new Date()).toDateString() === d.toDateString();
+    el.textContent = 'Offline — showing saved data from ' + (sameDay ? '' : fmtDate(d.toISOString().slice(0, 10)) + ', ')
+      + hh + ':' + mm + ampm;
+    return;
+  }
   if (!lastLoad) { el.textContent = ''; return; }
   var mins = Math.floor((Date.now() - lastLoad) / 60000);
   var when = mins < 1 ? 'just now' : mins === 1 ? '1 min ago' : mins + ' min ago';
@@ -11149,6 +11269,9 @@ async function enterApp() {
   }
   show('screen-app');
   initOmni();
+  /* Fire both: whichever arrives first paints, and hydrateFromCache() stands down if the
+     network beat it. On a good connection the user sees nothing different. */
+  hydrateFromCache();
   loadAll(false);
 }
 sb.auth.getSession().then(function (s) { if (s.data && s.data.session) enterApp(); else show('screen-email'); });
