@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.164.0';
+var APP_VERSION = 'v5.165.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2835,6 +2835,41 @@ function moneyPreview(key) {
   out.textContent = el.value.trim() ? (n !== null ? '= $' + Math.round(n).toLocaleString('en-US') : '…that doesn’t look like a number yet') : '';
 }
 
+/* FORM ERRORS MUST BE SEEN (2026-07-30). Every failure path wrote to #form-err and stopped —
+   but that element sits ABOVE the fields, and the Lead form is eleven fields long. Driving it on a
+   390x780 phone: fill the form, scroll to Save at the bottom, tap it with the required field empty,
+   and the message renders 158px above the viewport. The person taps Save and nothing appears to
+   happen at all — no scroll, no highlight, no feedback. They tap again. Then they assume the app
+   is broken, which is worse than an error.
+   Found by behaving like a person on a phone; invisible to code review and to every unit test,
+   because the string WAS set correctly. Setting text is not the same as saying something.
+   Now: scroll the offending field into view, focus it, and mark it until they start typing. */
+function showFormErr(msg, focusKey) {
+  var err = document.getElementById('form-err');
+  if (!err) return;
+  err.textContent = msg || '';
+  if (!msg) return;
+  var el = focusKey ? document.getElementById('f_' + focusKey) : null;
+  try { (el || err).scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+  if (el) {
+    try { el.focus({ preventScroll: true }); } catch (e2) { }
+    el.style.borderBottomColor = 'var(--clay)';
+    var clear = function () { el.style.borderBottomColor = ''; el.removeEventListener('input', clear); };
+    el.addEventListener('input', clear);
+  }
+}
+/* Postgres speaks to itself, not to Nick. "new row violates row-level security policy" is not a
+   sentence anyone can act on mid-showing. Translate the failures we can recognise and keep the
+   raw text for the ones we cannot — an unrecognised error shown verbatim is still better than a
+   friendly lie about what went wrong. */
+function humanSaveError(msg) {
+  var m = String(msg || '');
+  if (/row-level security/i.test(m)) return 'Couldn’t save — your sign-in may have expired. Sign out and back in, then try again.';
+  if (/duplicate key|already exists/i.test(m)) return 'Something with that name is already recorded.';
+  if (/violates check constraint/i.test(m)) return 'One of these values isn’t allowed. Check the dropdowns and try again.';
+  if (/network|fetch|timeout/i.test(m)) return 'Couldn’t reach the server. Your typing is still here — try Save again.';
+  return m || 'Could not save';
+}
 function showForm(table, row) {
   memTarget = null; /* a record form always supersedes a pending memory form */
   linkTarget = null;
@@ -2902,7 +2937,7 @@ async function saveForm() {
   });
   var b = buildPayload(editing.table, vals, editing.row);
   var err = document.getElementById('form-err');
-  if (b.error) { err.textContent = b.error; return; }
+  if (b.error) { showFormErr(b.error, FORM_SPECS[editing.table][0][0]); return; }
   /* Gentle duplicate guard: warn once, save on the second tap. Runs the SAME common-language matcher
      capture uses (address-variant for leads, identity for people) so a hand-typed lead can't twin an
      existing one the way "527 7th street, Santa Monica, 90402" vs "527 7th street, santa monica" did. */
@@ -2914,7 +2949,8 @@ async function saveForm() {
     }
     if (dup) {
       editing.dupOk = true;
-      err.textContent = '"' + dup + '" appears to be recorded already. Save again if this is truly a different one.';
+      showFormErr('"' + dup + '" appears to be recorded already. Save again if this is truly a different one.',
+                  FORM_SPECS[editing.table][0][0]);
       return;
     }
   }
@@ -2930,7 +2966,7 @@ async function saveForm() {
   }
   if (editing.row) r = await sb.from(editing.table).update(b.payload).eq('id', editing.row.id).select('id');
   else r = await sb.from(editing.table).insert(b.payload).select('id');
-  if (r.error || !r.data || !r.data.length) { err.textContent = r.error ? r.error.message : 'Could not save'; return; }
+  if (r.error || !r.data || !r.data.length) { showFormErr(humanSaveError(r.error && r.error.message)); return; }
   if (!editing.row) await linkSpines(editing.table, r.data[0].id, vals); /* self-link new record to its person + parcel */
   /* Engage promote (2026-07-23): a new Buyer/Prospect that started life as "promote from Engage"
      auto-clears that contact's Engage tag, so they don't sit tagged AND show up as a real pipeline
