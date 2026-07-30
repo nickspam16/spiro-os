@@ -639,7 +639,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.175.0';
+var APP_VERSION = 'v5.177.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -4413,7 +4413,9 @@ function propensityReadinessScan() {
     if (e.probate) signals.push('probate');
     if (e.absentee) signals.push('absentee');
     if (e.via_image) signals.push('found on a walk');
-    if (e.buildable && e.buildable.underbuilt) signals.push('underbuilt');
+    /* Never let a stale unit flag justify a paid skip-trace (2026-07-30) — see computeBuildable. */
+    if (e.buildable && e.buildable.underbuilt && !e.buildable.is_unit
+        && !looksLikeUnit({ address: p.address || p.address_area || '', property_type: e.property_type, hoa_monthly: e.hoa_monthly })) signals.push('underbuilt');
     if (!signals.length) return; /* stage 1 filter: no free signal yet, not worth a paid hit */
     out.push({ p: p, signals: signals, score: signals.length });
   });
@@ -5647,7 +5649,7 @@ function recordExtras(table, id) {
        fully generic (plain address string / table+id) and only ever wired to listings. Real
        nearby escrow prices support the same pitch/est_value sanity-check on an off-market lead
        that they do on an active listing; a probate/estate-sale press mention is a real signal too. */
-    h += compsHtml((recOf('offmarket', sid) || {}).address_area, null) + pressMentionsHtml('offmarket', sid);
+    h += compsHtml(recOf('offmarket', sid), null) + pressMentionsHtml('offmarket', sid);
     more += shareOffmarketHtml(sid);
   }
   if (table === 'agents') {
@@ -5658,7 +5660,7 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml((recOf('listings', sid) || {}).address, selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
@@ -5667,7 +5669,7 @@ function recordExtras(table, id) {
     /* 2026-07-24 (chain audit, mechanical rewire): same as offmarket above -- generic functions,
        just never wired here. Real nearby comps support the sell pitch and sanity-check Tracerfy's
        est_value; a probate/estate-sale press mention is a real, freely-available signal. */
-    h += compsHtml((recOf('prospects', sid) || {}).address, null) + pressMentionsHtml('prospects', sid);
+    h += compsHtml(recOf('prospects', sid), null) + pressMentionsHtml('prospects', sid);
     var px = null; (DATA.prospects || []).forEach(function (p) { if (String(p.id) === sid) px = p; });
     if (px) {
       var t = triageOf(px);
@@ -6361,14 +6363,41 @@ function compsSpineIndex() {
   _spineIx = ix; _spineIxN = rows.length;
   return ix;
 }
-function compsPoint(address) {
-  var k = propKey(address);
+/* RESOLVE BY STABLE KEY, NOT BY STRING (2026-07-30, second pass — the first one shipped broken).
+   compsPoint() originally matched the subject into the geocoded spine by normalised address text.
+   Driven against Nick's REAL records an hour after shipping, it returned a position for ZERO of his
+   listings, so "Comps nearby" was still empty everywhere — the exact bug I had just claimed to fix.
+   Two reasons, both string-matching failures: the property's address_key does not always normalise
+   to the same text as the listing's address field, and the centroid fallback needs an area NAME
+   inside the address ("2433 28th Street #B" has none).
+   Every listing/prospect/lead already carries property_id. Resolving through that is an ID join, not
+   a spelling contest, and it is what the spine is FOR. Text matching stays as a fallback for records
+   that were never linked to a property. */
+function compsPoint(rec) {
+  var addr = (typeof rec === 'string') ? rec : ((rec && (rec.address || rec.address_area)) || '');
+  if (rec && typeof rec !== 'string' && rec.property_id) {
+    var p = (DATA.properties || []).filter(function (x) { return String(x.id) === String(rec.property_id); })[0];
+    var la = p && Number(p.lat), ln = p && Number(p.lng);
+    if (isFinite(la) && isFinite(ln) && !(la === 0 && ln === 0)) return { lat: la, lng: ln, name: null, exact: true };
+  }
+  var k = propKey(addr);
   var hit = k ? compsSpineIndex()[k] : null;
   if (hit) return hit;
-  return propPoint({ address: address });
+  return propPoint({ address: addr, extra: rec && rec.extra });
 }
-function compsSignals(address, excludeTxId) {
-  var pp = compsPoint(address); if (!pp) return [];
+/* Which named area is this point in? Needed because an MLS sold has no coordinates — only a
+   neighbourhood — so "same pocket" has to be answerable by NAME as well as by distance. */
+function compsNearestArea(pt) {
+  var best = null, bestD = Infinity;
+  (DATA.area_centroids || []).forEach(function (c) {
+    var d = haversineKm(pt, { lat: Number(c.lat), lng: Number(c.lng) });
+    if (d < bestD) { bestD = d; best = c.name; }
+  });
+  return bestD <= 8 ? best : null;
+}
+function compsSignals(rec, excludeTxId) {
+  var pp = compsPoint(rec); if (!pp) return [];
+  var subjArea = pp.exact ? compsNearestArea(pp) : (pp.name || compsNearestArea(pp));
   var out = [];
   (DATA.transactions || []).forEach(function (tx) {
     if (excludeTxId && String(tx.id) === String(excludeTxId)) return;
@@ -6398,7 +6427,12 @@ function compsSignals(address, excludeTxId) {
     var p2 = compsSpineIndex()[propKey(e.address)]
           || propPoint({ address: [e.address, e.neighborhood].filter(Boolean).join(', '), extra: e.extra });
     if (!p2) return;
-    var d = haversineKm(pp, p2); if (d > 3) return;
+    var d = haversineKm(pp, p2);
+    /* A 3km radius measured between a ROOFTOP and a NEIGHBOURHOOD CENTROID is not a 3km radius --
+       a centroid can sit 2-3km from a property in its own neighbourhood, so genuine same-pocket
+       comps were being excluded by arithmetic. Same-named-area counts as near, regardless. */
+    var sameArea = !!(subjArea && e.neighborhood && subjArea === e.neighborhood);
+    if (d > 3 && !sameArea) return;
     var sq = Number(e.sqft);
     out.push({
       mls_number: e.mls_number, address: e.address, price_num: price,
@@ -6424,8 +6458,8 @@ async function promptEscrowPrice(txId) {
   if (r.error) { toast('Could not save'); return; }
   await loadAll(false); toast('Comp price saved ✓');
 }
-function compsHtml(address, excludeTxId) {
-  var comps = compsSignals(address, excludeTxId); if (!comps.length) return '';
+function compsHtml(rec, excludeTxId) {
+  var comps = compsSignals(rec, excludeTxId); if (!comps.length) return '';
   var mine = comps.filter(function (c) { return c.source !== 'mls'; }).length;
   var mls = comps.length - mine;
   /* Say where the numbers come from in the header rather than making Nick infer it per row. If a
@@ -10272,8 +10306,46 @@ function densityFor(zone) {
 }
 /* Intensity tiers, for the "zoned above current use" arbitrage flag. Higher rank = more intensive allowed use. */
 var USE_RANK = { single_family: 1, multifamily: 2, commercial_mixed: 3 };
+/* A UNIT IS NOT A PARCEL (2026-07-30, Nick: "the underbuilt is also wrong for the 28th street condo
+   in errols buyer profile").
+   He was right, and it was not a rounding error. 2433 28th Street #B is a 1,770 sq ft CONDO. The
+   estimate stored against it read: lot 45,256 sq ft, existing 32,000 sq ft, 58,512 sq ft untapped,
+   underbuilt TRUE, plus a 1,200 sq ft ADU allowance. Those numbers describe the whole building and
+   the whole parcel — neither of which Errol owns. Told to a client, that is a serious claim about
+   development rights that do not exist.
+   Cause: computeBuildable() assumed every record is a fee-simple parcel. Nothing ever asked whether
+   the thing being measured is a UNIT INSIDE one. FAR maths on a condo is meaningless in principle,
+   not merely imprecise — you cannot add square footage to a lot you share.
+   This also had a spending consequence: "underbuilt" is one of the free signals the Tracerfy
+   prioritiser uses to decide a skip-trace is WORTH PAYING FOR (see freeSignalRows), so a wrongly
+   flagged condo could pull real money toward a dead lead.
+   Detection is deliberately broad — a unit marker in the address, a condo/co-op property type, or an
+   HOA fee, any one of which means someone else controls the envelope. False positives here cost a
+   missing estimate on an edge case; false negatives cost a fabricated development claim. */
+var UNIT_ADDR_RX = /(^|[\s,])(#|apt\.?|unit|ste\.?|suite|penthouse|\bph\b)\s*[\w-]*/i;
+function looksLikeUnit(inp) {
+  if (!inp) return false;
+  if (inp.is_unit === true) return true;
+  var pt = String(inp.property_type || '').toLowerCase();
+  if (/^cc$|condo|co-?op|townhouse|tic\b/.test(pt)) return true;
+  if (Number(inp.hoa_monthly) > 0) return true;
+  return UNIT_ADDR_RX.test(String(inp.address || ''));
+}
 function computeBuildable(inp) {
   var lot = Number(inp.lot_sqft) || 0, existing = Number(inp.existing_sqft) || 0;
+  if (looksLikeUnit(inp)) {
+    /* Return the shape callers expect so nothing downstream has to special-case it, but with every
+       development claim zeroed and a reason a person can read. */
+    return { is_unit: true, unit_reason: 'This is a unit inside a larger building — the lot and the '
+      + 'building envelope belong to the whole property, not to this unit, so buildable/underbuilt '
+      + 'does not apply. Any figure here would describe someone else\'s parcel.',
+      lot_sqft: lot, existing_sqft: existing, zone: (inp.zone || '').toUpperCase(),
+      hillside: false, adu_included: false, ratio: 0, ratio_source: 'n/a', max_sqft: 0,
+      untapped_sqft: 0, adu_sqft: 0, additional_sqft: 0, underbuilt: false, upzone: false,
+      potential_units: 0, min_lot_per_unit: null, confidence: 'n/a', needs_review: false,
+      hpoz: null, specific_plan: null, coastal: false, use_category: inp.use_category || null,
+      allowed_category: null, pct: 0, computed_at: new Date().toISOString() };
+  }
   /* Prefer SCAG's published allowable FAR when we have it (mostly commercial/mixed parcels); the code-based
      heuristic is the fallback everywhere else. ratio_source tells the user which drove the number. */
   var ov = inp.overlays || {};                            // auto-detected context from parcel_overlays
@@ -10326,7 +10398,18 @@ function buildablePanel(table, id) {
   var x = recOf(table, id); if (!x) return '';
   var e = x.extra || {}, b = e.buildable, q = "'" + esc(table) + "','" + esc(String(id)) + "'";
   var h = '<div class="flabel" style="margin-top:12px;">Buildable <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; LA estimate, verify with the City</span></div>';
-  if (b) {
+  /* Stored estimates made BEFORE the unit guard (2026-07-30) still carry fabricated numbers, and
+     re-detecting here is what makes them safe without a migration over every record: the panel is
+     the thing Nick reads, so the panel refuses to repeat a claim it can now tell is wrong. */
+  var isUnit = b && (b.is_unit || looksLikeUnit({ address: x.address || x.address_area || '',
+    property_type: (e.property_type || ''), hoa_monthly: e.hoa_monthly }));
+  if (b && isUnit) {
+    h += '<div class="qi"><div class="txt"><div class="t1">Not applicable &mdash; this is a unit, not a parcel</div>'
+      + '<div class="t2">The lot and building envelope belong to the whole property, not to this unit, so there is no buildable or underbuilt figure to give. '
+      + (b.underbuilt || Number(b.untapped_sqft) > 0
+          ? 'An earlier estimate here reported ' + esc(Number(b.untapped_sqft || 0).toLocaleString()) + ' sq ft untapped on a ' + esc(Number(b.lot_sqft || 0).toLocaleString()) + ' sq ft lot &mdash; those are the whole building&rsquo;s numbers and have been withdrawn.'
+          : '') + '</div></div></div>';
+  } else if (b) {
     var s = buildableSummary(b);
     var uz = upzoneNote(b);
     h += '<div class="qi' + (b.underbuilt ? ' deadline' : '') + '"><div class="txt"><div class="t1">' + (b.underbuilt ? 'Underbuilt &mdash; ' : '') + esc(s.head) + '</div><div class="t2">' + esc(s.sub) + '</div>' + (uz ? '<div class="t2" style="color:var(--gold,#8a6d3b);font-weight:600;">&#9650; ' + esc(uz) + '</div>' : '') + '</div></div>';
@@ -10413,7 +10496,8 @@ async function scanUnderbuilt() {
       var res = r.ok ? await r.json() : null;
       p.extra = p.extra || {};
       if (res && !res.error && res.lot_sqft) {
-        var b = computeBuildable({ lot_sqft: res.lot_sqft, existing_sqft: res.existing_sqft, zone: res.zone_suggestion, far_max: res.far_max, use_category: res.use_category, allowed_category: res.allowed_category, overlays: ovj });
+        var b = computeBuildable({ lot_sqft: res.lot_sqft, existing_sqft: res.existing_sqft, zone: res.zone_suggestion, far_max: res.far_max, use_category: res.use_category, allowed_category: res.allowed_category, overlays: ovj,
+          address: p.address || '', property_type: (p.extra && p.extra.property_type) || '', hoa_monthly: (p.extra && p.extra.hoa_monthly) || null });
         p.extra.buildable = b;
         await sb.from('prospects').update({ extra: p.extra }).eq('id', p.id).select('id');
         if (b.underbuilt) { found++; logEvent('prospects', String(p.id), 'buildable.underbuilt', (p.address || '') + ' — ' + (b.upzone ? 'UPZONE ' : '') + b.untapped_sqft + ' sq ft untapped'); }
@@ -10457,7 +10541,11 @@ async function runBuildable(table, id) {
     far_max: look.far_max,               // SCAG allowable FAR when published (sharpens commercial/mixed)
     use_category: look.use_category,     // Assessor use tier (for the arbitrage flag)
     allowed_category: look.allowed_category,
-    overlays: look.overlays              // auto-detected hillside/HPOZ/specific-plan/coastal context
+    overlays: look.overlays,             // auto-detected hillside/HPOZ/specific-plan/coastal context
+    /* Identity of the RECORD, so computeBuildable can refuse to estimate on a unit (2026-07-30). */
+    address: x.address || x.address_area || '',
+    property_type: (x.extra && x.extra.property_type) || x.property_type || '',
+    hoa_monthly: (x.extra && x.extra.hoa_monthly) || null
   };
   if (!Number(inp.lot_sqft)) { toast('Enter the lot size'); return; }
   var b = computeBuildable(inp);
