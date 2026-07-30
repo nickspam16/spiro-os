@@ -25,11 +25,36 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { APP_PATH, hasApp } from './_lib.mjs';
 
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Chromium lives in different places depending on how Playwright was installed. Probe rather than
+// hard-code, so a normal `npx playwright install chromium` works without editing this file.
+const CHROME_CANDIDATES = [
+  process.env.PLAYWRIGHT_CHROMIUM_PATH,
+  '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+];
 let chromium = null;
 try { ({ chromium } = await import('playwright')); } catch { /* not installed */ }
-const runnable = hasApp && chromium && existsSync(CHROME);
-const skip = runnable ? false : 'playwright/chromium not available';
+const CHROME = CHROME_CANDIDATES.find(p => p && existsSync(p)) || null;
+// executablePath is optional — if Playwright manages its own browser, let it.
+const launchOpts = CHROME ? { executablePath: CHROME } : {};
+const runnable = hasApp && !!chromium;
+
+// A SKIPPED GATE THAT LOOKS LIKE A PASSING ONE IS THE EXACT BUG THIS SUITE EXISTS TO CATCH.
+// Node prints "ok N - ... # SKIP", CI goes green, and everyone believes the geometry is covered.
+// That is the same shape as "AI triage unavailable right now" — a reassuring message over a thing
+// that is not running. So: skipping is fine on a laptop, and a hard failure in CI. If this fires,
+// the fix is `npm i -D playwright && npx playwright install chromium`, not deleting the test.
+const inCI = !!(process.env.CI || process.env.GITHUB_ACTIONS);
+// The checks themselves always skip when they cannot run — five cascading failures with five
+// different stack traces obscure the one fact that matters. The single guard test below is the
+// loud one, and it names the fix.
+const skip = runnable ? false : 'playwright not installed';
+
+test('the geometry gate can actually run in CI', { skip: inCI ? false : 'only enforced in CI' }, () => {
+  assert.ok(runnable,
+    'Playwright is not installed, so every geometry check below SKIPPED and CI went green anyway. ' +
+    'A silently skipped gate is indistinguishable from a passing one — that is the bug class this ' +
+    'file exists to catch. Fix: npm i -D playwright && npx playwright install chromium');
+});
 
 const VIEWPORT = { width: 390, height: 780 };   // the phone Nick actually uses
 
@@ -67,7 +92,7 @@ function stageApp() {
 const STAGED = runnable ? stageApp() : null;
 
 async function withPage(fn) {
-  const browser = await chromium.launch({ executablePath: CHROME });
+  const browser = await chromium.launch(launchOpts);
   const page = await browser.newPage({ viewport: VIEWPORT });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
