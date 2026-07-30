@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.155.0';
+var APP_VERSION = 'v5.156.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1361,7 +1361,12 @@ async function loadAll(manual) {
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
     sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true),
     sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true),
-    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
+    /* beds/baths/sqft/lot_sqft are in FORM_SPECS.offmarket, so buildPayload writes all four on
+       every save. They were NOT selected here, so the edit form rendered them blank and saving
+       wrote blank back over whatever the database held. Fixed 2026-07-30 — see the conformance
+       test in test/artifact.test.mjs, which now fails CI if any FORM_SPECS key is missing from
+       its table's select. The one-line fix is not the fix; the test is. */
+    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,beds,baths,sqft,lot_sqft,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('transactions').select('*').not('archived', 'is', true),
     sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
