@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.169.0';
+var APP_VERSION = 'v5.170.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1166,7 +1166,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
+var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [], market_solds: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1566,7 +1566,10 @@ async function loadAll(manual) {
     sb.from('agents').select('id,name,brokerage,email,phone,areas,price_min,price_max,price_min_num,price_max_num,buyer_notes,relationship,notes,extra,contact_id').not('archived', 'is', true),
     sb.from('agent_deals').select('*'),
     sb.from('contacts').select('id,display_name,name_key,kind,email,phone,extra,created_at').order('display_name'),
-    sb.from('properties').select('id,address_key,display_address'),
+    /* lat/lng added 2026-07-30: 213 of 273 properties were geocoded to rooftop coordinates and the
+       app was never selecting the columns, so every distance calculation fell back to a
+       neighborhood centroid even where a real position existed. compsPoint() uses them. */
+    sb.from('properties').select('id,address_key,display_address,lat,lng'),
     sb.from('offmarket').select('id,address_area,list_agent_id,converted,archived,price').not('list_agent_id', 'is', null),
     sb.from('property_photos').select('*').order('sort_order', { ascending: true }),
     sb.from('property_listing_agents').select('property_id,agent_id,is_primary'),
@@ -1592,9 +1595,22 @@ async function loadAll(manual) {
     sb.from('transaction_commission_items').select('*'),
     /* Piece E (2026-07-26): Phase 5a groundwork notes -- see tc_template_feedback's own migration
        comment. Small table, loaded in full. */
-    sb.from('tc_template_feedback').select('*').order('created_at', { ascending: false })
+    sb.from('tc_template_feedback').select('*').order('created_at', { ascending: false }),
+    /* MLS SOLDS, FOR COMPS (2026-07-30). Until now compsSignals() read DATA.transactions ONLY --
+       Nick's own ~32 deals -- so "Comps nearby" could only ever surface a pocket he had personally
+       transacted in. Every sold the hotsheet ingests went into market_events and was read by
+       nothing. Now that the saved search reports Sold again (~22/day vs 0 for the previous 11 days)
+       that gap becomes the whole story, so the solds are loaded here and merged in.
+       BOUNDED ON PURPOSE: sold only, last 365 days, 1200 max, and only the columns the comps card
+       renders. At ~22/day a year is ~8k rows and the whole table would be several MB on a phone;
+       this caps it near 180KB, in line with the other arrays already in the boot cache. A comp
+       older than a year is not a comp anyway. */
+    sb.from('market_events').select('id,mls_number,event_date,neighborhood,address,sold_price,sqft,beds,baths,extra')
+      .eq('event_type', 'sold')
+      .gte('event_date', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
+      .order('event_date', { ascending: false }).limit(1200)
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
      truth, so this response is dropped entirely rather than partially applied — writing even
      some of these arrays would leave DATA a mix of two different points in time. */
@@ -6245,13 +6261,46 @@ function pressMentionsHtml(table, id) {
    radius convention as areaProximity. Scoped by Nick 2026-07-24: Pending only counts if a real
    contract_price is on file — an asking price alone is not a comp, so a Pending escrow missing
    contract_price_num prompts to enter it rather than silently using the list price. */
+/* COMPS-ONLY POSITION LOOKUP (2026-07-30). propPoint() resolves an address by scanning it for a
+   known area name, so it only works when the neighborhood is literally written in the string.
+   Almost none of Nick's records are: "220 N Cliffwood" contains no area token, so propPoint returns
+   null and the comps card rendered NOTHING — silently, with no error, for most records. That is why
+   this panel felt dead long before the sold feed broke.
+   Meanwhile 213 of 273 properties already carry rooftop lat/lng from the geocoding backfill, unused
+   because loadAll() wasn't selecting the columns. This checks that spine first and falls back to the
+   old centroid scan, so a record with a geocoded property gets a real position and everything else
+   behaves exactly as before.
+   DELIBERATELY NOT WIRED INTO propPoint() ITSELF. propPoint feeds areaProximity(), whose 1.5km /
+   5.0km scoring bands were tuned against centroid-to-centroid distances; swapping in true rooftop
+   coordinates would silently re-score every buyer match. That may well be an improvement, but it is
+   a separate change with its own before/after to measure, not a side effect of fixing comps. */
+var _spineIx = null, _spineIxN = -1;
+function compsSpineIndex() {
+  var rows = DATA.properties || [];
+  if (_spineIx && _spineIxN === rows.length) return _spineIx;
+  var ix = {};
+  rows.forEach(function (p) {
+    var la = Number(p.lat), ln = Number(p.lng);
+    if (!isFinite(la) || !isFinite(ln) || (la === 0 && ln === 0)) return;
+    var k = propKey(p.address_key || p.display_address);
+    if (k && !ix[k]) ix[k] = { lat: la, lng: ln, name: null, exact: true };
+  });
+  _spineIx = ix; _spineIxN = rows.length;
+  return ix;
+}
+function compsPoint(address) {
+  var k = propKey(address);
+  var hit = k ? compsSpineIndex()[k] : null;
+  if (hit) return hit;
+  return propPoint({ address: address });
+}
 function compsSignals(address, excludeTxId) {
-  var pp = propPoint({ address: address }); if (!pp) return [];
+  var pp = compsPoint(address); if (!pp) return [];
   var out = [];
   (DATA.transactions || []).forEach(function (tx) {
     if (excludeTxId && String(tx.id) === String(excludeTxId)) return;
     if (txIsClosed && !txIsClosed(tx) && String(tx.status || '').toLowerCase().indexOf('escrow') === -1) return; /* only real escrows: Pending-ish or closed */
-    var p2 = propPoint({ address: tx.address }); if (!p2) return;
+    var p2 = compsPoint(tx.address); if (!p2) return;
     var d = haversineKm(pp, p2); if (d > 3) return; /* ~ same pocket */
     var lst = null; (DATA.listings || []).forEach(function (l) { if (l.property_id && tx.property_id && String(l.property_id) === String(tx.property_id)) lst = l; });
     var sqftNum = lst && lst.sqft ? parseFloat(String(lst.sqft).replace(/[^0-9.]/g, '')) : null;
@@ -6261,7 +6310,35 @@ function compsSignals(address, excludeTxId) {
       status: tx.status, closing_date: tx.closing_date, distance_km: d, needs_price: !tx.contract_price_num
     });
   });
-  out.sort(function (a, b) { return (b.closing_date || b.tx_id || '').localeCompare(a.closing_date || a.tx_id || ''); });
+  /* MLS SOLDS (2026-07-30). Everything above reads DATA.transactions -- Nick's own deals -- which
+     meant "Comps nearby" was blank in any pocket he had never personally transacted in, i.e. most
+     of them. The hotsheet has been ingesting real closed sales into market_events the whole time
+     and NOTHING read them. Merged in here as a second source, clearly labelled, never blended:
+     his own contract prices stay first-class and are marked as his.
+     POSITION IS AREA-LEVEL, AND SAID SO. market_events carries no lat/lng -- only a neighborhood
+     name that matches area_centroids. So a sold resolves to its neighborhood's centroid, and two
+     solds in the same neighborhood sit on the same point. Rendering that as "0.2km away" would be
+     a fabricated precision, so these carry area_level:true and the card prints the neighborhood
+     name instead of a distance. The 3km radius still applies -- it just means "this pocket". */
+  (DATA.market_solds || []).forEach(function (e) {
+    var price = Number(e.sold_price); if (!isFinite(price) || price <= 0) return;
+    var p2 = compsSpineIndex()[propKey(e.address)]
+          || propPoint({ address: [e.address, e.neighborhood].filter(Boolean).join(', '), extra: e.extra });
+    if (!p2) return;
+    var d = haversineKm(pp, p2); if (d > 3) return;
+    var sq = Number(e.sqft);
+    out.push({
+      mls_number: e.mls_number, address: e.address, price_num: price,
+      sqft: isFinite(sq) && sq > 0 ? sq : null,
+      pps: (isFinite(sq) && sq > 0) ? Math.round(price / sq) : null,
+      status: 'Sold', closing_date: e.event_date, distance_km: d,
+      neighborhood: e.neighborhood, needs_price: false, source: 'mls',
+      /* Only claim a distance when BOTH ends have a real position. A rooftop-accurate subject
+         measured against a neighborhood centroid is still a centroid measurement. */
+      area_level: !(pp.exact && p2.exact)
+    });
+  });
+  out.sort(function (a, b) { return String(b.closing_date || b.tx_id || '').localeCompare(String(a.closing_date || a.tx_id || '')); });
   return out;
 }
 async function promptEscrowPrice(txId) {
@@ -6276,12 +6353,30 @@ async function promptEscrowPrice(txId) {
 }
 function compsHtml(address, excludeTxId) {
   var comps = compsSignals(address, excludeTxId); if (!comps.length) return '';
-  var h = '<div class="flabel" style="margin-top:12px;">Comps nearby <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; real escrow prices, within ~3km</span></div>';
-  h += comps.slice(0, 6).map(function (c) {
+  var mine = comps.filter(function (c) { return c.source !== 'mls'; }).length;
+  var mls = comps.length - mine;
+  /* Say where the numbers come from in the header rather than making Nick infer it per row. If a
+     pocket has 9 MLS solds and none of his own, that is worth knowing before he quotes any of it
+     in a pitch -- his own contract prices he can vouch for personally; MLS solds he cannot. */
+  var srcNote = [mine ? mine + ' of your deals' : '', mls ? mls + ' MLS sold' + (mls === 1 ? '' : 's') : ''].filter(Boolean).join(' + ');
+  var h = '<div class="flabel" style="margin-top:12px;">Comps nearby <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; closed prices, within ~3km &middot; ' + esc(srcNote) + '</span></div>';
+  h += comps.slice(0, 8).map(function (c) {
     if (c.needs_price) {
       return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + '</div><div class="t2">' + esc(c.status || 'In escrow') + ' — no contract price on file</div></div><button class="qbtn" onclick="event.stopPropagation();promptEscrowPrice(\'' + esc(String(c.tx_id)) + '\')">Enter price</button></div>';
     }
-    return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + ' &middot; ' + esc(Number(c.price_num).toLocaleString('en-US')) + (c.pps ? ' &middot; $' + c.pps.toLocaleString('en-US') + '/sqft' : '') + '</div><div class="t2">' + esc(c.status || '') + (c.closing_date ? ' · ' + esc(c.closing_date) : '') + ' · ' + c.distance_km.toFixed(1) + 'km away</div></div></div>';
+    /* An area-level comp gets its neighborhood, not a distance. See the note in compsSignals: the
+       MLS gives us no coordinates, and printing "0.3km away" off a neighborhood centroid would be
+       inventing precision we do not have. */
+    var where = (c.source === 'mls' && c.area_level)
+      ? (c.neighborhood ? esc(c.neighborhood) + ' area' : 'same area')
+      : c.distance_km.toFixed(1) + 'km away';
+    var tag = c.source === 'mls'
+      ? 'MLS' + (c.mls_number ? ' ' + esc(c.mls_number) : '')
+      : 'Your deal';
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + ' &middot; $' + esc(Number(c.price_num).toLocaleString('en-US'))
+      + (c.pps ? ' &middot; $' + c.pps.toLocaleString('en-US') + '/sqft' : '') + '</div><div class="t2">'
+      + tag + ' &middot; ' + esc(c.status || '') + (c.closing_date ? ' &middot; ' + esc(fmtDate(String(c.closing_date).slice(0, 10))) : '')
+      + ' &middot; ' + where + '</div></div></div>';
   }).join('');
   return h;
 }
