@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.167.0';
+var APP_VERSION = 'v5.168.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -864,6 +864,7 @@ function renderCalendarSuggestionsCard() {
 }
 async function confirmCalendarSuggestion(id) {
   var s = calendarSuggestionById(id); if (!s) return;
+  if (!confirmStaleEvent(s.start_ts)) return;   /* covers the open-house path below too */
   var lst = s.matched_listing_id ? recOf('listings', s.matched_listing_id) : null;
 
   /* Open-house-titled events go into open_houses, not showings — different table, different
@@ -5198,7 +5199,31 @@ function gcalUrl(title, startISO, endISO, details, location) {
     + (details ? '&details=' + encodeURIComponent(details) : '')
     + (location ? '&location=' + encodeURIComponent(location) : '');
 }
-function whenShort(iso) { return iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'TBD'; }
+/* Year shown whenever it isn't this one (2026-07-30). This omitted the year entirely, so a calendar
+   event from 2020 rendered as "Jan 1, 6:00 PM" — visually identical to next January. Combined with
+   the missing stale-date guard below, that made it possible to file a six-year-old event as an
+   upcoming showing without anything on screen looking wrong. Used in several places, so every one
+   of them gets the year back for free. */
+function whenShort(iso) {
+  if (!iso) return 'TBD';
+  var d = new Date(iso);
+  var o = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+  return d.toLocaleString([], o);
+}
+/* STALE CALENDAR EVENTS (2026-07-30). confirmPastConflict() checks for a clashing showing — it has
+   never checked whether the event is in the PAST, despite the name suggesting otherwise. So one tap
+   on an old suggestion filed a showing dated then, and scheduleShowingFollowup() dutifully created a
+   follow-up due the day after — arriving in Today's Focus already years overdue, on top of a
+   backlog Nick is deliberately not clearing. The consequence is spelled out in the prompt, because
+   "are you sure" without a reason is just a speed bump. */
+function confirmStaleEvent(iso) {
+  if (!iso) return true;
+  var days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days < 1) return true;
+  return window.confirm('This calendar event was ' + days + ' day' + (days === 1 ? '' : 's') + ' ago ('
+    + whenShort(iso) + ').\n\nFile it as a showing anyway? The follow-up it creates will be dated then, not today.');
+}
 function shCancel(id) { var b = document.getElementById('sh-' + id); if (b) b.innerHTML = ''; }
 function ohCancel(id) { var b = document.getElementById('oh-' + id); if (b) b.innerHTML = ''; }
 /* Local-time <input type=datetime-local> value from an ISO string (2026-07-24, showing-edit fix).
