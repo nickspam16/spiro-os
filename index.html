@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.154.0';
+var APP_VERSION = 'v5.155.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1157,7 +1157,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { feedHealth: [], addrCandidates: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
+var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1428,7 +1428,7 @@ async function loadAll(manual) {
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
-  fetchFeedHealth(); fetchAddressCandidates();       /* scheduled-job health; renders as an alert atop Today's Focus */
+  fetchFeedHealth(); fetchAddressCandidates(); fetchDuplicateContacts();       /* scheduled-job health; renders as an alert atop Today's Focus */
   flushOfflineCaptures();  /* file any notes captured while offline */
   if (manual) reconcileSpines(); /* self-heal: link any create-path misses to existing people/parcels */
   if (manual) toast('Refreshed');
@@ -2194,6 +2194,86 @@ async function rejectAddr(id) {
   toast('Dismissed'); fetchAddressCandidates();
 }
 
+/* DUPLICATE CONTACTS (2026-07-30).
+   219 contacts, 219 distinct name keys -- so nothing was ever going to surface these by exact match.
+   fn_duplicate_identities_open() scores candidate PAIRS and explains its reasoning; this panel just
+   renders that and lets Nick pick which record survives.
+
+   Only confidence >= 6 is shown. The 3/4/5 bands exist precisely to say "these two share an inbox or
+   a surname but are probably NOT one person" (spouses, assistants, a person and their own trust), and
+   putting those in front of a tap target is how a real person gets deleted. They stay in the SQL
+   report for anyone who goes looking.
+
+   Merging DELETES the losing contacts row -- there is no `archived` column on that table -- so the
+   button is deliberately paired with toastUndo() rather than a confirm() dialog. fn_merge_contacts
+   writes the whole dropped row plus every re-pointed foreign key into contact_merges before deleting,
+   and fn_unmerge_contacts puts it all back byte-for-byte. Undo is a real undo, not a best effort. */
+function fetchDuplicateContacts() {
+  if (!sb) return;
+  sb.rpc('fn_duplicate_identities_open').then(function (r) {
+    if (r && !r.error && Array.isArray(r.data)) { DATA.dupContacts = r.data; renderQueue(); }
+  }, function () { /* never let this break the dashboard */ });
+}
+function dupContactsHtml() {
+  var rows = (DATA.dupContacts || []).filter(function (d) { return (d.confidence || 0) >= 6; });
+  if (!rows.length) return '';
+  return '<div class="bucket gold">&#128101; Possible duplicate contacts &middot; ' + rows.length + '</div>'
+    + rows.map(function (d) {
+        /* Interpolating uuids into an on* attribute: escJs() first (the attribute is decoded as HTML
+           before the JS is compiled, so esc() alone is not sound inside a handler), then esc() over
+           the finished attribute string. Same layering as the tc-template note form. */
+        var keepA = 'event.stopPropagation();mergeContacts(\'' + escJs(d.a_id) + '\',\'' + escJs(d.b_id) + '\')';
+        var keepB = 'event.stopPropagation();mergeContacts(\'' + escJs(d.b_id) + '\',\'' + escJs(d.a_id) + '\')';
+        var notDup = 'event.stopPropagation();notDuplicate(\'' + escJs(d.a_id) + '\',\'' + escJs(d.b_id) + '\')';
+        /* Link counts are the whole decision: the record carrying the buyers, prospects and
+           envelopes is almost always the one to keep, and it is not always the tidier name. */
+        var la = Number(d.a_links || 0), lb = Number(d.b_links || 0);
+        /* The two names are near-identical by definition, so the buttons are numbered rather
+           than named. An earlier attempt labelled them with a distinguishing word from each name
+           and produced "Keep Manager" for "Bruce Soll, Manager" and "Keep 1989" for a trust --
+           labels that read as a different record entirely. Numbers cannot misfire, and the
+           numbers are printed against the names directly above the buttons. */
+        return '<div class="qi"><div class="txt">'
+          + '<div class="t1">&#9312; ' + esc(clip(d.a_name)) + ' &middot; ' + la + ' linked</div>'
+          + '<div class="t1">&#9313; ' + esc(clip(d.b_name)) + ' &middot; ' + lb + ' linked</div>'
+          + '<div class="t2">' + esc(d.reason) + '</div>'
+          + '<div class="t2 hint">Whichever you keep inherits the other\'s records, email and phone. '
+          + 'Nothing already filled in on the one you keep is overwritten. Undo is offered straight after.</div>'
+          + '</div>'
+          + '<button class="qbtn done" onclick="' + esc(keepA) + '">Keep &#9312;</button>'
+          + '<button class="qbtn done" onclick="' + esc(keepB) + '">Keep &#9313;</button>'
+          + '<button class="qbtn" onclick="' + esc(notDup) + '">Not the same</button>'
+          + '</div>';
+      }).join('');
+}
+/* Trust and entity names run long ("The Trust A Under The Zeitlin Trust dated July 19, 1989").
+   Keeps the front, which is the identifying part. */
+function clip(name) {
+  var s = String(name || '').trim();
+  return s.length <= 46 ? s : s.slice(0, 45) + '…';
+}
+async function mergeContacts(keepId, dropId) {
+  var r = await sb.rpc('fn_merge_contacts', { p_keep: keepId, p_drop: dropId, p_commit: true });
+  if (r && r.error) { toast('Could not merge'); return; }
+  var out = r && r.data ? r.data : null;
+  if (!out || !out.merged) { toast((out && out.error) ? String(out.error) : 'Could not merge'); return; }
+  var mid = out.merge_id;
+  toastUndo(out.dropped + ' merged into ' + out.kept + ' (' + out.rows_repointed + ' records moved)',
+    function () { undoMerge(mid); });
+  fetchDuplicateContacts(); await loadAll(false);
+}
+async function undoMerge(mergeId) {
+  var r = await sb.rpc('fn_unmerge_contacts', { p_merge_id: mergeId });
+  if (r && r.error) { toast('Could not undo'); return; }
+  toast('Merge undone');
+  fetchDuplicateContacts(); await loadAll(false);
+}
+async function notDuplicate(aId, bId) {
+  var r = await sb.rpc('fn_mark_not_duplicate', { p_a: aId, p_b: bId, p_note: null });
+  if (r && r.error) { toast('Could not save'); return; }
+  toast('Kept as separate people'); fetchDuplicateContacts();
+}
+
 function feedHealthHtml() {
   var rows = DATA.feedHealth || [];
   if (!rows.length) return '';
@@ -2228,7 +2308,7 @@ function renderQueue() {
   if (!h) h = '<div class="empty">All clear. Nothing due.</div>';
   /* Prepend, not append: a dark feed outranks any individual to-do, because it means the rest
      of this list may itself be incomplete. */
-  h = feedHealthHtml() + addrCandidatesHtml() + h;
+  h = feedHealthHtml() + addrCandidatesHtml() + dupContactsHtml() + h;
   if (DATA.graveyard.length) {
     h += '<button class="quiet" onclick="toggleGraveyard()">&#129702; Graveyard · ' + DATA.graveyard.length + ' auto-archived</button>';
     if (gShow) {
