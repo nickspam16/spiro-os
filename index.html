@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.158.0';
+var APP_VERSION = 'v5.159.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -7602,7 +7602,8 @@ function buyerSuggestedHtml(bid) {
       + '<button class="qbtn" title="Already shown — records it and chases feedback"'
       + ' onclick="event.stopPropagation();markShown(' + "'" + s.matchId + "'" + ')">&#128065;</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(' + "'" + s.matchId + "'" + ')">&#10003;</button>'
-      + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(' + "'" + s.matchId + "'" + ')">&#10005;</button></div>';
+      + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(' + "'" + s.matchId + "'" + ')">&#10005;</button>'
+      + '<div id="dismiss-' + esc(String(s.matchId)) + '" style="flex-basis:100%;"></div></div>';
   }).join('');
   return { count: r.suggested.length, html: html };
 }
@@ -7641,7 +7642,8 @@ function leadSuggestedBuyersHtml(oid) {
     html += '<div class="qi"><div class="txt"><div class="t1">Suggested buyer: ' + esc(lab) + (m.score ? ' · fit ' + m.score + '/10' : '') + '</div>'
       + (m.rationale ? '<div class="t2">Why: ' + esc(m.rationale) + '</div>' : '') + '</div>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(\'' + m.id + '\')">&#10003;</button>'
-      + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(\'' + m.id + '\')">&#10005;</button></div>';
+      + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(\'' + m.id + '\')">&#10005;</button>'
+      + '<div id="dismiss-' + esc(String(m.id)) + '" style="flex-basis:100%;"></div></div>';
   });
   return { count: count, html: html };
 }
@@ -8465,11 +8467,39 @@ async function confirmMatch(matchId) {
   logEvent('buyers', m.buyer_id, 'match.confirmed', 'Match confirmed: ' + (recLabel('buyers', String(m.buyer_id)) || '') + ' ↔ ' + (recLabel(m.target_type, m.target_id) || ''));
   await loadAll(false); toast('Match confirmed ✓');
 }
-async function dismissMatch(matchId) {
-  var r = await sb.from('matches').update({ status: 'dismissed', updated_at: nowStamp() }).eq('id', matchId).select('id');
-  if (r.error) { toast('Could not dismiss'); return; }
-  logEvent('system', null, 'match.dismissed', 'Match dismissed: ' + matchId);
-  await loadAll(false); toast('Dismissed');
+/* DISMISS REASONS (2026-07-30, Phase C). The ✕ used to write status='dismissed' and log a
+   generic system event with NO buyer linkage — 137 dismissals accumulated that way and taught
+   the matcher nothing, which is the entire gap between a system that observes and one that
+   compounds. Now the ✕ opens a one-tap reason row, and fn_dismiss_match records the reason
+   against the buyer so the nightly matcher can act on it.
+
+   ONE TAP, NO TYPING. A free-text box would be richer and would go unused at a kerbside on a
+   phone; a closed set of chips is the difference between a signal captured and a signal lost.
+   "Just dismiss" stays available deliberately — forcing a reason would produce a wrong reason,
+   which is worse than none, since a wrong one actively mistrains the scorer. */
+var DISMISS_CHIPS = [
+  ['wrong_area', 'Wrong area'], ['over_budget', 'Over budget'], ['under_budget', 'Too cheap'],
+  ['too_small', 'Too small'], ['wrong_type', 'Wrong type'], ['not_now', 'Not looking now'],
+  ['already_knows', 'Already knows it'], ['other', 'Something else']
+];
+function dismissMatch(matchId) {
+  var host = document.getElementById('dismiss-' + matchId);
+  if (!host) { return sendDismiss(matchId, null); }   /* no room to ask — behave as before */
+  if (host.innerHTML) { host.innerHTML = ''; return; }
+  host.innerHTML = '<div class="t2 hint" style="margin:6px 0 4px;">Why not? One tap teaches the matcher.</div>'
+    + DISMISS_CHIPS.map(function (c) {
+        var attr = 'event.stopPropagation();sendDismiss(\'' + escJs(matchId) + '\',\'' + escJs(c[0]) + '\')';
+        return '<button class="qbtn" style="margin:0 4px 4px 0;" onclick="' + esc(attr) + '">' + esc(c[1]) + '</button>';
+      }).join('')
+    + '<button class="qbtn" style="margin:0 4px 4px 0;opacity:.7;" onclick="' + esc('event.stopPropagation();sendDismiss(\'' + escJs(matchId) + '\',null)') + '">Just dismiss</button>';
+}
+async function sendDismiss(matchId, reason) {
+  var r = await sb.rpc('fn_dismiss_match', { p_match_id: matchId, p_reason: reason || null });
+  if (r && r.error) { toast('Could not dismiss'); return; }
+  var msg = String((r && r.data) || 'Dismissed');
+  if (msg.indexOf('unknown reason') === 0 || msg === 'no such match') { toast(msg); return; }
+  toast(reason ? msg + ' — noted' : 'Dismissed');
+  await loadAll(false);
 }
 
 /* ---------- ✨ propose matches (S4): deterministic client-side scoring ---------- */
