@@ -622,7 +622,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.156.0';
+var APP_VERSION = 'v5.157.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1213,6 +1213,46 @@ function withTimeout(promise, ms, timeoutValue) {
     new Promise(function (resolve) { setTimeout(function () { resolve(timeoutValue); }, ms); })
   ]);
 }
+/* HONEST WRITE TIMEOUTS (2026-07-30, D3). A timed-out WRITE is not a failed write. The request
+   may well have reached Postgres and committed; we simply stopped waiting for the answer.
+   Reporting "couldn't save" is a specific kind of lie — it invites the user to save again, and
+   on an insert path that second attempt is how you get two rows. The honest message is that we
+   do not know, followed immediately by a refetch that finds out. */
+function isTimeout(r) {
+  return !!(r && r.error && String(r.error.message || '') === 'timeout');
+}
+async function reportUnconfirmedWrite() {
+  toast('Couldn’t confirm — checking the server');
+  await loadAll(false);
+}
+
+/* CLIENT ERROR TELEMETRY (2026-07-30, D2). Until now this app could fail on Nick's phone and
+   nobody would ever know: no window.onerror, no unhandledrejection handler, and a render
+   exception simply produced a blank card. The portal has had client_errors since launch; the
+   app Nick actually uses all day did not.
+   Insert-only by RLS — the app can write here and cannot read it back. Failures to report are
+   swallowed on purpose: telemetry must never be able to cause the outage it is describing. */
+var _errSeen = {}, _errCount = 0;
+function reportError(source, err, page) {
+  try {
+    if (_errCount >= 20) return;                  /* per-session cap: a render loop must not flood */
+    var msg = String((err && (err.message || err.reason || err)) || 'unknown').slice(0, 500);
+    var key = source + '|' + msg;
+    if (_errSeen[key]) return;                    /* dedupe: the same fault repeats every render */
+    _errSeen[key] = 1; _errCount++;
+    if (!sb) return;
+    sb.from('client_errors').insert({
+      message: msg,
+      source: String(source || '').slice(0, 120),
+      page: String(page || (typeof tab !== 'undefined' ? tab : '') || '').slice(0, 120),
+      stack: String((err && err.stack) || '').slice(0, 2000),
+      app_version: APP_VERSION,
+      ua: String(navigator.userAgent || '').slice(0, 300)
+    }).then(function () {}, function () {});
+  } catch (e) { /* never let the error reporter throw */ }
+}
+window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message); });
+window.addEventListener('unhandledrejection', function (e) { reportError('unhandledrejection', e.reason); });
 function toast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg; t.className = 'show';
@@ -1224,10 +1264,12 @@ function toast(msg) {
    give a real chance to catch an accidental swipe before the server call becomes the only path
    back (which still exists via the Archived view, but Undo should be the fast path). */
 var _toastUndoFn = null;
-function toastUndo(msg, undoFn) {
+/* The action label is a parameter as of 2026-07-30: the SW update prompt reuses this toast, and
+   "New version ready — Undo" is nonsense. Defaults to 'Undo' so every existing call is unchanged. */
+function toastUndo(msg, undoFn, label) {
   var t = document.getElementById('toast');
   _toastUndoFn = undoFn;
-  t.innerHTML = esc(msg) + ' <span style="pointer-events:auto;text-decoration:underline;font-weight:600;cursor:pointer;margin-left:10px;" onclick="_runToastUndo()">Undo</span>';
+  t.innerHTML = esc(msg) + ' <span style="pointer-events:auto;text-decoration:underline;font-weight:600;cursor:pointer;margin-left:10px;" onclick="_runToastUndo()">' + esc(label || 'Undo') + '</span>';
   t.className = 'show';
   clearTimeout(t._h);
   t._h = setTimeout(function () { t.className = ''; _toastUndoFn = null; }, 5500);
@@ -1351,7 +1393,18 @@ async function signOut() {
 }
 
 /* ---------- data ---------- */
+/* LOAD TOKEN (2026-07-30, D3). loadAll() had no in-flight guard, and it fires from a lot of
+   places: boot, auth, unlock, window focus when stale, and after every write. Two loads
+   therefore overlap routinely, and because each one ends by replacing whole arrays in DATA,
+   the LAST to resolve wins — not the most recent one issued.
+   The failure that produces: save a record, the post-write load starts, but a load issued
+   15 seconds earlier finally resolves after it and puts pre-write rows back on screen. The
+   server is correct; the screen is not, and it looks exactly like the save failed. The user
+   then saves again.
+   Every call takes a ticket; only the newest ticket is allowed to write into DATA. */
+var loadToken = 0;
 async function loadAll(manual) {
+  var myToken = ++loadToken;
   var t = document.getElementById('today-line');
   var d = new Date();
   t.textContent = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()] + ', ' + MO[d.getMonth()] + ' ' + d.getDate();
@@ -1413,6 +1466,10 @@ async function loadAll(manual) {
     sb.from('tc_template_feedback').select('*').order('created_at', { ascending: false })
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
   var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback'];
+  /* A newer load has been issued while this one was in flight. Its results are the fresher
+     truth, so this response is dropped entirely rather than partially applied — writing even
+     some of these arrays would leave DATA a mix of two different points in time. */
+  if (myToken !== loadToken) return;
   var okCount = 0;
   for (var i = 0; i < res.length; i++) {
     if (!res[i].error && res[i].data) { DATA[names[i]] = res[i].data; okCount++; }
@@ -1941,7 +1998,7 @@ function renderIntel() { try {
   el.innerHTML = html;
   var badge = document.getElementById('more-menu-intel-n');
   if (badge) badge.textContent = rows.length ? String(rows.length) : '';
-} catch (e) {} }
+} catch (e) { reportError('render:intel', e, 'intel'); } }
 var intelAutoShow = false;
 function toggleIntelAuto() { intelAutoShow = !intelAutoShow; renderIntel(); }
 
@@ -2358,6 +2415,19 @@ async function fuDone(btn) {
   logEvent('followups', id, 'followup.resolved', 'Done: ' + (f ? f.action_text : id));
   dropFu(id); renderQueue(); renderStats(); renderIntel(); toast('Done ✓');
 }
+/* UNDO-DUPLICATE GUARD (2026-07-30, D6). The optimistic-swipe pattern has two independent
+   paths that put the row back: the server-error handler, and the Undo tap. Both did a bare
+   DATA.followups.push(f), so if the write failed AND the user then hit Undo, the same row was
+   pushed twice and Today's Focus showed the to-do duplicated. Harmless in the database — DATA
+   is rebuilt from the server on the next load — but it reads as data corruption, which costs
+   trust in the surface either way. Idempotent put-back: only restores if the row is genuinely
+   absent. */
+function putBackFu(f) {
+  if (!f) return;
+  var present = (DATA.followups || []).some(function (x) { return String(x.id) === String(f.id); });
+  if (!present) DATA.followups.push(f);
+  renderQueue(); renderStats(); renderIntel();
+}
 /* Swipe-to-complete (2026-07-24, Today's Focus queue) -- same "done" outcome as tapping the ✓
    button (fuDone above: status -> 'resolved'), just reached via a swipe instead, with an undo
    toast standing in for a confirm(). Optimistic removal + put-back-on-error, same shape as
@@ -2370,11 +2440,11 @@ function swipeCompleteFu(id) {
   dropFu(id); renderQueue(); renderStats(); renderIntel();
   var stamp = nowStamp();
   sb.from('followups').update({ status: 'resolved', updated_at: stamp }).eq('id', id).then(function (r) {
-    if (r.error) { toast('Could not save — try again'); if (f) { DATA.followups.push(f); renderQueue(); renderStats(); renderIntel(); } return; }
+    if (r.error) { toast('Could not save — try again'); putBackFu(f); return; }
     logEvent('followups', id, 'followup.resolved', 'Done (swipe): ' + (f ? f.action_text : id));
   });
   toastUndo('Done ✓' + (f && f.action_text ? ' — ' + f.action_text : ''), function () {
-    if (f) { DATA.followups.push(f); renderQueue(); renderStats(); renderIntel(); }
+    putBackFu(f);
     sb.from('followups').update({ status: 'open', updated_at: nowStamp() }).eq('id', id).then(function (r) {
       if (r.error) { toast('Could not restore'); return; }
       logEvent('followups', id, 'followup.restored', 'Restored (undo)');
@@ -6674,7 +6744,7 @@ function renderPortal() { try {
     return head + (PORTAL_PICK[b.id] ? portalPickPanel(b, listings) : '');
   }).join('');
   el.innerHTML = sum + (rows || '<div class="empty">No buyers on the portal yet.</div>') + portalListingsSection(listings) + zipformSetupHtml() + calendarSubscribeHtml();
-} catch (e) { console.error('renderPortal', e); } }
+} catch (e) { console.error('renderPortal', e); reportError('render:portal', e, 'portal'); } }
 
 /* A buyer's cart: current shared listings (removable) + published listings to add (silent). */
 function portalPickPanel(b, listings) {
@@ -11097,7 +11167,25 @@ window.addEventListener('focus', function () {
 /* S8: keep the "Synced N min ago" label honest as time passes — local only, no network, battery-safe. */
 setInterval(renderSyncAge, 60000);
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+/* SW UPDATE TOAST (2026-07-30, D4). sw.js is stale-while-revalidate, so the open right after a
+   deploy still serves the PREVIOUS build and the new one only appears on the open after that.
+   With no prompt anywhere, "is my fix live?" was unanswerable from inside the app — which is
+   how a version can be re-uploaded, or a bug re-reported, purely because nobody could tell.
+   updatefound -> the new worker installs while the old one still controls the page; once it
+   reaches 'installed' with an existing controller, a newer build is sitting there ready. */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(function (reg) {
+    reg.addEventListener('updatefound', function () {
+      var nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', function () {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+          toastUndo('New version ready', function () { location.reload(); }, 'Refresh');
+        }
+      });
+    });
+  }).catch(function () {});
+}
 </script>
 </body>
 </html>
