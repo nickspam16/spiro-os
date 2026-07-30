@@ -57,3 +57,62 @@ test('third-party library assets are pinned to an exact version', () => {
       `third-party ${kind} is not version-pinned: ${url}`);
   }
 });
+
+/* FORM_SPECS <-> loadAll select conformance (added 2026-07-30).
+ *
+ * buildPayload() writes EVERY key in a table's FORM_SPECS entry on every save. The edit form is
+ * populated from DATA, which holds only what loadAll selected. So any key that is in the spec but
+ * missing from the select renders blank and is then written back as blank — the form silently
+ * overwrites database columns it was never able to read.
+ *
+ * That is what happened to offmarket.beds/baths/sqft/lot_sqft. Snapshots showed only one row had
+ * ever carried a value there, so nothing was actually destroyed, but the mechanism was live and the
+ * next edit of that row would have taken it. This test is the durable fix: the one-line select
+ * change would drift again the next time a field is added to a spec.
+ *
+ * select('*') returns every column and therefore always conforms.
+ */
+test('every FORM_SPECS field is fetched by its table’s select', () => {
+  const specsStart = app.indexOf('var FORM_SPECS = {');
+  assert.ok(specsStart > -1, 'FORM_SPECS not found');
+  let depth = 0, i = app.indexOf('{', specsStart), end = i;
+  for (;; end++) {
+    if (app[end] === '{') depth++;
+    else if (app[end] === '}' && --depth === 0) break;
+  }
+  const block = app.slice(i, end + 1);
+
+  // Virtual fields resolved after save, never columns on the row.
+  const VIRTUAL = new Set(['list_agent']);
+
+  const specs = {};
+  for (const m of block.matchAll(/(\w+):\s*\[/g)) {
+    let d = 0, s = m.end !== undefined ? m.end : m.index + m[0].length, e = s - 1;
+    for (;; e++) {
+      if (block[e] === '[') d++;
+      else if (block[e] === ']' && --d === 0) break;
+    }
+    specs[m[1]] = [...block.slice(s - 1, e + 1).matchAll(/\[\s*'([a-z_0-9]+)'/g)].map((x) => x[1]);
+  }
+  assert.ok(Object.keys(specs).length >= 5, 'parsed too few FORM_SPECS entries — parser drifted');
+
+  const selects = {};
+  for (const m of app.matchAll(/sb\.from\('(\w+)'\)\.select\('([^']*)'\)/g)) {
+    (selects[m[1]] ||= []).push(m[2]);
+  }
+
+  const problems = [];
+  for (const [table, keys] of Object.entries(specs)) {
+    const forTable = selects[table] || [];
+    if (!forTable.length) { problems.push(`${table}: FORM_SPECS entry but no select() found`); continue; }
+    if (forTable.some((c) => c.trim() === '*')) continue; // '*' fetches everything
+    const fetched = new Set(forTable.flatMap((c) => c.split(',').map((x) => x.trim())));
+    const missing = keys.filter((k) => !fetched.has(k) && !VIRTUAL.has(k));
+    if (missing.length) {
+      problems.push(`${table}: saved by buildPayload but never fetched -> ${missing.join(', ')}`);
+    }
+  }
+  assert.deepStrictEqual(problems, [],
+    'FORM_SPECS keys missing from their select will be written back blank on every edit:\n  '
+    + problems.join('\n  '));
+});
