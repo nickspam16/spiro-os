@@ -639,7 +639,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.178.0';
+var APP_VERSION = 'v5.179.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -10370,11 +10370,25 @@ function upzoneNote(b) {
   var units = (b.potential_units >= 2) ? ' — the lot could hold ~' + b.potential_units + ' units' : '';
   return 'Zoned ' + (b.zone || '') + ' — allows ' + allowsTxt + ', currently ' + usesTxt + units;
 }
+/* NEVER THROW ON A PARTIAL STORED OBJECT (2026-07-30, v5.179.0).
+   This called b.lot_sqft.toLocaleString() and b.existing_sqft.toLocaleString() directly. On
+   2026-07-30 a migration rewrote extra.buildable on 10 unit records WITHOUT those two keys, and
+   every client that rendered one threw — inside renderBrowse()'s rows.map(), so it took out the
+   whole Records list, not just the panel. It hit v5.168.0 and v5.175.0 alike, because the fault was
+   in the DATA: shipping a newer app would not have saved anyone.
+   extra.buildable is a jsonb blob written by several versions of this app over months. Treating any
+   field of it as guaranteed is the mistake. n() coerces and never throws, so a missing or malformed
+   key degrades one number instead of blanking the screen.
+   (Found by the client_errors telemetry added earlier the same day — first real catch, with a stack
+   trace that named the function on the first read.) */
 function buildableSummary(b) {
-  var head = b.untapped_sqft > 0 ? ('~' + b.untapped_sqft.toLocaleString() + ' sq ft more you could build') : 'Near or at allowable size';
-  if (b.adu_sqft) head += ' + up to ' + b.adu_sqft.toLocaleString() + ' sq ft ADU';
-  if (b.potential_units >= 2) head += ' · lot could hold ~' + b.potential_units + ' units';
-  var sub = 'Lot ' + b.lot_sqft.toLocaleString() + ' sq ft · zone ' + (b.zone || '?') + ' → allows ~' + b.max_sqft.toLocaleString() + ' sq ft · existing ~' + b.existing_sqft.toLocaleString() + ' sq ft' + (b.hillside ? ' · hillside (verify slope — estimate is rough here)' : '');
+  b = b || {};
+  var n = function (v) { var x = Number(v); return isFinite(x) ? x : 0; };
+  var fmt = function (v) { return n(v).toLocaleString('en-US'); };
+  var head = n(b.untapped_sqft) > 0 ? ('~' + fmt(b.untapped_sqft) + ' sq ft more you could build') : 'Near or at allowable size';
+  if (n(b.adu_sqft)) head += ' + up to ' + fmt(b.adu_sqft) + ' sq ft ADU';
+  if (n(b.potential_units) >= 2) head += ' · lot could hold ~' + n(b.potential_units) + ' units';
+  var sub = 'Lot ' + fmt(b.lot_sqft) + ' sq ft · zone ' + (b.zone || '?') + ' → allows ~' + fmt(b.max_sqft) + ' sq ft · existing ~' + fmt(b.existing_sqft) + ' sq ft' + (b.hillside ? ' · hillside (verify slope — estimate is rough here)' : '');
   var ctx = [];
   if (b.hpoz) ctx.push('Historic district (' + b.hpoz + ')');
   if (b.coastal) ctx.push('Coastal zone');
@@ -11831,7 +11845,19 @@ function renderBrowse() {
       + 'They were never confirmed as escrows, so they stay out of your Escrows list. Nothing is deleted: the documents are still here. '
       + 'If one really did go under contract, open it and set a status or a price and it moves back into Escrows on its own.</div>';
   }
+  /* ONE BAD RECORD MUST NOT BLANK THE WHOLE LIST (2026-07-30). A throw anywhere inside this map
+     propagates out of renderBrowse() and the entire Records list fails to paint — which is exactly
+     what a partial extra.buildable blob did today. Each row is now isolated: the offending row
+     degrades to its address and reports itself, and the other 200 still render. */
   var h = rows.map(function (x) {
+    try { return rowFor(x); }
+    catch (e) {
+      reportError('renderRow:' + rowTable, e);
+      return rowHtml((x && (x.address || x.address_area || x.name)) || 'Record', '',
+        'This row could not be drawn — the fault has been reported.', '', false, x && x.id, '');
+    }
+  }).join('');
+  function rowFor(x) {
     var nm = '', side = '', sub = '', det = '', hot = false;
     if (rowTable === 'buyers') {
       nm = (buyerIsVip(x) ? '★ ' : '') + x.name; side = (x.budget_min ? money(x.budget_min) : '') + (x.budget_max ? ' – ' + money(x.budget_max) : '');
@@ -11895,7 +11921,7 @@ function renderBrowse() {
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
     return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
-  }).join('');
+  }
   var dupBanner = (browseTab === 'offmarket' || browseTab === 'prospects' || rowTable === 'listings') ? duplicatesBannerHtml() : '';
   document.getElementById('browse').innerHTML = dupBanner + chip + (h || '<div class="empty">Nothing here.</div>');
   reopenRows();
