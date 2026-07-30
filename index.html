@@ -630,7 +630,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.168.0';
+var APP_VERSION = 'v5.169.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1200,7 +1200,18 @@ function escJs(s) {
 function isoLocal(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function todayIso() { return isoLocal(new Date()); }
 function addDaysIso(iso, n) { var p = iso.split('-'); return isoLocal(new Date(+p[0], +p[1] - 1, +p[2] + n)); }
-function fmtDate(iso) { if (!iso) return ''; var p = iso.split('-'); return MO[+p[1] - 1] + ' ' + (+p[2]); }
+/* YEAR ONLY WHEN IT ISN'T THIS YEAR (2026-07-30). This dropped the year unconditionally, so a
+   document signed 2022-03-24 rendered "Mar 24" — indistinguishable from last March. Caught driving
+   the new Unconfirmed segment, where every row is old paperwork and the year is the whole point.
+   Same rule whenShort() already uses for calendar events, so the two agree: near-term dates stay
+   short (a closing "Aug 5" doesn't need "Aug 5, 2026" cluttering a deadline line), anything from
+   another year says so. */
+function fmtDate(iso) {
+  if (!iso) return '';
+  var p = String(iso).split('-');
+  var s = MO[+p[1] - 1] + ' ' + (+p[2]);
+  return (+p[0] && +p[0] !== new Date().getFullYear()) ? s + ', ' + p[0] : s;
+}
 /* Format a stored price/budget for display. Normalizes through numFrom so a value saved as
    "3" renders "$3,000,000" (not "$3") and "2.5M" renders "$2,500,000". Falls back to the raw
    string only if it isn't parseable as money. */
@@ -1209,7 +1220,12 @@ function money(s) {
   if (!s) return '';
   var n = (typeof s === 'number') ? s : numFrom(s);
   if (n === null || isNaN(n)) return '$' + s;
-  return '$' + Math.round(n).toLocaleString('en-US');
+  /* A LEASE IS NOT A SALE (2026-07-30). numFrom() throws away everything after the number, so a
+     contract_price stored as "$12,000/mo" rendered "$12,000" — sitting in the same Past sales list
+     as "$4,067,000", reading as a small sale rather than a rental. Caught driving that list after
+     Leased deals moved into it. Keep whatever per-period suffix the stored value carried. */
+  var per = String(s).match(/\/\s*(mo|month|yr|year|wk|week|night|day)\b/i);
+  return '$' + Math.round(n).toLocaleString('en-US') + (per ? '/' + per[1].toLowerCase() : '');
 }
 function nowStamp() { return new Date().toISOString(); }
 /* Resilience (S3/S5): race a network promise against a wall-clock timeout so a
@@ -7422,7 +7438,7 @@ function jumpToRecord(t, id) {
   browseHot = false;
   if (t === 'transactions') { /* #7: escrows/past sales live inside the Listings hub now */
     var tx = null; (DATA.transactions || []).forEach(function (r) { if (String(r.id) === String(id)) tx = r; });
-    browseTab = 'listings'; propSeg = (tx && isPastTx(tx)) ? 'past' : 'escrow';
+    browseTab = 'listings'; propSeg = (tx && isPastTx(tx)) ? 'past' : (tx && isDocAnchorTx(tx)) ? 'docs' : 'escrow';
   } else if (t === 'listings') {
     var ls = null; (DATA.listings || []).forEach(function (r) { if (String(r.id) === String(id)) ls = r; });
     browseTab = 'listings'; propSeg = isPrepListing(ls) ? 'prep' : 'active';
@@ -9422,7 +9438,28 @@ function menuShowClimate() {
 var browseHot = false;
 var propSeg = 'active';   /* #7: which layer of the Listings hub is showing: active listings | escrow | past */
 var rowTable = 'buyers';  /* the table the current rows actually belong to (differs from browseTab inside the hub) */
-function isPastTx(t) { return /closed|sold/i.test(String((t && t.status) || '')); }
+function isPastTx(t) { return /closed|sold|leased/i.test(String((t && t.status) || '')); }
+/* DOCUMENT ANCHORS ARE NOT ESCROWS (2026-07-30, Nick: "what's listed is often rejected offers and
+   not actual deals that went under contract ... not a lot of value in having them easily referenced
+   all the time like that").
+   dsApprove() creates a transactions row purely so a DocuSign envelope has somewhere to hang — it
+   is a document folder, not a deal, which is why it has no status/side/client/price/dates. 20 of
+   them exist (docs back to 2022) and every one was rendering in the Escrows segment as if it were
+   live, drowning the 1 real escrow. This is a display bug in MY design, not bad data entry.
+   Identified by POSITIVE evidence of never having been confirmed — reconstructed flag AND blank
+   status AND no escrow-open date AND no contract price — so the moment Nick fills any of those in
+   (it really was a deal), the row promotes itself into Escrows with no extra step.
+   They are NOT archived: `loadAll()` drops archived transactions from DATA entirely, which would
+   also hide the 42 envelopes anchored to them (see the transaction_id filter in the deal panel).
+   They get their own quiet segment instead — off the daily view, one tap away, nothing lost. */
+function isDocAnchorTx(t) {
+  if (!t) return false;
+  if (String(t.status || '').trim()) return false;
+  if (t.escrow_open_date || t.closing_date) return false;
+  if (t.contract_price_num > 0 || String(t.contract_price || '').trim()) return false;
+  return !!(t.extra && t.extra.reconstructed);
+}
+function isLiveEscrowTx(t) { return !isPastTx(t) && !isDocAnchorTx(t); }
 function isPrepListing(l) { return !!(l && l.status === 'Prep'); }
 /* Listings status display order (2026-07-27): Pending, Active, Coming Soon, Off Market, then
    any other status sorts last (rather than in random/insertion order). */
@@ -9436,14 +9473,18 @@ function propNav() {
   function seg(k, lab, n) { return '<span class="filter-chip" onclick="setPropSeg(\'' + k + '\')" style="cursor:pointer;' + (propSeg === k ? 'font-weight:600;border-color:var(--ink);' : '') + '">' + lab + (n != null ? ' ' + n : '') + '</span>'; }
   var prepN = (DATA.listings || []).filter(isPrepListing).length;
   var activeN = (DATA.listings || []).filter(function (l) { return !isPrepListing(l); }).length;
-  var escN = (DATA.transactions || []).filter(function (t) { return !isPastTx(t); }).length;
+  var escN = (DATA.transactions || []).filter(isLiveEscrowTx).length;
   var pastN = (DATA.transactions || []).filter(isPastTx).length;
+  var docN = (DATA.transactions || []).filter(isDocAnchorTx).length;
   /* "Prep" (2026-07-23): a listing hasn't gone live yet, so it doesn't belong mixed in with the
      live Listings segment — its own segment, same layer as Escrows/Past sales, filtered by
      status='Prep' (no new column; status already carries this, same free-text field the other
      five statuses already use). */
   return '<div class="chip-row" style="margin-bottom:8px;"><span class="chip-label">View</span> '
-    + seg('prep', 'Prep', prepN) + seg('active', 'Listings', activeN) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN) + '</div>';
+    + seg('prep', 'Prep', prepN) + seg('active', 'Listings', activeN) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN)
+    /* Only rendered when the bucket is non-empty — once Nick has triaged them the chip disappears
+       on its own rather than sitting there forever as an empty fifth tab. */
+    + (docN ? seg('docs', 'Unconfirmed', docN) : '') + '</div>';
 }
 function setTab(t) {
   /* 2026-07-23: switching tabs can be triggered from inside a panel now too (e.g. "Who to call"'s
@@ -11394,10 +11435,17 @@ function renderBrowse() {
   var chip = '';
   rowTable = browseTab; /* #7: default — overridden below inside the Listings hub */
   if (browseTab === 'listings') {
+    /* Don't strand the person on a tab whose chip no longer exists (found driving this at 390px:
+       triage the last unconfirmed row and the Unconfirmed chip correctly disappears, but propSeg
+       was still 'docs' — an empty list, an explanation of a bucket with nothing in it, and no chip
+       highlighted to tap back from). Fall through to Escrows, which is where they were headed. */
+    if (propSeg === 'docs' && !(DATA.transactions || []).some(isDocAnchorTx)) propSeg = 'escrow';
     rowTable = (propSeg === 'active' || propSeg === 'prep') ? 'listings' : 'transactions';
     rows = (propSeg === 'prep') ? (DATA.listings || []).filter(isPrepListing)
          : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l); })
-         : (propSeg === 'escrow') ? (DATA.transactions || []).filter(function (t) { return !isPastTx(t); })
+         : (propSeg === 'escrow') ? (DATA.transactions || []).filter(isLiveEscrowTx)
+         : (propSeg === 'docs') ? (DATA.transactions || []).filter(isDocAnchorTx)
+                                    .sort(function (a, b) { return String(a.address || '').localeCompare(String(b.address || '')); })
          : (DATA.transactions || []).filter(isPastTx);
     /* Listings status order (2026-07-27, requested by Nick from a screenshot showing an
        unordered/insertion-order list): Pending, Active, Coming Soon, Off Market, then any other
@@ -11438,6 +11486,14 @@ function renderBrowse() {
   if (browseTab === 'buyers') { chip = buyerControls(); rows = sortBuyers(rows); }
   /* offmarket (Leads) has its own early-return branch above (renderLeadsGrouped) -- unreachable here. */
   if (rowTable === 'transactions') chip = closedDealsToLogHtml() + chip;
+  /* The Unconfirmed segment needs to say what it IS, or it reads as "20 deals you forgot about"
+     — the opposite of the reassurance it's meant to give. Says plainly: paperwork, not deals,
+     nothing is lost, and here is the one edit that promotes a row back out of here. */
+  if (rowTable === 'transactions' && propSeg === 'docs') {
+    chip += '<div class="hint" style="margin:0 0 10px;line-height:1.45;">Addresses your DocuSign paperwork was filed against &mdash; offers written, deals that didn’t happen, old files. '
+      + 'They were never confirmed as escrows, so they stay out of your Escrows list. Nothing is deleted: the documents are still here. '
+      + 'If one really did go under contract, open it and set a status or a price and it moves back into Escrows on its own.</div>';
+  }
   var h = rows.map(function (x) {
     var nm = '', side = '', sub = '', det = '', hot = false;
     if (rowTable === 'buyers') {
@@ -11467,6 +11523,19 @@ function renderBrowse() {
       var tcGlance = (propSeg === 'escrow') ? tcEscrowGlanceLine(x.id) : '';
       sub = [x.status, x.client_name, nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : ''), tcGlance].filter(Boolean).join(' · ');
       det = [x.contingency_date ? 'Contingency: ' + fmtDate(x.contingency_date) : '', x.notes || ''].filter(Boolean).join(NL2);
+      /* A doc anchor has no status, client, price or dates BY DEFINITION, so the generic subtitle
+         above resolves to an empty string and the row renders as a bare address with nothing to
+         tell one from another (the same nameless-row problem the Market tab had). Substitute the
+         only facts these rows actually carry: how many documents are filed here and when the last
+         one was signed — which is also exactly what Nick needs to recognise the deal. */
+      if (propSeg === 'docs') {
+        var envs = (DATA.esign_envelopes || []).filter(function (e) { return String(e.transaction_id) === String(x.id); });
+        var lastDoc = envs.map(function (e) { return String(e.completed_at || ''); }).sort().pop() || '';
+        side = '';
+        sub = [envs.length ? envs.length + ' document' + (envs.length === 1 ? '' : 's') : 'No documents filed',
+               lastDoc ? 'last signed ' + fmtDate(lastDoc.slice(0, 10)) : ''].filter(Boolean).join(' · ');
+        det = x.notes || '';
+      }
     } else if (rowTable === 'agents') {
       nm = x.name || x.email || 'Agent';
       side = [x.price_min ? money(x.price_min) : '', x.price_max ? money(x.price_max) : ''].filter(Boolean).join(' – ');
