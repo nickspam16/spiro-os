@@ -237,3 +237,29 @@ test('the phone back gesture closes a panel instead of exiting the app', { skip 
   assert.ok(!r.after.panelOpen, 'the back gesture did not close the panel');
   assert.ok(r.after.homeVisible, 'Back closed the panel but never restored the home view');
 });
+
+// Panel round-trip sweep (2026-07-31, v5.183.0). Derives the card list from the DOM, so every
+// FUTURE card is covered automatically. Would have auto-caught the v5.180 bug where
+// review-queue-card was missing from closePanel's hidden-restore list and stayed parked visible
+// at the bottom of the home page after one open/close.
+test('every home card opened as a panel lands on screen, goes home, and re-hides', { skip }, async () => {
+  const failures = await withPage(async (page) => page.evaluate(() => {
+    document.getElementById('screen-app').style.display = 'block';
+    const out = [];
+    const cards = [...document.querySelectorAll('#home-view .card[id]')];
+    for (const c of cards) {
+      const id = c.id, parent0 = c.parentNode, hidden0 = c.style.display === 'none';
+      openPanel(id);
+      const inSlot = c.parentNode && c.parentNode.id === 'panel-slot';
+      const rect = c.getBoundingClientRect();
+      const onScreen = rect.top >= 0 && rect.top < window.innerHeight;
+      closePanel();
+      const homeAgain = c.parentNode === parent0;
+      const hiddenAgain = hidden0 ? c.style.display === 'none' : true;
+      if (!inSlot || !onScreen || !homeAgain || !hiddenAgain)
+        out.push(id + ' ' + JSON.stringify({ inSlot, onScreen, homeAgain, hiddenAgain }));
+    }
+    return out;
+  }));
+  assert.equal(failures.length, 0, 'panel round-trip failures:\n' + failures.join('\n'));
+});

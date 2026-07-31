@@ -66,3 +66,18 @@ test('every inline script parses as valid JavaScript', async () => {
       `inline script #${i} is not syntactically valid — the app would be dead on load`);
   });
 });
+
+// Handler-escaping ratchet (2026-07-31, v5.183.0). The codebase's own rule (documented at the
+// esc()/escJs() definitions) is that a value interpolated into the JS inside an on*="..." handler
+// must be escJs()-escaped — the HTML parser decodes esc()'s entities BEFORE the JS engine reads
+// the string, so esc() there is both a live apostrophe bug and an injection path. The rule was
+// enforced for *Attr builders only; 201 inline sites still used esc(). All were converted, and
+// this pins the class at ZERO — the marker sequence  \'' + esc(  is the idiom's fingerprint.
+test('no esc() interpolated into inline handler JS strings', () => {
+  const marker = "\\'' + esc(";
+  let count = 0, idx = -1;
+  while ((idx = app.indexOf(marker, idx + 1)) !== -1) count++;
+  assert.equal(count, 0,
+    `${count} inline on*-handler interpolation(s) use esc() where escJs() is required — ` +
+    `the HTML parser decodes &#39; back to a live quote before the JS runs. Use escJs().`);
+});
