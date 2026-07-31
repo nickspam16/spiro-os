@@ -1,0 +1,13 @@
+{
+  "name": "spiro-os",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Spiro OS test-harness dependencies. The app itself is dependency-free (a single-file PWA served by GitHub Pages); this file exists solely so CI can install Playwright and run the geometry gate in a real browser.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-reporter=spec test/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}
