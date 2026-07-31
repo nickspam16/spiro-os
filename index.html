@@ -354,6 +354,7 @@
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowReviewQueue()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Review queue <span id="more-menu-rq-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowCalendarSuggestions()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Calendar suggestions <span id="more-menu-calsug-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
@@ -508,6 +509,16 @@
       <div id="farming-tracerfy" style="margin-top:12px;"></div>
     </div>
 
+    <!-- Review queue (2026-07-31): read-only adoption of fn_match_review_queue. The 600+ open
+         suggestions were unreadable as a flat list; this groups them by client, strongest three
+         first, the rest behind a count. DELIBERATELY no dismiss/bulk controls here — dismissing
+         is Nick's judgment, made from the client's card where the full context lives. -->
+    <div class="card" id="review-queue-card" style="display:none;">
+      <h2>Review queue</h2>
+      <div class="hint" style="margin:-6px 0 10px;">Suggested matches, grouped by client &mdash; strongest first. Open a client to act; nothing here changes anything.</div>
+      <div id="rq-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <!-- Pricing Preview dashboard (2026-07-24): moved out of the per-listing detail card, per Nick
          — off-market pricing previews to agents happen ~3x/year, not something that should sit in
          the daily listing view every time he opens a property. Same previewSuggestHtml/previewDraft/
@@ -639,7 +650,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.179.0';
+var APP_VERSION = 'v5.180.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -776,6 +787,50 @@ function menuShowBrief() {
   fetchBrief(false); /* cached per-day; card was hidden so this is likely the first paint of it this load */
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
+function menuShowReviewQueue() { openPanel('review-queue-card'); renderReviewQueue(); }
+/* Review queue (2026-07-31): renders fn_match_review_queue — server-side grouping/collapse of
+   every open suggestion. Fetched only when the panel is opened (never inside render()), because
+   an RPC per render would hammer the DB for a card that is closed 99% of the time. Read-only by
+   design: the only interaction is jumping to the client's card. */
+async function renderReviewQueue() {
+  var body = document.getElementById('rq-body'); if (!body) return;
+  body.innerHTML = '<div class="empty">Loading&hellip;</div>';
+  var r = await withTimeout(sb.rpc('fn_match_review_queue', { p_top: 3 }), 15000, { error: { message: 'timeout' } });
+  if (r.error) {
+    body.innerHTML = '<div class="empty">Couldn&rsquo;t load the queue &mdash; reopen from the menu to retry.</div>';
+    reportError('reviewQueue.rpc', r.error, 'review-queue'); return;
+  }
+  var rows = r.data || [];
+  if (!rows.length) { body.innerHTML = '<div class="empty">No open suggestions.</div>'; return; }
+  var total = 0; rows.forEach(function (b) { total += (b.open_count || 0); });
+  var h = '<div class="hint" style="margin:0 0 8px;">' + rows.length + ' clients &middot; ' + total + ' open suggestions.</div>';
+  rows.forEach(function (b) {
+    h += '<div style="border-top:1px solid var(--line);padding:10px 0 8px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">'
+      + '<a href="javascript:void(0)" class="rq-buyer" data-bid="' + esc(b.buyer_id) + '" style="color:var(--ink);font-size:15.5px;text-decoration:none;border-bottom:1px solid var(--line);">' + esc(b.buyer) + '</a>'
+      + '<span style="color:var(--muted);font-size:12.5px;white-space:nowrap;">' + esc(b.timeline || '—') + ' &middot; ' + (b.open_count || 0) + ' open &middot; oldest ' + (b.oldest_days || 0) + 'd</span></div>';
+    (b.top_suggestions || []).forEach(function (s) {
+      h += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0 0;font-size:13.5px;">'
+        + '<span>' + esc(s.address || '') + (s.covers_n_matches > 1 ? ' <span style="color:var(--muted);font-size:11.5px;">(&times;' + (0 + s.covers_n_matches) + ' matchers)</span>' : '') + '</span>'
+        + '<span style="color:var(--muted);white-space:nowrap;">fit ' + esc(String(s.score == null ? '—' : s.score)) + '/10 &middot; ' + (0 + (s.age_days || 0)) + 'd</span></div>';
+    });
+    var more = (b.open_count || 0) - (b.top_suggestions || []).length;
+    if (more > 0) h += '<div class="hint" style="margin-top:4px;">+ ' + more + ' more on their card</div>';
+    h += '</div>';
+  });
+  body.innerHTML = h;
+}
+/* Delegated once on the stable container — no per-row handlers, no id interpolation into JS. */
+(function () {
+  var el = document.getElementById('rq-body'); if (!el) return;
+  el.addEventListener('click', function (e) {
+    var t = e.target;
+    while (t && t !== el && !(t.classList && t.classList.contains('rq-buyer'))) t = t.parentNode;
+    if (!t || t === el) return;
+    var bid = t.getAttribute('data-bid'); if (!bid) return;
+    jumpToRecord('buyers', bid);
+  });
+})();
 function menuShowCalendarSuggestions() { openPanel('calendar-suggestions-card'); renderCalendarSuggestionsCard(); }
 /* Calendar suggestions review (2026-07-24) — one row per candidate showing pulled from Nick's
    iCloud calendar (calendar_suggestions table, filled by the caldav-showing-sync edge function on
@@ -1391,6 +1446,7 @@ async function unlockApp() {
   if (!v) return;
   var h = await sha256Hex(v);
   if (h === pinHash()) {
+    /* silent-ok: private mode blocks sessionStorage; the unlock still works for this page view */
     try { sessionStorage.setItem('spiro_unlocked', '1'); } catch (e) {}
     document.getElementById('pin-input').value = '';
     show('screen-app');
@@ -1577,6 +1633,7 @@ function saveBootCache(force) {
 async function hydrateFromCache() {
   try {
     var blob = await idbGet(BOOT_CACHE_KEY);
+    /* silent-ok: no cached blob is the normal state of a first-ever open, not a failure */
     if (!blob || !blob.data) return false;
     if (lastLoad) return false;                    /* network got there first — it is fresher, full stop */
     Object.keys(blob.data).forEach(function (k) {
@@ -1782,6 +1839,8 @@ function render() {
   if (moreFarmingN) { var fLeads = farmingLeads(); moreFarmingN.textContent = fLeads.length ? String(fLeads.length) : ''; }
   var farmCard = document.getElementById('farming-card');
   if (farmCard && farmCard.style.display !== 'none') renderFarming();
+  var moreRqN = document.getElementById('more-menu-rq-n');
+  if (moreRqN) { var rqOpen = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; }).length; moreRqN.textContent = rqOpen ? String(rqOpen) : ''; }
   var moreCalSugN = document.getElementById('more-menu-calsug-n');
   if (moreCalSugN) { var pendingSug = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending' || (s.status === 'confirmed' && s.flag); }); moreCalSugN.textContent = pendingSug.length ? String(pendingSug.length) : ''; }
   var calSugCard = document.getElementById('calendar-suggestions-card');
@@ -2700,6 +2759,7 @@ function swipeCompleteFu(id) {
     row.style.transition = 'none';
   }, { passive: true });
   body.addEventListener('touchmove', function (e) {
+    /* silent-ok: a touchmove outside an active row-drag is ordinary scrolling, not a fault */
     if (!dragging || !row) return;
     var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
     if (!horiz) {
@@ -3541,6 +3601,7 @@ async function flushOfflineCaptures() {
     if (r.error) remaining.push(q[i]);
     else { DATA.captures.unshift(r.data[0]); logEvent('capture', r.data[0].id, 'capture.synced', q[i].text.slice(0, 120)); }
   }
+  /* silent-ok: if storage is unavailable the queue could never have persisted to begin with */
   try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(remaining)); } catch (e) {}
   var synced = q.length - remaining.length;
   if (synced) { renderCaptures(); omniHint(); toast(synced + ' offline note' + (synced === 1 ? '' : 's') + ' synced ✓'); }
@@ -3605,13 +3666,13 @@ async function geocodeForPersist(address) {
     if (census && census.status === 'OK' && census.lat != null && census.lng != null) {
       return { lat: census.lat, lng: census.lng, formatted: census.formatted || address, source: 'census' };
     }
-  } catch (e) {}
+  } catch (e) {} /* silent-ok: fallback chain — transport failures are already reported inside edgeJson() */
   try {
     var mb = await mapboxGeocodeCall({ address: address });
     if (mb && !mb.error && mb.lat != null && mb.lng != null) {
       return { lat: mb.lat, lng: mb.lng, formatted: mb.formatted_address || address, source: 'mapbox' };
     }
-  } catch (e) {}
+  } catch (e) {} /* silent-ok: end of the fallback chain — edgeJson() reported any transport failure; null = genuinely no match */
   return null;
 }
 /* Fire-and-forget: geocode a just-saved offmarket/listings row and merge lat/lng into its extra
@@ -3725,6 +3786,7 @@ async function omniImages(files) {
   if (!files.length) return;
   if (files.length === 1) {
     var gps = null;
+    /* silent-ok: unreadable EXIF = a photo without usable GPS; it falls through to the normal photo flow */
     try { gps = window.exifr ? await exifr.gps(files[0]) : null; } catch (e) {}
     if (gps && gps.latitude != null) return omniPhoto(files[0]); /* has location -> walk-by capture */
   }
@@ -3853,7 +3915,7 @@ async function mlsSaveKept() {
     ids.push(oid); saved++;
   }
   await loadAll(false);                                   /* refresh so matching sees the new inventory + buyers */
-  for (var k = 0; k < ids.length; k++) { try { await proposeMatches('offmarket', ids[k]); } catch (e) {} }
+  for (var k = 0; k < ids.length; k++) { try { await proposeMatches('offmarket', ids[k]); } catch (e) { reportError('mlsImport.proposeMatches', e); } }
   MLS_PROPS = []; MLS_SEL = [];
   if (box) box.innerHTML = '';
   logEvent('system', null, 'mls.import', 'Imported ' + saved + ' MLS listing(s) as inventory + ran buyer matching');
@@ -3940,6 +4002,7 @@ async function uploadPropertyPhotos(propertyId, files, opts) {
     var row = { property_id: propertyId, bucket: 'photos', storage_path: path, sort_order: baseSort + i + 1, width: enc.w, height: enc.h };
     if (opts.caption) row.caption = opts.caption;
     var ins = await sb.from('property_photos').insert(row).select('*');
+    /* silent-ok: the remove() is best-effort cleanup of an orphaned upload; the insert failure itself is captured in firstErr and surfaced */
     if (ins.error) { firstErr = firstErr || ins.error.message; try { await sb.storage.from('photos').remove([path]); } catch (e) {} continue; }
     if (ins.data && ins.data[0]) { DATA.property_photos = DATA.property_photos || []; DATA.property_photos.push(ins.data[0]); }
     uploaded++;
@@ -8274,7 +8337,7 @@ async function resolveOrCreateClient(name) {
   (DATA.contacts || []).forEach(function (c) { if (!existing && !(c.extra && c.extra.merged_into) && c.name_key === k) existing = c; });
   if (existing) return existing.id; /* don't clobber an existing contact's kind — they may already be a buyer/vendor/agent elsewhere */
   var ins = await sb.from('contacts').insert({ display_name: name, name_key: k, kind: 'client' }).select('id,display_name,name_key,kind,email,phone,extra,created_at');
-  if (ins.error || !ins.data || !ins.data[0]) return null;
+  if (ins.error || !ins.data || !ins.data[0]) { reportError('ensureClientContact.insert', (ins.error || new Error('insert returned no row'))); return null; }
   DATA.contacts.push(ins.data[0]); logEvent('contacts', ins.data[0].id, 'client.created', 'Added client ' + name);
   return ins.data[0].id;
 }
@@ -8363,7 +8426,7 @@ async function resolveOrCreateVendor(name) {
   (DATA.contacts || []).forEach(function (c) { if (!existing && !(c.extra && c.extra.merged_into) && c.name_key === k) existing = c; });
   if (existing) { if (existing.kind !== 'vendor') { sb.from('contacts').update({ kind: 'vendor' }).eq('id', existing.id); existing.kind = 'vendor'; } return existing.id; }
   var ins = await sb.from('contacts').insert({ display_name: name, name_key: k, kind: 'vendor' }).select('id,display_name,name_key,kind,email,phone,extra,created_at');
-  if (ins.error || !ins.data || !ins.data[0]) return null;
+  if (ins.error || !ins.data || !ins.data[0]) { reportError('ensureVendorContact.insert', (ins.error || new Error('insert returned no row'))); return null; }
   DATA.contacts.push(ins.data[0]); logEvent('contacts', ins.data[0].id, 'vendor.created', 'Added vendor ' + name);
   return ins.data[0].id;
 }
@@ -8426,7 +8489,7 @@ async function resolveOrCreateAgent(name) {
   var existing = null; (DATA.agents || []).forEach(function (a) { if (!existing && identityKey(a.name) === identityKey(name)) existing = a; });
   if (existing) return existing.id;
   var ins = await sb.from('agents').insert({ name: name }).select('id,name,brokerage,areas,price_min,price_max,price_min_num,price_max_num,buyer_notes,relationship,notes,extra,contact_id');
-  if (ins.error || !ins.data || !ins.data[0]) return null;
+  if (ins.error || !ins.data || !ins.data[0]) { reportError('ensureAgent.insert', (ins.error || new Error('insert returned no row'))); return null; }
   DATA.agents.push(ins.data[0]); logEvent('agents', ins.data[0].id, 'agent.created', 'Added agent ' + name);
   return ins.data[0].id;
 }
@@ -8459,7 +8522,7 @@ async function flagAgentContactIfMissing(aid) {
   var a = agentRec(aid); if (!a) return;
   if (agentHasContact(a)) {
     if (a.extra && a.extra.needs_contact) { delete a.extra.needs_contact; await sb.from('agents').update({ extra: a.extra, updated_at: nowStamp() }).eq('id', aid); }
-    return;
+    return; /* silent-ok: flow-control exit — the agent has contact info, nothing to flag */
   }
   if (a.extra && a.extra.needs_contact) return; /* already flagged */
   a.extra = a.extra || {}; a.extra.needs_contact = { flagged_at: nowStamp(), reason: 'no email or phone on file', source: 'mls_pending' };
@@ -9554,6 +9617,7 @@ function marketTrackingHtml() {
     row.style.transition = 'none';
   }, { passive: true });
   body.addEventListener('touchmove', function (e) {
+    /* silent-ok: a touchmove outside an active row-drag is ordinary scrolling, not a fault */
     if (!dragging || !row) return;
     var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
     if (!horiz) {
@@ -9711,7 +9775,7 @@ async function renderClimateCard(force) {
 async function fredSyncNow() {
   try {
     await withTimeout(fetch(FRED_SYNC_FN + '?series=MORTGAGE30US,MORTGAGE15US&sinceDays=45', { method: 'POST' }), 15000, { ok: false });
-  } catch (e) {}
+  } catch (e) {} /* silent-ok: best-effort manual poke; the weekly cron + fred-sync feed-health watch this server-side */
   renderClimateCard(true);
 }
 function menuShowClimate() {
@@ -10454,7 +10518,7 @@ async function buildableAutoFill(table, id) {
     ]);
     if (pair[0].ok) res = await pair[0].json();
     ovj = pair[1];
-  } catch (e) {}
+  } catch (e) { toast('Lookup failed — try again'); reportError('buildableAutofill.lookup', e); }
   if (btn) { btn.disabled = false; btn.textContent = 'Auto-fill from address'; }
   if (!res || res.error || (!res.lot_sqft && !res.existing_sqft)) { toast((res && res.error) || 'No LA County parcel found for this address'); return; }
   if (ovj) res.overlays = ovj;   // carry hillside/HPOZ/coastal into the estimate
@@ -11668,6 +11732,7 @@ function swipeArchive(table, id, label) {
     row.style.transition = 'none';
   }, { passive: true });
   body.addEventListener('touchmove', function (e) {
+    /* silent-ok: a touchmove outside an active row-drag is ordinary scrolling, not a fault */
     if (!dragging || !row) return;
     var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
     if (!horiz) {
