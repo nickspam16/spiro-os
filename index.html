@@ -650,7 +650,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.180.0';
+var APP_VERSION = 'v5.181.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -3265,6 +3265,7 @@ function resolveRecord(rt, rid) {
   if (!rt || !rid || !DATA[rt]) return null;
   var row = null;
   DATA[rt].forEach(function (x) { if (String(x.id) === String(rid)) row = x; });
+  /* silent-ok: pure in-memory lookup helper — null is the answer, the caller decides what it means */
   if (!row) return null;
   return { label: row.address || row.address_area || row.name || String(rid).slice(0, 8) };
 }
@@ -3417,6 +3418,7 @@ async function aiCapture() {
 
 async function aiApply(i) {
   var p = AI_PROPOSALS[i];
+  /* silent-ok: double-tap / already-consumed guard, not a failure path */
   if (!p || p.done || p.error || p.pending) return;
   p.pending = true; /* double-tap guard; cleared on error paths */
   if (p.op === 'log') {
@@ -4016,6 +4018,7 @@ function propertyPhotoRows(propertyId) {
 }
 async function propertyPhotoUrls(propertyId) {
   var rows = propertyPhotoRows(propertyId);
+  /* silent-ok: a property with no photos is the common case, not a fault */
   if (!rows.length) return [];
   var res = await sb.storage.from('photos').createSignedUrls(rows.map(function (r) { return r.storage_path; }), 3600);
   var map = {}; ((res && res.data) || []).forEach(function (s) { if (s.signedUrl) map[s.path] = s.signedUrl; });
@@ -4069,6 +4072,7 @@ async function pickPropertyPhotos(propertyId, elId, input) {
 }
 async function removePropertyPhoto(photoId, propertyId, elId) {
   var row = (DATA.property_photos || []).filter(function (p) { return String(p.id) === String(photoId); })[0];
+  /* silent-ok: photo already gone from local state — the gallery re-render reflects reality */
   if (!row) return;
   if (!window.confirm('Remove this photo? This cannot be undone.')) return;
   var del = await sb.from('property_photos').delete().eq('id', photoId);
@@ -6844,6 +6848,7 @@ async function newShareGenerate() {
   }
   if (recipientId) fields.recipient_agent_id = recipientId;
   var link = await createShareLink(fields);
+  /* silent-ok: createShareLink() toasts its own failure before returning null */
   if (!link) return;
   var recipLabel = recipientId ? (' ' + (NEW_SHARE.contentType === 'buyers' ? 'with' : 'to') + ' ' + (recLabel('agents', recipientId) || 'an agent')) : '';
   logEvent(logTable || 'share_links', logTable ? logId : link.id, 'share.created', logLabel + recipLabel);
@@ -7134,6 +7139,7 @@ var stageBusy = false;
 async function stageToPortal(table, id) {
   var row = null;
   (DATA[table] || []).forEach(function (x) { if (String(x.id) === String(id)) row = x; });
+  /* silent-ok: in-memory lookup guard + double-tap guard — flow control, not failure */
   if (!row) return;
   if (stageBusy) return; /* double-tap guard: a fast second tap must never queue the same record twice */
   stageBusy = true;
@@ -7827,6 +7833,7 @@ function zipformPushOptions() {
   [['buyers', 'Buyers'], ['listings', 'Sellers (listings)'], ['prospects', 'Prospects']].forEach(function (pair) {
     var t = pair[0];
     var rows = (DATA[t] || []).filter(function (r) { return zfContactFrom(t, r.id); });
+    /* silent-ok: an empty optgroup is simply skipped */
     if (!rows.length) return;
     opts += '<optgroup label="' + pair[1] + '">' + rows.map(function (r) {
       var nm = t === 'buyers' ? r.name : t === 'listings' ? r.seller_name : r.owner_name;
@@ -8844,6 +8851,7 @@ function openBuyerPicker(oid) {
   fc.style.display = 'block'; fc.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 async function saveLink() {
+  /* silent-ok: no link target selected yet — state guard, not an error */
   if (!linkTarget) return;
   var sel = document.getElementById('link_pick');
   if (!sel || !sel.value) { closeForm(); return; }
@@ -11467,6 +11475,7 @@ async function ensureContact(name, email, phone) {
   /* unique-conflict race — fetch and adopt it */
   var q = await sb.from('contacts').select('id,display_name,name_key,kind,email,phone,extra,created_at').eq('name_key', nkey).limit(1);
   if (q.data && q.data[0]) { var seen = false; (DATA.contacts || []).forEach(function (c) { if (String(c.id) === String(q.data[0].id)) seen = true; }); if (!seen) DATA.contacts.push(q.data[0]); return q.data[0].id; }
+  if (q.error) reportError('ensureContact.adopt', q.error);
   return null;
 }
 /* Per-table maps: which FK carries the contact, which field names the person, which field is the address. */
@@ -11653,6 +11662,7 @@ function findDuplicateGroups() {
 /* A listing and its auto-created escrow (transaction.source_listing_id === listing.id) are ONE deal in
    two stages, not a duplicate address. Collapse those before deciding whether an address truly repeats. */
 function dupLinkedEscrow(r, grp) {
+  /* silent-ok: pure predicate over in-memory rows — no I/O anywhere in this function */
   if (r.table !== 'transactions' || !r.src) return false;
   for (var i = 0; i < grp.length; i++) { if (grp[i].table === 'listings' && String(grp[i].id) === String(r.src)) return true; }
   return false;
