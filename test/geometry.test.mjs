@@ -209,3 +209,31 @@ test('the review queue panel opens on screen with content', { skip }, async () =
   assert.ok(r.onScreen, 'the review queue opened off-screen — the "won\'t let me click" bug class');
   assert.ok(r.hasBody, 'rq-body rendered nothing — not even an empty state');
 });
+
+// Back-gesture (2026-07-31, v5.182.0): opening a panel must register exactly one history entry so
+// the phone's back gesture closes the panel and lands home — instead of exiting the PWA, which is
+// what every Android back-swipe did for the app's entire life until tonight.
+test('the phone back gesture closes a panel instead of exiting the app', { skip }, async () => {
+  const r = await withPage(async (page) => {
+    await page.evaluate(() => {
+      document.getElementById('screen-app').style.display = 'block';
+      openPanel('activity-card');
+    });
+    await page.waitForTimeout(150);
+    const openState = await page.evaluate(() => ({
+      panelOpen: !!PANEL_HOME,
+      historyOwned: !!(history.state && history.state.spiroPanel),
+    }));
+    await page.goBack();
+    await page.waitForTimeout(250);
+    const after = await page.evaluate(() => ({
+      panelOpen: !!PANEL_HOME,
+      homeVisible: document.getElementById('home-view').style.display !== 'none',
+    }));
+    return { openState, after };
+  });
+  assert.ok(r.openState.panelOpen, 'panel did not open');
+  assert.ok(r.openState.historyOwned, 'opening a panel registered no history entry — Back would exit the PWA');
+  assert.ok(!r.after.panelOpen, 'the back gesture did not close the panel');
+  assert.ok(r.after.homeVisible, 'Back closed the panel but never restored the home view');
+});
