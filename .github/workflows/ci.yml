@@ -17,6 +17,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+
+      # The geometry gate renders the real app in a real browser and hard-fails when Playwright
+      # is missing (a silently skipped gate reads exactly like a passing one). So CI must install
+      # it — this is the fix the gate's own failure message names.
+      - name: Install test harness (Playwright)
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
 
       - name: Detect what changed
         id: diff
