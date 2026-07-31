@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F3EDDE">
@@ -265,6 +265,10 @@
       scrollbar-width:thin;overscroll-behavior:contain}
     .stat .num{font-size:36px}
   }
+/* Pinch-zoom re-enabled 2026-07-31 (maximum-scale=1 was an accessibility cost). The reason it
+   existed — iOS auto-zooming when a small-font input takes focus — is solved at the cause:
+   inputs meet the 16px threshold on phones, so focus no longer zooms and pinch still works. */
+@media (max-width: 740px) { input, select, textarea { font-size: 16px; } }
 </style>
 </head>
 <body>
@@ -355,6 +359,7 @@
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowReviewQueue()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Review queue <span id="more-menu-rq-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowLearning()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">What Spiro&rsquo;s learned</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowCalendarSuggestions()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Calendar suggestions <span id="more-menu-calsug-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
@@ -386,7 +391,7 @@
     <!-- #10: one search box for the whole OS. Type any address or name -> jump to the record if it
          exists, or add it if it doesn't. -->
     <div style="margin:2px 0 10px;">
-      <input type="search" id="gsearch-q" placeholder="Search any address or name&hellip;" autocomplete="off" oninput="globalSearch()" style="width:100%;box-sizing:border-box;">
+      <input type="search" id="gsearch-q" placeholder="Search any address or name&hellip;" autocomplete="off" oninput="gsInput()" style="width:100%;box-sizing:border-box;">
       <div id="gsearch-results" style="margin-top:4px;"></div>
     </div>
 
@@ -519,6 +524,16 @@
       <div id="rq-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- What Spiro's learned (2026-07-31): the verdict loop, made visible. Penalties are derived
+         live from dismissals (fn_buyer_penalties) with their evidence printed; memories carry
+         confidence and a one-tap retire. If the learning is wrong, this is where it gets
+         corrected — a loop that can't be seen can't be trusted. -->
+    <div class="card" id="learning-card" style="display:none;">
+      <h2>What Spiro&rsquo;s learned</h2>
+      <div class="hint" style="margin:-6px 0 10px;">From your dismissals and notes. Wrong? Retire it and it stops informing matches and briefs.</div>
+      <div id="learn-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <!-- Pricing Preview dashboard (2026-07-24): moved out of the per-listing detail card, per Nick
          — off-market pricing previews to agents happen ~3x/year, not something that should sit in
          the daily listing view every time he opens a property. Same previewSuggestHtml/previewDraft/
@@ -618,7 +633,7 @@
          node in here (not a copy — same element, same ids, so every existing render function keeps
          working untouched) and hides #home-view; closePanel() puts it back. -->
     <div id="panel-view" style="display:none;">
-      <button class="hbtn" onclick="closePanel()" style="margin-bottom:18px;">&larr; Back to Spiro OS</button>
+      <button class="hbtn" onclick="panelBack()" style="margin-bottom:18px;">&larr; Back to Spiro OS</button>
       <div id="panel-slot"></div>
     </div>
 
@@ -650,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.181.0';
+var APP_VERSION = 'v5.182.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -734,8 +749,26 @@ function openPanel(cardId) {
   document.getElementById('home-view').style.display = 'none';
   document.getElementById('panel-view').style.display = 'block';
   window.scrollTo(0, 0);
+  /* Back-button support (2026-07-31): register one history entry per open panel so the phone's
+     back gesture closes the panel instead of exiting the PWA. Replacing (not pushing) when a
+     panel is already open keeps panel->panel hops at ONE entry — Back always lands home, never
+     replays the whole menu tour. try/catch: history can throw in sandboxed iframes; silent-ok. */
+  try {
+    if (history.state && history.state.spiroPanel) history.replaceState({ spiroPanel: cardId }, '', '');
+    else history.pushState({ spiroPanel: cardId }, '', '');
+  } catch (e) {}
 }
+/* The visible Back button routes through history when we own the top entry, so the browser's
+   own Back and ours stay in step; popstate below does the actual close. */
+function panelBack() {
+  try { if (history.state && history.state.spiroPanel) { history.back(); return; } } catch (e) {}
+  closePanel();
+}
+window.addEventListener('popstate', function () { if (PANEL_HOME) closePanel(); });
 function closePanel() {
+  /* Neutralize our history entry when the panel is closed programmatically (jumpToRecord etc.)
+     so a later Back doesn't consume a press on a stale state. silent-ok: history can throw. */
+  try { if (history.state && history.state.spiroPanel) history.replaceState({}, '', ''); } catch (e) {}
   if (!PANEL_HOME) { document.getElementById('home-view').style.display = ''; document.getElementById('panel-view').style.display = 'none'; return; }
   var homeId = PANEL_HOME.id;
   var card = document.getElementById(PANEL_HOME.id);
@@ -745,7 +778,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -788,6 +821,34 @@ function menuShowBrief() {
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
 function menuShowReviewQueue() { openPanel('review-queue-card'); renderReviewQueue(); }
+function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
+async function renderLearning() {
+  var body = document.getElementById('learn-body'); if (!body) return;
+  body.innerHTML = '<div class="empty">Loading&hellip;</div>';
+  var pen = await withTimeout(sb.rpc('fn_buyer_penalties'), 15000, { error: { message: 'timeout' } });
+  var h = '<div class="flabel">Active match penalties</div>';
+  if (pen.error) { h += '<div class="empty">Couldn&rsquo;t load penalties &mdash; reopen to retry.</div>'; reportError('learning.penalties', pen.error); }
+  else if (!(pen.data || []).length) h += '<div class="hint">None right now &mdash; no repeated dismissal patterns.</div>';
+  else h += (pen.data || []).map(function (r) {
+    var b = recOf('buyers', r.buyer_id);
+    return '<div style="display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding:7px 0;font-size:13.5px;">'
+      + '<span><b>' + esc(b ? b.name : 'A buyer') + '</b> &middot; ' + esc(r.evidence || r.kind || '') + '</span>'
+      + '<span style="color:var(--muted);white-space:nowrap;">' + (Number(r.penalty) <= -99 ? 'paused' : esc(String(r.penalty))) + '</span></div>';
+  }).join('');
+  var mems = (DATA.memories || []);
+  h += '<div class="flabel" style="margin-top:14px;">Remembered</div>';
+  if (!mems.length) h += '<div class="hint">Nothing remembered yet.</div>';
+  else h += mems.map(function (m) {
+    var who = recOf(m.entity_type, m.entity_id);
+    var label = who ? (who.name || who.address || who.address_area || '') : '';
+    var conf = m.confidence != null ? Math.round(Number(m.confidence) * 100) + '%' : '';
+    return '<div style="display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding:7px 0;font-size:13.5px;">'
+      + '<span>' + (label ? '<b>' + esc(label) + '</b> &middot; ' : '') + esc(m.content || '') + '</span>'
+      + '<span style="color:var(--muted);white-space:nowrap;">' + conf
+      + ' <span style="cursor:pointer;color:#b3382c;" title="Wrong &mdash; stop using this" onclick="retireMemory(\'' + escJs(String(m.id)) + '\')">&#10005;</span></span></div>';
+  }).join('');
+  body.innerHTML = h;
+}
 /* Review queue (2026-07-31): renders fn_match_review_queue — server-side grouping/collapse of
    every open suggestion. Fetched only when the panel is opened (never inside render()), because
    an RPC per render would hammer the DB for a card that is closed 99% of the time. Read-only by
@@ -1799,9 +1860,14 @@ function nextEscrowDeadline(tx) {
   return cands[0] || null;
 }
 
+/* One card's crash must never blank the rest of the home screen (2026-07-31; the buildable-blob
+   throw inside renderBrowse blanked the ENTIRE Records list on two builds). Each renderer runs
+   isolated; a throw is reported to client_errors and the remaining cards still paint. */
+function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e); } }
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
-  renderStats(); renderPulse(); renderQueue(); renderIntel();
+  safeRender('stats', renderStats); safeRender('pulse', renderPulse);
+  safeRender('queue', renderQueue); safeRender('intel', renderIntel);
   /* 2026-07-23: Data Coverage / Share Links / Recent Activity are hidden-by-default cards now
      (reached via the "⋮" menu) — renderCoverage() in particular runs six full scans over the
      whole dataset (dsBuildProposals, tracerfyReadinessScan, leadsNeedingTriageScan,
@@ -1810,23 +1876,23 @@ function render() {
      sits invisible. Only render them while actually visible; the menuShow* functions below force
      one fresh render at the moment each card is opened, so content is never stale when shown. */
   var covCard = document.getElementById('coverage-card');
-  if (covCard && covCard.style.display !== 'none') renderCoverage();
+  if (covCard && covCard.style.display !== 'none') safeRender('coverage', renderCoverage);
   /* Cheap badge for the "Data Coverage" menu item even while the card itself is hidden —
      sourceCoverageScan() is a single linear pass (no heavy sub-scans), safe to run every render. */
   var covN = document.getElementById('more-menu-coverage-n');
   if (covN) { var covGap = sourceCoverageScan().reduce(function (n, r) { return n + (r.total - r.wired); }, 0); covN.textContent = covGap ? String(covGap) : ''; }
   var shCard = document.getElementById('share-links-card');
-  if (shCard && shCard.style.display !== 'none') renderShareLinks();
-  renderCaptures(); renderTabs(); renderBrowse();
+  if (shCard && shCard.style.display !== 'none') safeRender('sharelinks', renderShareLinks);
+  safeRender('captures', renderCaptures); safeRender('tabs', renderTabs); safeRender('browse', renderBrowse);
   var actCard = document.getElementById('activity-card');
-  if (actCard && actCard.style.display !== 'none') renderActivity();
+  if (actCard && actCard.style.display !== 'none') safeRender('activity', renderActivity);
   renderSyncAge();
   var moreReengageN = document.getElementById('more-menu-reengage-n');
   if (moreReengageN) moreReengageN.textContent = reengageCandidateCount();
   var moreMarketN = document.getElementById('more-menu-market-n');
   if (moreMarketN) { var mPending = (MARKET.events || []).filter(function (e) { return e.review_status === 'pending' || !e.review_status; }).length; moreMarketN.textContent = mPending ? String(mPending) : ''; }
   var marketCard = document.getElementById('market-card');
-  if (marketCard && marketCard.style.display !== 'none') renderMarketReview();
+  if (marketCard && marketCard.style.display !== 'none') safeRender('market', renderMarketReview);
   var morePeopleN = document.getElementById('more-menu-people-n');
   /* 2026-07-23: Agents folded into Contacts (its own "⋮" entry removed) — count needs to include
      the synthetic agent-only rows peopleList() adds for agents with no linked contacts row, or
@@ -1838,7 +1904,7 @@ function render() {
   var moreFarmingN = document.getElementById('more-menu-farming-n');
   if (moreFarmingN) { var fLeads = farmingLeads(); moreFarmingN.textContent = fLeads.length ? String(fLeads.length) : ''; }
   var farmCard = document.getElementById('farming-card');
-  if (farmCard && farmCard.style.display !== 'none') renderFarming();
+  if (farmCard && farmCard.style.display !== 'none') safeRender('farming', renderFarming);
   var moreRqN = document.getElementById('more-menu-rq-n');
   if (moreRqN) { var rqOpen = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; }).length; moreRqN.textContent = rqOpen ? String(rqOpen) : ''; }
   var moreCalSugN = document.getElementById('more-menu-calsug-n');
@@ -2398,6 +2464,16 @@ function queueItems() {
       if (tx.contingency_date) items.push({ kind: 'deadline', label: 'Contingency removal — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.contingency_date, imp: imp });
       if (tx.closing_date) items.push({ kind: 'deadline', label: 'Closing — ' + (tx.address || 'escrow'), who: tx.client_name, due: tx.closing_date, imp: imp });
     }
+    /* TC setup nudge (2026-07-31): a live escrow with NO checklist and NO deadlines is a silent
+       gap — 220 N Cliffwood reached 5 days from closing with zero tracked obligations and nothing
+       anywhere said so. High importance (not the +1000 of a legal deadline: this is setup), due
+       today, and it stays until the two-tap setup on the escrow card is done. */
+    if (!txIsClosed(tx) && isLiveEscrowTx(tx) && !isDocAnchorTx(tx) && (tx.escrow_open_date || tx.closing_date)) {
+      var hasTcTasks = (DATA.transaction_tasks || []).some(function (k) { return String(k.transaction_id) === String(tx.id); });
+      if (!hasTcTasks && !dls.length) {
+        items.push({ kind: 'tcsetup', id: tx.id, label: 'Set up the escrow checklist — ' + (tx.address || 'escrow') + (tx.closing_date ? ' (closing ' + fmtDate(tx.closing_date) + ')' : ''), who: tx.client_name, due: today, imp: 999 });
+      }
+    }
   });
   /* Upcoming showings + open houses (future-dated) surface alongside deadlines. */
   (DATA.showings || []).forEach(function (s) {
@@ -2459,7 +2535,8 @@ function itemHtml(it) {
   /* Swipe-to-complete (2026-07-24, Today's Focus queue, per Nick's call) -- only real followup
      rows (kind 'fu') get it; deadline/auto items have no completion action to swipe toward. */
   var swipeCls = it.kind === 'fu' ? ' fu-swipe' : '';
-  return '<div class="qi' + (it.kind === 'deadline' ? ' deadline' : '') + swipeCls + '"' + (it.kind === 'fu' ? ' data-id="' + esc(String(it.id)) + '"' : '') + '>'
+  var tapAttr = it.kind === 'tcsetup' ? ' style="cursor:pointer;" onclick="jumpToRecord(\'transactions\',\'' + esc(String(it.id)) + '\')"' : '';
+  return '<div class="qi' + (it.kind === 'deadline' || it.kind === 'tcsetup' ? ' deadline' : '') + swipeCls + '"' + tapAttr + (it.kind === 'fu' ? ' data-id="' + esc(String(it.id)) + '"' : '') + '>'
     + '<div class="txt"><div class="t1">' + esc(it.label) + '</div>'
     + (meta.length ? '<div class="t2">' + meta.join(' · ') + '</div>' : '') + '</div>'
     + actions + '</div>';
@@ -4329,11 +4406,11 @@ function dsReviewHtml() {
     var eq = "'" + esc(p.envelope_id) + "'";
     var right = '';
     if (p.match && p.match.confidence === 'high') {
-      right = '<button class="qbtn done" onclick="event.stopPropagation();dsApprove(' + eq + ',\'' + esc(p.match.property_id) + '\',\'\')">File to ' + esc(p.match.display) + '</button>';
+      right = '<button class="qbtn done" onclick="event.stopPropagation();dsApprove(' + eq + ',\'' + escJs(p.match.property_id) + '\',\'\')">File to ' + esc(p.match.display) + '</button>';
     } else if (p.match && p.match.confidence === 'new') {
-      right = '<button class="qbtn" onclick="event.stopPropagation();dsApprove(' + eq + ',\'\',\'' + esc(p.extracted) + '\')">Create ' + esc(p.extracted) + ' + file</button>';
+      right = '<button class="qbtn" onclick="event.stopPropagation();dsApprove(' + eq + ',\'\',\'' + escJs(p.extracted) + '\')">Create ' + esc(p.extracted) + ' + file</button>';
     } else if (p.match && p.match.confidence === 'ambiguous') {
-      right = (p.match.candidates || []).map(function (c) { return '<button class="qbtn" onclick="event.stopPropagation();dsApprove(' + eq + ',\'' + esc(c.id) + '\',\'\')">' + esc(c.display_address || c.address_key) + '</button>'; }).join('');
+      right = (p.match.candidates || []).map(function (c) { return '<button class="qbtn" onclick="event.stopPropagation();dsApprove(' + eq + ',\'' + escJs(c.id) + '\',\'\')">' + esc(c.display_address || c.address_key) + '</button>'; }).join('');
     } else {
       right = '<button class="qbtn" onclick="event.stopPropagation();dsFileByHand(' + eq + ')">Type address + file</button>'
         + '<button class="qbtn" onclick="event.stopPropagation();dsMarkNotPropertyRelated(' + eq + ')">Not property-related</button>';
@@ -4809,6 +4886,33 @@ function renderCoverage() {
 }
 
 /* ---------- memory + timeline rendering (per record) ---------- */
+/* Full per-record history (2026-07-31): the events ledger was write-heavy and read-thin — ~115
+   event types written, five shown. This reads the WHOLE ledger for one record on demand (never in
+   render(); one fetch per open, day-grouped). Includes what bridge-sync writes hourly from the
+   portal — a lead's card now shows who viewed and inquired, not just what Nick typed. */
+var HIST_OPEN = {};
+async function loadFullHistory(table, sid) {
+  var el = document.getElementById('hist-' + table + '-' + sid); if (!el) return;
+  var k = table + ':' + sid;
+  if (HIST_OPEN[k]) { HIST_OPEN[k] = false; el.innerHTML = ''; return; }
+  HIST_OPEN[k] = true;
+  el.innerHTML = '<div class="empty">Loading&hellip;</div>';
+  var r = await withTimeout(
+    sb.from('events').select('ts,event_type,actor,source,summary').eq('entity_type', table)
+      .eq('entity_id', sid).order('ts', { ascending: false }).limit(400),
+    15000, { error: { message: 'timeout' } });
+  if (r.error) { el.innerHTML = '<div class="empty">Couldn&rsquo;t load history &mdash; tap again to retry.</div>'; HIST_OPEN[k] = false; reportError('history.load', r.error); return; }
+  var evs = r.data || [];
+  if (!evs.length) { el.innerHTML = '<div class="empty">No recorded history.</div>'; return; }
+  var h = '', day = '';
+  evs.forEach(function (e) {
+    var d = String(e.ts || '').slice(0, 10);
+    if (d !== day) { day = d; h += '<div class="flabel" style="margin-top:8px;">' + esc(fmtDate(d)) + '</div>'; }
+    h += evLine(e);
+  });
+  if (evs.length >= 400) h += '<div class="hint" style="margin-top:4px;">Showing the latest 400.</div>';
+  el.innerHTML = h;
+}
 function evLine(e) {
   var who = e.actor === 'nick' ? '' : ' · ' + esc(e.actor);
   return '<div class="cap-item">' + fmtDate(isoLocal(new Date(e.ts))) + who + ' · ' + esc(e.summary) + '</div>';
@@ -5775,7 +5879,11 @@ function recordExtras(table, id) {
   more += '<div class="flabel" style="margin-top:10px;">Memory</div>';
   more += mems.map(memChip).join('') || '<span class="hint">none yet</span>';
   if (table !== 'buyers' && table !== 'offmarket') more += ' <button class="qbtn" onclick="event.stopPropagation();openMemForm(' + "'" + table + "','" + sid + "'" + ')">&#65291; Memory</button>';
-  if (evs.length && table !== 'buyers') more += '<div class="flabel" style="margin-top:10px;">Timeline</div>' + evs.map(evLine).join(''); /* dropped from buyer card per Nick's call — not useful there */
+  if (evs.length && table !== 'buyers') {
+    more += '<div class="flabel" style="margin-top:10px;">Timeline</div>' + evs.map(evLine).join('')
+      + '<div id="hist-' + table + '-' + esc(sid) + '"></div>'
+      + '<a class="hint" href="javascript:void(0)" onclick="event.stopPropagation();loadFullHistory(\'' + table + '\',\'' + esc(sid) + '\')">Full history &rarr;</a>';
+  } /* dropped from buyer card per Nick's call — not useful there */
   if (more) {
     var moreId = 'more-' + table + '-' + sid;
     h += secToggleHtml(moreId, 'More') + secBodyOpen(moreId) + more + '</div>';
@@ -7720,6 +7828,11 @@ function jumpToRecord(t, id) {
   else document.getElementById('records-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 /* #10: global search — any address or name -> jump to the record, or offer to create it. */
+var GS_T = null;
+/* Debounced (2026-07-31): globalSearch scans seven tables per call; per-keystroke that is pure
+   waste on a phone. 150ms trailing — imperceptible, and typing a 10-char address now costs one
+   scan instead of ten. */
+function gsInput() { clearTimeout(GS_T); GS_T = setTimeout(globalSearch, 150); }
 function globalSearch() {
   var out = document.getElementById('gsearch-results'); if (!out) return;
   var raw = ((document.getElementById('gsearch-q') || {}).value || '').trim();
@@ -9156,6 +9269,8 @@ async function retireMemory(id) {
   if (r.error) { toast('Could not retire'); return; }
   DATA.memories = DATA.memories.filter(function (m) { return m.id !== id; });
   renderBrowse(); toast('Memory retired');
+  var lc = document.getElementById('learning-card');
+  if (lc && lc.style.display !== 'none') renderLearning();
 }
 function renderActivity() {
   document.getElementById('activity').innerHTML =
