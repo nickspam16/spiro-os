@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.185.0';
+var APP_VERSION = 'v5.186.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1192,6 +1192,10 @@ async function askThreadSend() {
    sale is the overwhelmingly common case for Nick's book, so it sorts first). */
 var TC_DEAL_KIND_ORDER = ['traditional_sale', 'trust_sale', 'lease'];
 var TC_DEAL_KIND_LABELS = { traditional_sale: 'Traditional sale', trust_sale: 'Trust sale', lease: 'Lease' };
+/* TC Week 2 (2026-07-31): Nick's usual negotiated contingency periods, confirmed directly by him --
+   NOT the CAR form's generic 17-day figure. These are only the pre-filled starting point on the
+   Under Contract intake form; every field there is editable per deal from the executed contract. */
+var TC_CONTINGENCY_DEFAULTS = { inspection: 14, appraisal: 14, loan: 14, emd_bdays: 3, disclosure: 7 };
 function menuShowTcTemplates() {
   openPanel('tc-templates-card');
   renderTcTemplates();
@@ -4985,7 +4989,11 @@ function escrowExtras(sid) {
         + '<div class="t2">' + esc(fmtDate(d.due_date) + (d.rule ? ' · ' + d.rule : '')) + '</div></div>'
         + (done ? '' : '<span class="pill' + cls + '" style="margin-right:6px;">' + esc(when || '—') + '</span>') + right + '</div>';
     }).join('') + '</div>';
-    h += '<div class="hint" style="margin-top:6px;">CA RPA default day-counts — verify against the executed contract. <a href="#" onclick="event.stopPropagation();underContractForm(' + q + ');return false;">Regenerate</a></div>';
+    var rpaT = (tx.extra && tx.extra.rpa_terms) || null;
+    var dlHint = rpaT
+      ? 'Set from the executed contract — inspection/appraisal/loan ' + rpaT.inspection + '/' + rpaT.appraisal + '/' + rpaT.loan + 'd, EMD ' + rpaT.emd_bdays + 'bd, disclosures ' + rpaT.disclosure + 'd.'
+      : 'CA RPA default day-counts — verify against the executed contract.';
+    h += '<div class="hint" style="margin-top:6px;">' + esc(dlHint) + ' <a href="#" onclick="event.stopPropagation();underContractForm(' + q + ');return false;">Regenerate</a></div>';
   } else {
     var chips = deadlineChip('Contingency removal', tx.contingency_date) + deadlineChip('Closing', tx.closing_date);
     if (chips) h += '<div>' + chips + '</div>';
@@ -5514,33 +5522,72 @@ async function tcWaiveSubmit(id) {
 }
 
 function ucCancel(sid) { var b = document.getElementById('uc-' + sid); if (b) b.innerHTML = ''; }
+/* TC Week 2 (2026-07-31): this used to only ask for acceptance + COE and silently apply the CAR
+   form's generic 17/17/17/3/7 day-counts every time -- meaning a deal negotiated with different
+   contingency periods just got the wrong deadlines with no way to say so. Now every day-count is
+   entered (pre-filled with Nick's usual practice, TC_CONTINGENCY_DEFAULTS) and read straight off
+   the executed contract; generateDeadlines() below persists exactly what was entered so the
+   deadlines' own `source` stops claiming 'ca_rpa_defaults' when it wasn't. */
 function underContractForm(sid) {
   var box = document.getElementById('uc-' + sid); if (!box) return;
   var q = "'" + esc(sid) + "'";
+  var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
+  var prior = (tx && tx.extra && tx.extra.rpa_terms) || null;
+  /* Regenerating (prior already set) pre-fills what was actually entered last time, not the
+     generic defaults again -- re-opening this form to fix one date shouldn't silently reset
+     every other negotiated period back to Nick's usual practice. */
+  var d = prior || TC_CONTINGENCY_DEFAULTS;
+  var accVal = (prior && prior.acceptance) || (tx && tx.escrow_open_date) || todayIso();
+  var coeVal = (prior && prior.coe) || (tx && tx.closing_date) || '';
+  var numIn = function (id, val) { return '<input type="number" min="0" step="1" id="' + id + '" value="' + val + '" style="width:48px;margin:0 10px 6px 4px;">'; };
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">From the executed contract:</div>'
-    + '<label class="hint">Acceptance </label><input type="date" id="uc-acc-' + esc(sid) + '" value="' + todayIso() + '" style="margin:0 10px 6px 0;">'
-    + '<label class="hint">Close of escrow (optional) </label><input type="date" id="uc-coe-' + esc(sid) + '" style="margin:0 10px 6px 0;"><br>'
+    + '<label class="hint">Acceptance </label><input type="date" id="uc-acc-' + esc(sid) + '" value="' + esc(accVal) + '" style="margin:0 10px 6px 0;">'
+    + '<label class="hint">Close of escrow (optional) </label><input type="date" id="uc-coe-' + esc(sid) + '" value="' + esc(coeVal) + '" style="margin:0 10px 6px 0;"><br>'
+    + '<label class="hint">Inspection contingency (days)' + numIn('uc-insp-' + esc(sid), d.inspection) + '</label>'
+    + '<label class="hint">Appraisal (days)' + numIn('uc-appr-' + esc(sid), d.appraisal) + '</label>'
+    + '<label class="hint">Loan (days)' + numIn('uc-loan-' + esc(sid), d.loan) + '</label><br>'
+    + '<label class="hint">EMD (business days)' + numIn('uc-emd-' + esc(sid), d.emd_bdays) + '</label>'
+    + '<label class="hint">Disclosures (days)' + numIn('uc-disc-' + esc(sid), d.disclosure) + '</label><br>'
     + '<button class="qbtn done" onclick="event.stopPropagation();generateDeadlines(' + q + ')">Generate deadlines</button> '
     + '<button class="qbtn" onclick="event.stopPropagation();ucCancel(' + q + ')">Cancel</button>'
-    + '<div class="hint" style="margin-top:6px;">Sets EMD, disclosures, inspection, appraisal, loan, walkthrough &amp; close from CA RPA default day-counts. Mark each done or regenerate.</div></div>';
+    + '<div class="hint" style="margin-top:6px;">Pre-filled with your usual periods — edit any of them to match this contract. Mark each done or regenerate.</div></div>';
 }
 async function generateDeadlines(sid) {
   var acc = (document.getElementById('uc-acc-' + sid) || {}).value;
   var coe = (document.getElementById('uc-coe-' + sid) || {}).value;
   if (!acc) { toast('Enter the acceptance date'); return; }
-  var args = { p_transaction_id: sid, p_acceptance: acc };
+  var d = TC_CONTINGENCY_DEFAULTS;
+  var numVal = function (id, fallback) {
+    var raw = (document.getElementById(id) || {}).value;
+    var n = parseInt(raw, 10);
+    return (isFinite(n) && n >= 0) ? n : fallback;
+  };
+  var insp = numVal('uc-insp-' + sid, d.inspection);
+  var appr = numVal('uc-appr-' + sid, d.appraisal);
+  var loan = numVal('uc-loan-' + sid, d.loan);
+  var emd = numVal('uc-emd-' + sid, d.emd_bdays);
+  var disc = numVal('uc-disc-' + sid, d.disclosure);
+  var args = {
+    p_transaction_id: sid, p_acceptance: acc,
+    p_inspection: insp, p_appraisal: appr, p_loan: loan, p_emd_bdays: emd, p_disclosure: disc,
+    p_source: 'executed_contract'
+  };
   if (coe) args.p_coe = coe;
   var r = await sb.rpc('fn_generate_transaction_deadlines', args);
   if (r.error) { toast('Could not generate — try again'); return; }
   var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
-  if (tx) { tx.status = 'Under contract'; if (!tx.escrow_open_date) tx.escrow_open_date = acc; }
-  await sb.from('transactions').update({ status: 'Under contract', escrow_open_date: acc }).eq('id', sid).select('id');
+  var rpaTerms = { acceptance: acc, coe: coe || null, inspection: insp, appraisal: appr, loan: loan, emd_bdays: emd, disclosure: disc, entered_at: nowStamp() };
+  if (tx) {
+    tx.status = 'Under contract'; if (!tx.escrow_open_date) tx.escrow_open_date = acc;
+    tx.extra = Object.assign({}, tx.extra || {}); tx.extra.rpa_terms = rpaTerms;
+  }
+  await sb.from('transactions').update({ status: 'Under contract', escrow_open_date: acc, extra: tx ? tx.extra : { rpa_terms: rpaTerms } }).eq('id', sid).select('id');
   var dl = await sb.from('transaction_deadlines').select('*').eq('transaction_id', sid);
   if (!dl.error && dl.data) {
     DATA.transaction_deadlines = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) !== sid; }).concat(dl.data);
   }
-  logEvent('transactions', sid, 'txn.deadlines_generated', 'Escrow deadlines set from acceptance ' + acc + (coe ? ', COE ' + coe : ''));
+  logEvent('transactions', sid, 'txn.deadlines_generated', 'Deadlines set from executed contract — acceptance ' + acc + (coe ? ', COE ' + coe : '') + ' · inspection/appraisal/loan ' + insp + '/' + appr + '/' + loan + 'd, EMD ' + emd + 'bd, disclosures ' + disc + 'd');
   toast('Deadlines set');
   render();
 }
