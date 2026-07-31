@@ -27,7 +27,7 @@ import { app } from './_lib.mjs';
 
 // Frozen at the count measured on 2026-07-30, after the edgeJson() consolidation.
 // LOWER THIS when you fix some. Never raise it.
-const BASELINE = 29;
+const BASELINE = 11;
 
 function silentIoPaths(src) {
   const lines = src.split('\n');
