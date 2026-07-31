@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.183.0';
+var APP_VERSION = 'v5.184.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1332,7 +1332,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [], market_solds: [] };
+var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [], market_solds: [], transaction_documents: [], tc_document_templates: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1795,9 +1795,14 @@ async function loadAll(manual) {
     sb.from('market_events').select('id,mls_number,event_date,neighborhood,address,sold_price,sqft,beds,baths,extra')
       .eq('event_type', 'sold')
       .gte('event_date', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
-      .order('event_date', { ascending: false }).limit(1200)
+      .order('event_date', { ascending: false }).limit(1200),
+    /* TC Week 1, document manifest (2026-07-31): tasks track what to DO; this tracks the actual
+       required-DOCUMENT list per deal. Small per-deal row counts (~15-22), same safe-to-load-in-
+       full reasoning as transaction_tasks/tc_task_templates above. */
+    sb.from('transaction_documents').select('*'),
+    sb.from('tc_document_templates').select('*')
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
      truth, so this response is dropped entirely rather than partially applied — writing even
      some of these arrays would leave DATA a mix of two different points in time. */
@@ -5016,6 +5021,8 @@ function escrowExtras(sid) {
 
   h += tcTasksHtml(tx);
 
+  h += tcDocumentsHtml(tx);
+
   h += tcCommissionHtml(tx);
 
   var fus = escrowFollowups(sid, tx.address);
@@ -5151,6 +5158,13 @@ async function deleteCommissionItem(id, sid) {
    assigned_to renders as a badge, not a second grouping axis, per the UX-lens finding. */
 var TC_PHASE_ORDER = ['pre_listing', 'active', 'pending', 'closing', 'post_closing'];
 var TC_PHASE_LABELS = { pre_listing: 'Pre-listing', active: 'Active', pending: 'Pending', closing: 'Closing', post_closing: 'Post-closing' };
+/* Document manifest category order/labels (TC Week 1, 2026-07-31) -- grouped by category rather
+   than phase, per the brief: "is this file compliance-clean" reads better as agreement/disclosure/
+   report/escrow/financial than as a timeline. */
+var TC_DOC_CATEGORY_ORDER = ['agreement', 'disclosure', 'report', 'compliance', 'escrow', 'financial'];
+var TC_DOC_CATEGORY_LABELS = { agreement: 'Agreements', disclosure: 'Disclosures', report: 'Reports', compliance: 'Compliance', escrow: 'Escrow', financial: 'Financial' };
+var TC_DOC_STATUS_ORDER = ['required', 'received', 'signed', 'filed'];
+var TC_DOC_STATUS_LABELS = { required: 'Required', waived: 'Waived', received: 'Received', signed: 'Signed', filed: 'Filed' };
 function tcTasksForTx(sid) { return (DATA.transaction_tasks || []).filter(function (t) { return String(t.transaction_id) === sid; }); }
 /* Compact one-line summary for the Escrows list row (collapsed state) -- percent complete plus
    the single next thing that matters (a gated/high-stakes task wins over an earlier plain one,
@@ -5303,6 +5317,7 @@ async function setDealKind(sid, kind) {
   if (tx) tx.deal_kind = kind;
   logEvent('transactions', sid, 'txn.deal_kind_set', 'Deal kind set to ' + kind);
   await generateTcTasks(sid, true);
+  await generateTcDocuments(sid, true);
 }
 async function generateTcTasks(sid, silent) {
   var r = await sb.rpc('fn_generate_transaction_tasks', { p_transaction_id: sid, p_commit: true });
@@ -5368,6 +5383,133 @@ async function tcLinkEnvelopeSubmit(taskId) {
     await sb.from('transaction_tasks').update({ status: 'done', updated_at: nowStamp() }).eq('id', taskId);
   }
   toast('Linked');
+  render();
+}
+
+/* ---------- Document manifest (TC Week 1, 2026-07-31) ----------
+   Tasks (above) track what to DO; this tracks what FILE is missing -- the single sentence a TC is
+   paid to be able to say: "File complete: N of M — missing X, Y". Generated via
+   fn_generate_transaction_documents (mirrors fn_generate_transaction_tasks: idempotent, never
+   resets a status a human already advanced). Grouped by category, not phase -- "is this file
+   compliance-clean" reads as agreement/disclosure/report/compliance/escrow/financial, not a
+   timeline. Statuses advance by tap: required -> received -> signed -> filed, with undo one step
+   back. Waiving requires a typed reason (enforced by a table CHECK constraint, not just the UI --
+   a waived doc with no reason is the exact silent-failure shape the ratchet exists to catch). */
+function tcDocsForTx(sid) { return (DATA.transaction_documents || []).filter(function (d) { return String(d.transaction_id) === sid; }); }
+function tcDocumentsHtml(tx) {
+  var sid = String(tx.id);
+  var h = '<div class="flabel" style="margin-top:12px;">Document Manifest</div>';
+  if (!tx.deal_kind) {
+    /* Deal-kind picker already lives on the TC Tasks card just above -- no reason to duplicate
+       three buttons here too. One tap there generates both tasks and documents together. */
+    return h + '<div class="hint" style="margin-bottom:6px;">Set the deal kind above to generate the required-document list.</div>';
+  }
+  var docs = tcDocsForTx(sid);
+  if (!docs.length) {
+    return h + '<div class="hint" style="margin-bottom:6px;">No document manifest generated yet.</div>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();generateTcDocuments(' + "'" + sid + "')\">Generate documents</button>"
+      + '<div id="tcd-' + esc(sid) + '"></div>';
+  }
+  var resolved = docs.filter(function (d) { return d.status !== 'required'; });
+  var missing = docs.filter(function (d) { return d.status === 'required'; });
+  var missingLabels = missing.slice(0, 3).map(function (d) { return shortDocLabel(d.label); });
+  var missingNote = missing.length
+    ? ' — missing ' + missingLabels.join(', ') + (missing.length > 3 ? ' +' + (missing.length - 3) + ' more' : '')
+    : '';
+  h += '<div class="hint" style="margin-bottom:4px;">' + (missing.length ? '<span class="pill warn">File incomplete</span>' : '<span class="pill ok">File complete</span>')
+    + ' File complete: ' + resolved.length + ' of ' + docs.length + missingNote
+    + ' &middot; <a href="#" onclick="event.stopPropagation();generateTcDocuments(' + "'" + sid + "');return false;\">regenerate</a></div>";
+  var pct = Math.round(resolved.length / docs.length * 100);
+  h += '<div style="height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pct + '%;background:var(--green);"></div></div>';
+  var byCat = {};
+  docs.forEach(function (d) { (byCat[d.category] = byCat[d.category] || []).push(d); });
+  h += '<div onclick="event.stopPropagation()">' + TC_DOC_CATEGORY_ORDER.filter(function (c) { return byCat[c] && byCat[c].length; }).map(function (cat) {
+    var items = byCat[cat].slice().sort(function (a, b) { return a.label.localeCompare(b.label); });
+    var cDone = items.filter(function (d) { return d.status !== 'required'; }).length;
+    var secId = 'tcdcat-' + sid + '-' + cat;
+    var hasMissing = items.some(function (d) { return d.status === 'required'; });
+    var open = hasMissing || !!openSections[secId];
+    if (open) openSections[secId] = true;
+    return '<div class="hint" style="cursor:pointer;margin:10px 0 2px;font-weight:600;" onclick="toggleSec(' + "'" + secId + "')\">"
+      + '<span id="' + secId + '-c">' + (open ? '&#9662;' : '&#9656;') + '</span> ' + (TC_DOC_CATEGORY_LABELS[cat] || cat) + ' <span style="font-weight:400;color:var(--muted);">(' + cDone + '/' + items.length + ' resolved)</span></div>'
+      + '<div id="' + secId + '" style="display:' + (open ? 'block' : 'none') + ';">' + items.map(tcDocRowHtml).join('') + '</div>';
+  }).join('') + '</div>';
+  return h;
+}
+/* Strip a parenthetical aside for the compact "missing X, Y" rollup line -- "Natural Hazard
+   Disclosure (NHD)" reads fine in full but three of those in one sentence is noise; the acronym
+   alone (when present) is what a TC actually says out loud. */
+function shortDocLabel(label) {
+  var m = /\(([A-Z&]{2,6})\)/.exec(label || '');
+  return m ? m[1] : String(label || '').split(' -- ')[0].split(' (')[0];
+}
+function tcDocNextStatus(status) {
+  var i = TC_DOC_STATUS_ORDER.indexOf(status);
+  return (i >= 0 && i < TC_DOC_STATUS_ORDER.length - 1) ? TC_DOC_STATUS_ORDER[i + 1] : null;
+}
+function tcDocPrevStatus(status) {
+  if (status === 'waived') return 'required';
+  var i = TC_DOC_STATUS_ORDER.indexOf(status);
+  return (i > 0) ? TC_DOC_STATUS_ORDER[i - 1] : null;
+}
+function tcDocRowHtml(d) {
+  var resolved = d.status !== 'required';
+  var pillCls = d.status === 'filed' ? 'ok' : d.status === 'waived' ? '' : d.status === 'required' ? 'warn' : '';
+  var pill = '<span class="pill ' + pillCls + '">' + (TC_DOC_STATUS_LABELS[d.status] || d.status) + '</span>';
+  var autoNote = (d.esign_envelope_id && (d.status === 'signed' || d.status === 'filed')) ? ' <span class="hint">(auto from e-sign)</span>' : '';
+  var statuteNote = d.statute_note ? ' <span class="hint" title="' + esc(d.statute_note) + '">&#9432;</span>' : '';
+  var dq = "'" + esc(d.id) + "'";
+  var next = tcDocNextStatus(d.status);
+  var prev = tcDocPrevStatus(d.status);
+  var right = (next ? '<button class="qbtn done" onclick="event.stopPropagation();setTcDocStatus(' + dq + ",'" + next + "')\">Mark " + esc(TC_DOC_STATUS_LABELS[next]) + '</button> ' : '')
+    + (d.status === 'required' ? '<button class="qbtn" onclick="event.stopPropagation();tcWaiveForm(' + dq + ')">Waive</button> ' : '')
+    + (prev ? '<button class="qbtn" onclick="event.stopPropagation();setTcDocStatus(' + dq + ",'" + prev + "')\">Undo</button>" : '');
+  var waivedNote = (d.status === 'waived' && d.waived_reason) ? '<div class="hint" style="width:100%;margin-top:2px;">Waived: ' + esc(d.waived_reason) + '</div>' : '';
+  return '<div class="qi"><div class="txt"><div class="t1"' + (resolved ? ' style="opacity:.75;"' : '') + '>' + esc(d.label) + ' ' + pill + autoNote + statuteNote + '</div></div>'
+    + right + '<div id="tcdw-' + esc(d.id) + '"></div>' + waivedNote + '</div>';
+}
+async function generateTcDocuments(sid, silent) {
+  var r = await sb.rpc('fn_generate_transaction_documents', { p_transaction_id: sid, p_commit: true });
+  if (r.error) { toast('Could not generate documents — try again'); return; }
+  if (r.data && r.data.error) { if (!silent) toast(r.data.error); return; }
+  var t = await sb.from('transaction_documents').select('*').eq('transaction_id', sid);
+  if (!t.error && t.data) {
+    DATA.transaction_documents = (DATA.transaction_documents || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(t.data);
+  }
+  logEvent('transactions', sid, 'txn.documents_generated', (r.data && r.data.documents_generated || 0) + ' manifest documents generated');
+  if (!silent) toast('Documents generated');
+  render();
+}
+async function setTcDocStatus(id, status) {
+  var patch = { status: status, updated_at: nowStamp() };
+  if (status !== 'waived') patch.waived_reason = null;
+  var r = await sb.from('transaction_documents').update(patch).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
+  if (d) { d.status = status; if (status !== 'waived') d.waived_reason = null; }
+  render();
+}
+function tcWaiveForm(id) {
+  var box = document.getElementById('tcdw-' + id); if (!box) return;
+  /* SECURITY: escJs() for the value going inside the JS string literal, esc() for the attribute
+     that carries it -- same layering rule as tcTemplateNoteForm/saveCommissionItem elsewhere in
+     this file. A plain esc() here would be the exact class of bug the 2026-07-31 ratchet retired. */
+  var saveAttr = 'event.stopPropagation();tcWaiveSubmit(\'' + escJs(id) + '\')';
+  var cancelAttr = 'event.stopPropagation();document.getElementById(\'tcdw-' + escJs(id) + '\').innerHTML=\'\'';
+  box.innerHTML = '<div onclick="event.stopPropagation();" style="margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:var(--radius);width:100%;">'
+    + '<div class="hint" style="margin-bottom:6px;">Why doesn\'t this document apply? (required — a waive with no reason is exactly the kind of silent skip this list exists to prevent)</div>'
+    + '<input type="text" id="tcdw-reason-' + id + '" placeholder="e.g. built 2005, lead paint disclosure not applicable" style="width:100%;margin-bottom:6px;">'
+    + '<button class="qbtn done" onclick="' + esc(saveAttr) + '">Save</button> <button class="qbtn" onclick="' + esc(cancelAttr) + '">Cancel</button></div>';
+}
+async function tcWaiveSubmit(id) {
+  var reason = (document.getElementById('tcdw-reason-' + id) || {}).value || '';
+  reason = reason.trim();
+  if (!reason) { toast('Enter a reason — required to waive'); return; }
+  var r = await sb.from('transaction_documents').update({ status: 'waived', waived_reason: reason, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not save — try again'); return; }
+  var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
+  if (d) { d.status = 'waived'; d.waived_reason = reason; }
+  document.getElementById('tcdw-' + id).innerHTML = '';
   render();
 }
 
@@ -5457,7 +5599,18 @@ async function setEnvelopeStatus(id, status) {
   var r = await sb.from('esign_envelopes').update(patch).eq('id', id).select('id');
   if (r.error) { toast('Could not save — try again'); return; }
   logEvent('transactions', e.transaction_id, 'esign.status', (e.doc_name || 'Document') + ' -> ' + status);
+  /* trg_match_envelope_to_tc (2026-07-31) may have just linked+advanced a manifest document or a
+     linked_doc task server-side by name match -- refetch both for this escrow so the UI reflects
+     it without waiting for a full reload. Cheap: capped to one transaction's rows. */
+  if (status === 'completed' && e.transaction_id) {
+    var sid = String(e.transaction_id);
+    var dRes = await sb.from('transaction_documents').select('*').eq('transaction_id', sid);
+    if (!dRes.error && dRes.data) DATA.transaction_documents = (DATA.transaction_documents || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(dRes.data);
+    var tRes = await sb.from('transaction_tasks').select('*').eq('transaction_id', sid);
+    if (!tRes.error && tRes.data) DATA.transaction_tasks = (DATA.transaction_tasks || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(tRes.data);
+  }
   toast('Updated');
+  render();
 }
 
 /* ---------- Showings & open houses. Self-contained; one-click add-to-Google-Calendar (no OAuth). ---------- */
