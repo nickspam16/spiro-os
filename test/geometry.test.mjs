@@ -189,3 +189,23 @@ test('a save error is rendered where the person is looking', { skip }, async () 
   assert.ok(r.errTop < r.viewport,
     `the error text rendered at y=${Math.round(r.errTop)}, below the fold on a ${r.viewport}px screen`);
 });
+
+// Review queue (2026-07-31, v5.181.0): the panel is new — assert it opens IN the slot, ON screen,
+// with at least an empty-state message. Same invisible-UI bug class the rest of this file guards.
+test('the review queue panel opens on screen with content', { skip }, async () => {
+  const r = await withPage(async (page) => page.evaluate(async () => {
+    document.getElementById('screen-app').style.display = 'block';
+    menuShowReviewQueue();
+    await new Promise((res) => setTimeout(res, 300));
+    const card = document.getElementById('review-queue-card');
+    const rect = card.getBoundingClientRect();
+    return { inSlot: card.parentNode.id === 'panel-slot',
+             visible: card.style.display !== 'none',
+             onScreen: rect.top >= 0 && rect.top < window.innerHeight,
+             hasBody: !!document.getElementById('rq-body').textContent.trim() };
+  }));
+  assert.ok(r.inSlot, 'review-queue-card did not move into the panel slot');
+  assert.ok(r.visible, 'review-queue-card stayed display:none after menuShowReviewQueue()');
+  assert.ok(r.onScreen, 'the review queue opened off-screen — the "won\'t let me click" bug class');
+  assert.ok(r.hasBody, 'rq-body rendered nothing — not even an empty state');
+});
