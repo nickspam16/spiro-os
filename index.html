@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.182.0';
+var APP_VERSION = 'v5.183.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -778,7 +778,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card', 'form-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -940,9 +940,9 @@ function calSugEditHtml(s) {
   else if (type === 'buyer') recOpts = pickerOptions(DATA.buyers || [], 'name');
   else if (type === 'transaction') recOpts = pickerOptions(DATA.transactions || [], 'address');
   return '<div class="field-group" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">'
-    + '<div class="field-row"><select onchange="calSugTypeChanged(\'' + esc(id) + '\',this.value)">' + typeOpts + '</select></div>'
+    + '<div class="field-row"><select onchange="calSugTypeChanged(\'' + escJs(id) + '\',this.value)">' + typeOpts + '</select></div>'
     + (type !== 'none' ? '<div class="field-row"><select id="calsug-rec-' + esc(id) + '">' + recOpts + '</select></div>' : '')
-    + '<button class="qbtn done" onclick="saveCalSugMatch(\'' + esc(id) + '\')">Save match</button></div>';
+    + '<button class="qbtn done" onclick="saveCalSugMatch(\'' + escJs(id) + '\')">Save match</button></div>';
 }
 async function saveCalSugMatch(id) {
   var s = calendarSuggestionById(id); if (!s) return;
@@ -1222,9 +1222,9 @@ function renderTcTemplates() {
       if (t.notes) h += '<div style="color:var(--muted);font-size:12px;margin-top:2px;">' + esc(t.notes) + '</div>';
       h += '</div>';
       if (t.broker_confirmed) {
-        h += '<button class="hbtn" style="white-space:nowrap;color:var(--ok,#2a8);" onclick="toggleBrokerConfirmed(\'' + esc(t.template_key) + '\', false)">&#10003; Confirmed</button>';
+        h += '<button class="hbtn" style="white-space:nowrap;color:var(--ok,#2a8);" onclick="toggleBrokerConfirmed(\'' + escJs(t.template_key) + '\', false)">&#10003; Confirmed</button>';
       } else {
-        h += '<button class="hbtn" style="white-space:nowrap;" onclick="toggleBrokerConfirmed(\'' + esc(t.template_key) + '\', true)">Mark confirmed</button>';
+        h += '<button class="hbtn" style="white-space:nowrap;" onclick="toggleBrokerConfirmed(\'' + escJs(t.template_key) + '\', true)">Mark confirmed</button>';
       }
       h += '</div>';
       if (fb.length) {
@@ -1232,7 +1232,7 @@ function renderTcTemplates() {
           return '<div class="hint" style="margin-top:2px;">&#8226; ' + esc(f.note) + (f.source && f.source !== 'nick' ? ' <span style="opacity:.7;">(' + esc(f.source) + ')</span>' : '') + '</div>';
         }).join('') + '</div>';
       }
-      h += '<div style="margin-top:4px;"><a href="javascript:void(0)" class="hint" style="text-decoration:underline;" onclick="tcTemplateNoteForm(\'' + esc(t.template_key) + '\')">+ add a note</a><div id="tfb-' + esc(t.template_key) + '"></div></div>';
+      h += '<div style="margin-top:4px;"><a href="javascript:void(0)" class="hint" style="text-decoration:underline;" onclick="tcTemplateNoteForm(\'' + escJs(t.template_key) + '\')">+ add a note</a><div id="tfb-' + esc(t.template_key) + '"></div></div>';
       h += '</div>';
     });
   });
@@ -2088,7 +2088,7 @@ function propensityHotPocketsHtml() {
     var parts = [];
     if (hit.high.length) parts.push(hit.high.length + ' high');
     if (hit.medium.length) parts.push(hit.medium.length + ' medium');
-    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + esc(hit.high[0] ? hit.high[0].table : hit.medium[0].table) + '\',\'' + esc(String(hit.high[0] ? hit.high[0].id : hit.medium[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(hit.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + esc(parts.join(' · ')) + ' sell-propensity leads</div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + escJs(hit.high[0] ? hit.high[0].table : hit.medium[0].table) + '\',\'' + escJs(String(hit.high[0] ? hit.high[0].id : hit.medium[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(hit.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + esc(parts.join(' · ')) + ' sell-propensity leads</div></div></div>';
   }).join('');
   return h;
 }
@@ -2146,7 +2146,7 @@ function ownerPortfolioHtml() {
   h += groups.slice(0, 5).map(function (g) {
     var conf = g.matchType === 'mailing address' ? '' : ' — name only, confirm before assuming it\'s the same person';
     var links = g.records.map(function (r) {
-      return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(r.table) + '\',\'' + esc(String(r.id)) + '\')">' + esc(r.address || '') + '</span>';
+      return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(r.table) + '\',\'' + escJs(String(r.id)) + '\')">' + esc(r.address || '') + '</span>';
     }).join('');
     return '<div class="qi"><div class="txt"><div class="t1">Same ' + esc(g.matchType) + conf + '</div><div class="t2">' + links + '</div></div></div>';
   }).join('');
@@ -2197,7 +2197,7 @@ function buyerTwinsHtml() {
     var parts = [p.sim.areaOverlap.length + ' shared area' + (p.sim.areaOverlap.length === 1 ? '' : 's')];
     if (p.sim.sameType) parts.push('same property type');
     if (p.sim.similarBeds) parts.push('similar bed count');
-    return '<div class="qi"><div class="txt"><div class="t1"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + esc(String(p.a.id)) + '\')">' + esc(p.a.name || 'Buyer') + '</span> &amp; <span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + esc(String(p.b.id)) + '\')">' + esc(p.b.name || 'Buyer') + '</span></div><div class="t2">' + esc(parts.join(' · ')) + '</div></div></div>';
+    return '<div class="qi"><div class="txt"><div class="t1"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + escJs(String(p.a.id)) + '\')">' + esc(p.a.name || 'Buyer') + '</span> &amp; <span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + escJs(String(p.b.id)) + '\')">' + esc(p.b.name || 'Buyer') + '</span></div><div class="t2">' + esc(parts.join(' · ')) + '</div></div></div>';
   }).join('');
   return h;
 }
@@ -2286,18 +2286,18 @@ function renderIntel() { try {
   var html = '';
   if (!rows.length) html += '<div class="empty">No buyers need a call right now.</div>';
   else html += rows.slice(0, 6).map(function (r) {
-    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.id)) + '\')"><div class="txt"><div class="t1">' + esc(r.name) + ' <span class="hint">→ open</span></div><div class="t2">' + r.count + ' match' + (r.count === 1 ? '' : 'es') + ' · best ' + r.best + '/10 · ' + esc(r.reasons.join(', ')) + '</div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + escJs(String(r.id)) + '\')"><div class="txt"><div class="t1">' + esc(r.name) + ' <span class="hint">→ open</span></div><div class="t2">' + r.count + ' match' + (r.count === 1 ? '' : 'es') + ' · best ' + r.best + '/10 · ' + esc(r.reasons.join(', ')) + '</div></div></div>';
   }).join('');
   if (leads) html += '<div class="qi deadline" style="cursor:pointer;" onclick="setTab(\'prospects\')"><div class="txt"><div class="t1">' + leads + ' seller lead' + (leads === 1 ? '' : 's') + ' to review <span class="hint">→ open</span></div><div class="t2">Expired/withdrawn + probate — triage them in your Prospects tab</div></div></div>';
   var needChain = listingsNeedingChainCheck();
   if (needChain.length) html += needChain.slice(0, 3).map(function (l) {
-    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + esc(String(l.id)) + '\')"><div class="txt"><div class="t1">Chain-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.extra.architect) + ' — architect/neighborhood chain not run yet</div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + escJs(String(l.id)) + '\')"><div class="txt"><div class="t1">Chain-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.extra.architect) + ' — architect/neighborhood chain not run yet</div></div></div>';
   }).join('');
   var needPress = listingsNeedingPressCheck();
   if (needPress.length) {
     html += '<div class="flabel" style="margin-top:14px;">Press-check needed <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; deal closed/pending, no press pass run yet</span></div>';
     html += needPress.slice(0, 3).map(function (l) {
-      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + esc(String(l.id)) + '\')"><div class="txt"><div class="t1">Press-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.status || '') + ' — worth a press-mention search</div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'listings\',\'' + escJs(String(l.id)) + '\')"><div class="txt"><div class="t1">Press-check ' + esc(l.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(l.status || '') + ' — worth a press-mention search</div></div></div>';
     }).join('');
   }
   var reactivate = reactivationSignals();
@@ -2305,7 +2305,7 @@ function renderIntel() { try {
     html += '<div class="flabel" style="margin-top:14px;">Worth a re-touch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; they passed, something changed since</span></div>';
     html += reactivate.slice(0, 5).map(function (r) {
       var buyerName = recLabel('buyers', r.buyer_id) || 'Buyer';
-      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(r.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' passed on ' + esc(r.addr) + ' <span class="hint">→ open</span></div><div class="t2">Now: ' + esc(String(r.status || '—')) + (r.price ? ' · ' + esc(String(r.price)) : '') + ' — updated since they passed</div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + escJs(String(r.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' passed on ' + esc(r.addr) + ' <span class="hint">→ open</span></div><div class="t2">Now: ' + esc(String(r.status || '—')) + (r.price ? ' · ' + esc(String(r.price)) : '') + ' — updated since they passed</div></div></div>';
     }).join('');
   }
   var anchors = anchorSignals();
@@ -2313,7 +2313,7 @@ function renderIntel() { try {
     html += '<div class="flabel" style="margin-top:14px;">Adjacency watch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; approximate, not parcel-confirmed</span></div>';
     html += anchors.slice(0, 5).map(function (a) {
       var buyerName = recLabel('buyers', a.buyer_id) || 'Buyer';
-      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + esc(String(a.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' <span class="hint">→ open</span></div><div class="t2">' + a.count + ' propert' + (a.count === 1 ? 'y' : 'ies') + ' near ' + esc(a.anchor) + '</div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'buyers\',\'' + escJs(String(a.buyer_id)) + '\')"><div class="txt"><div class="t1">' + esc(buyerName) + ' <span class="hint">→ open</span></div><div class="t2">' + a.count + ' propert' + (a.count === 1 ? 'y' : 'ies') + ' near ' + esc(a.anchor) + '</div></div></div>';
     }).join('');
   }
   html += propensityHotPocketsHtml();
@@ -2535,7 +2535,7 @@ function itemHtml(it) {
   /* Swipe-to-complete (2026-07-24, Today's Focus queue, per Nick's call) -- only real followup
      rows (kind 'fu') get it; deadline/auto items have no completion action to swipe toward. */
   var swipeCls = it.kind === 'fu' ? ' fu-swipe' : '';
-  var tapAttr = it.kind === 'tcsetup' ? ' style="cursor:pointer;" onclick="jumpToRecord(\'transactions\',\'' + esc(String(it.id)) + '\')"' : '';
+  var tapAttr = it.kind === 'tcsetup' ? ' style="cursor:pointer;" onclick="jumpToRecord(\'transactions\',\'' + escJs(String(it.id)) + '\')"' : '';
   return '<div class="qi' + (it.kind === 'deadline' || it.kind === 'tcsetup' ? ' deadline' : '') + swipeCls + '"' + tapAttr + (it.kind === 'fu' ? ' data-id="' + esc(String(it.id)) + '"' : '') + '>'
     + '<div class="txt"><div class="t1">' + esc(it.label) + '</div>'
     + (meta.length ? '<div class="t2">' + meta.join(' · ') + '</div>' : '') + '</div>'
@@ -2928,7 +2928,7 @@ function renderCaptures() {
     var long = text.length > 80;
     var shown = long ? text.slice(0, 80) + '…' : text;
     return '<div class="cap-item"' + (long ? ' data-full="' + esc(text) + '" data-short="' + esc(shown) + '" onclick="toggleCapText(this)" style="cursor:pointer;"' : '') + '>' + tag + ' <span class="cap-txt">' + esc(shown) + '</span>'
-      + ' <span style="cursor:pointer;color:#b3382c;" title="Dismiss" onclick="event.stopPropagation();dismissCapture(\'' + esc(String(c.id)) + '\')">&#10005;</span></div>';
+      + ' <span style="cursor:pointer;color:#b3382c;" title="Dismiss" onclick="event.stopPropagation();dismissCapture(\'' + escJs(String(c.id)) + '\')">&#10005;</span></div>';
   }).join('');
   var el = document.getElementById('omni-recent'); if (el) el.innerHTML = h;
 }
@@ -3590,7 +3590,7 @@ function renderAskAnswerHtml(text) {
     var type = m[1], id = m[2];
     if (ASK_CITE_TYPES.indexOf(type) !== -1) {
       var label = recLabel(type, id);
-      if (label) out += '<span class="pill" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + type + '\',\'' + esc(id) + '\')">' + esc(label) + '</span>';
+      if (label) out += '<span class="pill" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + type + '\',\'' + escJs(id) + '\')">' + esc(label) + '</span>';
     }
   }
   out += esc(text.slice(last));
@@ -4190,7 +4190,7 @@ function topActionsHtml(table, id) {
       + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'' + fid + '\').click()">Add photos</button>';
   }
   return '<div style="margin:8px 0 4px;display:flex;gap:8px;flex-wrap:wrap;">'
-    + '<button class="qbtn done" onclick="event.stopPropagation();openEdit(\'' + esc(table) + '\',\'' + esc(String(id)) + '\')">Edit</button>'
+    + '<button class="qbtn done" onclick="event.stopPropagation();openEdit(\'' + escJs(table) + '\',\'' + escJs(String(id)) + '\')">Edit</button>'
     + photoBtn
     + '</div>';
 }
@@ -4488,11 +4488,11 @@ function tracerfyBatchHtml() {
   h += shown.map(function (p) {
     var checked = tracerfyBatch[p.id] ? ' checked' : '';
     return '<div class="qi"><div class="txt"><label style="cursor:pointer;" onclick="event.stopPropagation();">'
-      + '<input type="checkbox"' + checked + ' onchange="tracerfyBatchToggle(\'' + esc(p.id) + '\')" style="margin-right:6px;">'
+      + '<input type="checkbox"' + checked + ' onchange="tracerfyBatchToggle(\'' + escJs(p.id) + '\')" style="margin-right:6px;">'
       + '<span class="t1">' + esc(p.address || p.owner_name || 'Unknown') + (p.priority ? ' · ' + esc(p.priority) : '')
       + (p.address && String(p.address).trim() ? '' : ' <span class="pill warn">no address &mdash; can&rsquo;t be looked up</span>') + '</span></label>'
       + '<div class="t2">' + (p.owner_name ? esc(p.owner_name) + ' — no phone/email on file' : 'no owner info on file') + '</div></div>'
-      + '<div class="acts"><button class="qbtn" onclick="event.stopPropagation();skipTracerfyProspect(\'' + esc(p.id) + '\')">Skip</button></div></div>';
+      + '<div class="acts"><button class="qbtn" onclick="event.stopPropagation();skipTracerfyProspect(\'' + escJs(p.id) + '\')">Skip</button></div></div>';
   }).join('');
   var selCount = Object.keys(tracerfyBatch).filter(function (k) { return tracerfyBatch[k]; }).length;
   h += '<div style="margin-top:8px;"><button class="qbtn done" onclick="event.stopPropagation();copyTracerfyBatch()">Copy batch' + (selCount ? ' (' + selCount + ' selected)' : ' (' + shown.length + ' shown)') + '</button> <span class="hint">paste to Claude in a session to actually run it &mdash; Tracerfy isn&rsquo;t reachable from the app directly</span></div>';
@@ -4581,7 +4581,7 @@ function propensityCandidatesHtml() {
   h += shown.map(function (r) {
     var p = r.p, checked = propensityBatch[p.id] ? ' checked' : '';
     return '<div class="qi"><div class="txt"><label style="cursor:pointer;" onclick="event.stopPropagation();">'
-      + '<input type="checkbox"' + checked + ' onchange="propensityBatchToggle(\'' + esc(p.id) + '\')" style="margin-right:6px;">'
+      + '<input type="checkbox"' + checked + ' onchange="propensityBatchToggle(\'' + escJs(p.id) + '\')" style="margin-right:6px;">'
       + '<span class="t1">' + esc(p.address || p.owner_name || 'Unknown') + (p.priority ? ' · ' + esc(p.priority) : '') + '</span></label>'
       + '<div class="t2">' + esc(r.signals.join(', ')) + '</div></div></div>';
   }).join('');
@@ -4655,11 +4655,11 @@ function tracerfyCandidatesHtml() {
     var btns = cands.map(function (raw, i) {
       var c = parseTracerfyCandidate(raw);
       if (c.deceased) return '<button class="qbtn" disabled style="opacity:.5;cursor:default;" title="Marked deceased by Tracerfy">' + esc(raw) + '</button>';
-      return '<button class="qbtn" onclick="event.stopPropagation();pickTracerfyCandidate(\'' + esc(p.id) + '\',' + i + ')">' + esc(raw) + '</button>';
+      return '<button class="qbtn" onclick="event.stopPropagation();pickTracerfyCandidate(\'' + escJs(p.id) + '\',' + i + ')">' + esc(raw) + '</button>';
     }).join('');
-    return '<div class="qi"><div class="txt"><div class="t1"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'prospects\',\'' + esc(p.id) + '\')">' + esc(p.address || 'Unknown') + '</span>' + (p.priority ? ' · ' + esc(p.priority) : '') + '</div>'
+    return '<div class="qi"><div class="txt"><div class="t1"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'prospects\',\'' + escJs(p.id) + '\')">' + esc(p.address || 'Unknown') + '</span>' + (p.priority ? ' · ' + esc(p.priority) : '') + '</div>'
       + '<div class="t2">' + cands.length + ' candidate' + (cands.length === 1 ? '' : 's') + '</div></div>'
-      + '<div class="acts">' + btns + '<button class="qbtn" onclick="event.stopPropagation();tracerfyCandidatesSkip(\'' + esc(p.id) + '\')">None of these</button></div></div>';
+      + '<div class="acts">' + btns + '<button class="qbtn" onclick="event.stopPropagation();tracerfyCandidatesSkip(\'' + escJs(p.id) + '\')">None of these</button></div></div>';
   }).join('');
   return h;
 }
@@ -4701,7 +4701,7 @@ function leadsFarmsHtml() {
       + (actionable.length ? ' Hot/Warm shown below; Cold stays a count &mdash; nothing there needs you today.' : '') + '</div>';
     h += actionable.map(function (p) {
       return '<div class="qi"><div class="txt"><div class="t1">'
-        + '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'prospects\',\'' + esc(p.id) + '\')">' + esc(p.address || p.owner_name || 'Unknown') + '</span> · ' + esc(p.priority) + '</div>'
+        + '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'prospects\',\'' + escJs(p.id) + '\')">' + esc(p.address || p.owner_name || 'Unknown') + '</span> · ' + esc(p.priority) + '</div>'
         + '<div class="t2">' + esc(p.type || '') + '</div></div>'
         + '<div class="acts">' + triageButtons(p) + '</div></div>';
     }).join('');
@@ -5583,7 +5583,7 @@ function editShowingForm(id) {
     + '<input type="text" id="esh-prop-' + esc(id) + '" placeholder="Property (address)" value="' + esc(s.property_ref || '') + '" style="width:100%;margin-bottom:6px;">'
     + '<input type="datetime-local" id="esh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
     + '<input type="text" id="esh-note-' + esc(id) + '" placeholder="Notes (optional)" value="' + esc(s.notes || '') + '" style="width:100%;margin:6px 0;">'
-    + '<button class="qbtn done" onclick="event.stopPropagation();saveShowingEdit(\'' + esc(id) + '\')">Save</button> '
+    + '<button class="qbtn done" onclick="event.stopPropagation();saveShowingEdit(\'' + escJs(id) + '\')">Save</button> '
     + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'esh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
 }
 async function saveShowingEdit(id) {
@@ -5713,7 +5713,7 @@ function editListingShowingForm(id, listingId) {
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<input type="text" id="elsh-who-' + esc(id) + '" placeholder="Who (e.g. Jane Smith)" value="' + esc(s.notes || '') + '" style="width:100%;margin-bottom:6px;">'
     + '<label class="hint">When</label> <input type="datetime-local" id="elsh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
-    + '<button class="qbtn done" onclick="event.stopPropagation();saveListingShowingEdit(\'' + esc(id) + '\',\'' + esc(listingId) + '\')">Save</button> '
+    + '<button class="qbtn done" onclick="event.stopPropagation();saveListingShowingEdit(\'' + escJs(id) + '\',\'' + escJs(listingId) + '\')">Save</button> '
     + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'elsh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
 }
 async function saveListingShowingEdit(id, listingId) {
@@ -5779,7 +5779,7 @@ function otherRolesHtml(table, id) {
   var contactId = rec[field]; if (!contactId) return '';
   var roles = personRoles(contactId).filter(function (r) { return !(r.t === table && String(r.id) === String(id)); });
   if (!roles.length) return '';
-  return '<div class="hint" style="margin:2px 0 10px;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'people\',\'' + esc(String(contactId)) + '\')">'
+  return '<div class="hint" style="margin:2px 0 10px;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'people\',\'' + escJs(String(contactId)) + '\')">'
     + '<b>' + esc(contactLabel(contactId)) + '</b> is also &mdash; ' + roles.map(function (r) { return esc(r.label) + ' on ' + esc(r.name || 'a record'); }).join(', ') + ' <span>&rarr;</span></div>';
 }
 function recordExtras(table, id) {
@@ -5882,7 +5882,7 @@ function recordExtras(table, id) {
   if (evs.length && table !== 'buyers') {
     more += '<div class="flabel" style="margin-top:10px;">Timeline</div>' + evs.map(evLine).join('')
       + '<div id="hist-' + table + '-' + esc(sid) + '"></div>'
-      + '<a class="hint" href="javascript:void(0)" onclick="event.stopPropagation();loadFullHistory(\'' + table + '\',\'' + esc(sid) + '\')">Full history &rarr;</a>';
+      + '<a class="hint" href="javascript:void(0)" onclick="event.stopPropagation();loadFullHistory(\'' + table + '\',\'' + escJs(sid) + '\')">Full history &rarr;</a>';
   } /* dropped from buyer card per Nick's call — not useful there */
   if (more) {
     var moreId = 'more-' + table + '-' + sid;
@@ -5949,9 +5949,9 @@ function shareOffmarketHtml(sid) {
   var facts = [o.beds ? o.beds + ' bd' : '', o.baths ? o.baths + ' ba' : '', o.sqft ? Number(o.sqft) ? Number(o.sqft).toLocaleString() + ' sqft' : o.sqft + ' sqft' : '', o.lot_sqft ? (Number(o.lot_sqft) ? Number(o.lot_sqft).toLocaleString() : o.lot_sqft) + ' sqft lot' : ''].filter(Boolean).join(' · ');
   var h = '<div class="flabel" style="margin-top:12px;">Public page settings <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; used if you share this from the Share Links panel</span></div>';
   if (facts) h += '<div class="hint" style="margin-bottom:6px;"><b>Will share:</b> ' + esc(facts) + '</div>';
-  h += '<button class="qbtn" onclick="event.stopPropagation();toggleShareHideAddress(\'' + esc(sid) + '\')">' + (hideAddr ? 'Address hidden — tap to show' : 'Address will show — tap to hide') + '</button> ';
-  h += '<button class="qbtn" onclick="event.stopPropagation();editShareBlurb(\'' + esc(sid) + '\')">' + (blurb ? 'Edit public description' : '&#65291; Add public description (optional)') + '</button> ';
-  h += '<button class="qbtn" onclick="event.stopPropagation();editMarketingUrl(\'' + esc(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
+  h += '<button class="qbtn" onclick="event.stopPropagation();toggleShareHideAddress(\'' + escJs(sid) + '\')">' + (hideAddr ? 'Address hidden — tap to show' : 'Address will show — tap to hide') + '</button> ';
+  h += '<button class="qbtn" onclick="event.stopPropagation();editShareBlurb(\'' + escJs(sid) + '\')">' + (blurb ? 'Edit public description' : '&#65291; Add public description (optional)') + '</button> ';
+  h += '<button class="qbtn" onclick="event.stopPropagation();editMarketingUrl(\'' + escJs(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
   return h;
 }
 function editMarketingUrl(sid) {
@@ -5970,7 +5970,7 @@ function listingMarketingUrlHtml(sid) {
   var mUrl = (l.extra && l.extra.marketing_url) || '';
   var h = '<div class="flabel" style="margin-top:12px;">Marketing site</div>';
   if (mUrl) h += '<a class="qbtn" style="text-decoration:none;display:inline-block;" href="' + esc(mUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">Open ↗</a> ';
-  h += '<button class="qbtn" onclick="event.stopPropagation();editListingMarketingUrl(\'' + esc(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
+  h += '<button class="qbtn" onclick="event.stopPropagation();editListingMarketingUrl(\'' + escJs(sid) + '\')">' + (mUrl ? 'Edit marketing link' : '&#65291; Add marketing link') + '</button>';
   return h;
 }
 function editListingMarketingUrl(sid) {
@@ -6058,12 +6058,12 @@ function listingPrepChecklistHtml(sid) {
     h += '<div class="hint" style="margin-top:8px;font-weight:600;">' + esc(PREP_CAT_LABEL[cat]) + '</div>';
     h += rows.map(function (t) {
       var cal = t.due ? ' <a href="' + esc(gcalUrl(t.label + ' — ' + (l.address || 'listing'), t.due + 'T09:00:00', null, '', l.address || '')) + '" target="_blank" rel="noopener" class="hint" onclick="event.stopPropagation();">+Cal &#8599;</a>' : '';
-      return '<div class="qi" style="padding:8px 0;" onclick="event.stopPropagation();prepToggleTask(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')"><div class="txt"><div class="t1" style="' + (t.done ? 'text-decoration:line-through;color:var(--faint);' : '') + '">' + (t.done ? '&#10003; ' : '&#9633; ') + esc(t.label) + '</div>'
+      return '<div class="qi" style="padding:8px 0;" onclick="event.stopPropagation();prepToggleTask(\'' + escJs(sid) + '\',\'' + escJs(t.id) + '\')"><div class="txt"><div class="t1" style="' + (t.done ? 'text-decoration:line-through;color:var(--faint);' : '') + '">' + (t.done ? '&#10003; ' : '&#9633; ') + esc(t.label) + '</div>'
         + '<div class="t2">' + (t.due ? 'Due ' + esc(t.due) : 'No due date') + cal
-        + ' &middot; <span onclick="event.stopPropagation();prepSetDue(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')">set date</span>'
-        + ' &middot; <span onclick="event.stopPropagation();prepRemoveTask(\'' + esc(sid) + '\',\'' + esc(t.id) + '\')">remove</span></div></div></div>';
+        + ' &middot; <span onclick="event.stopPropagation();prepSetDue(\'' + escJs(sid) + '\',\'' + escJs(t.id) + '\')">set date</span>'
+        + ' &middot; <span onclick="event.stopPropagation();prepRemoveTask(\'' + escJs(sid) + '\',\'' + escJs(t.id) + '\')">remove</span></div></div></div>';
     }).join('');
-    h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();prepAddTask(\'' + esc(sid) + '\',\'' + esc(cat) + '\')">&#65291; Add</button>';
+    h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();prepAddTask(\'' + escJs(sid) + '\',\'' + escJs(cat) + '\')">&#65291; Add</button>';
   });
   return h;
 }
@@ -6119,8 +6119,8 @@ function offmarketChainHtml(oid) {
   var architect = o.extra && o.extra.architect;
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
-    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Set architect</button>';
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + escJs(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + escJs(oid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid) + chainMatchListHtml('offmarket', oid);
   return h;
 }
@@ -6136,8 +6136,8 @@ function prospectChainHtml(pid) {
   var architect = p.extra && p.extra.architect;
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
-    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + esc(pid) + '\')">&#65291; Set architect</button>';
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + escJs(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + escJs(pid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('prospects', pid) + buildingChainHtml('prospects', pid) + chainMatchListHtml('prospects', pid);
   return h;
 }
@@ -6154,8 +6154,8 @@ function transactionChainHtml(tid) {
   var architect = t.extra && t.extra.architect;
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
-    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + esc(tid) + '\')">&#65291; Set architect</button>';
+    ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + escJs(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
+    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + escJs(tid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('transactions', tid) + buildingChainHtml('transactions', tid) + chainMatchListHtml('transactions', tid);
   return h;
 }
@@ -6222,11 +6222,11 @@ function styleChainHtml(table, id) {
   var style = r.extra && r.extra.style;
   var h = '<div class="flabel" style="margin-top:12px;">Style / era</div>';
   if (!style) {
-    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Tag style</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordStyle(\'' + escJs(table) + '\',\'' + escJs(id) + '\')">&#65291; Tag style</button>';
     return h;
   }
   var family = styleFamilyOf(style);
-  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordStyle(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(style) + '</div><div class="t2">' + (family ? 'Family: ' + esc(family) + ' · ' : '') + 'tap to edit</div></div></div>';
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordStyle(\'' + escJs(table) + '\',\'' + escJs(id) + '\')"><div class="txt"><div class="t1">' + esc(style) + '</div><div class="t2">' + (family ? 'Family: ' + esc(family) + ' · ' : '') + 'tap to edit</div></div></div>';
   return h;
 }
 
@@ -6254,10 +6254,10 @@ function buildingChainHtml(table, id) {
   var building = r.extra && r.extra.building;
   var h = '<div class="flabel" style="margin-top:12px;">Building / complex</div>';
   if (!building) {
-    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordBuilding(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Tag building</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();setRecordBuilding(\'' + escJs(table) + '\',\'' + escJs(id) + '\')">&#65291; Tag building</button>';
     return h;
   }
-  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordBuilding(\'' + esc(table) + '\',\'' + esc(id) + '\')"><div class="txt"><div class="t1">' + esc(building) + '</div><div class="t2">tap to edit</div></div></div>';
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordBuilding(\'' + escJs(table) + '\',\'' + escJs(id) + '\')"><div class="txt"><div class="t1">' + esc(building) + '</div><div class="t2">tap to edit</div></div></div>';
   return h;
 }
 /* ===== Combined chain match list (2026-07-27, Nick-requested consolidation) =====
@@ -6334,7 +6334,7 @@ function chainMatchListHtml(table, id) {
   h += matches.slice(0, 8).map(function (m) {
     var badge = m.score > 1 ? ' <span class="pill ok">' + m.score + ' ways</span>' : '';
     var reasonLine = m.reasons.map(function (x) { return x.label; }).join(' · ');
-    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(m.table) + '\',\'' + esc(String(m.id)) + '\')"><div class="txt"><div class="t1">' + esc(m.address || '') + badge + ' <span class="hint">→ open</span></div><div class="t2">' + esc(reasonLine) + '</div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(m.table) + '\',\'' + escJs(String(m.id)) + '\')"><div class="txt"><div class="t1">' + esc(m.address || '') + badge + ' <span class="hint">→ open</span></div><div class="t2">' + esc(reasonLine) + '</div></div></div>';
   }).join('');
   if (matches.length > 8) h += '<div class="hint" style="margin-top:4px;">+' + (matches.length - 8) + ' more not shown</div>';
   return h;
@@ -6419,15 +6419,15 @@ function anchorChainHtml(bid) {
   var anchor = b.extra && b.extra.anchor_address;
   var h = '<div class="flabel" style="margin-top:12px;">Adjacency watch <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; approximate, not parcel-confirmed</span></div>';
   if (!anchor) {
-    h += '<button class="qbtn" onclick="event.stopPropagation();setBuyerAnchor(\'' + esc(bid) + '\')">&#65291; Set anchor property</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();setBuyerAnchor(\'' + escJs(bid) + '\')">&#65291; Set anchor property</button>';
     return h;
   }
-  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setBuyerAnchor(\'' + esc(bid) + '\')"><div class="txt"><div class="t1">' + esc(anchor) + '</div><div class="t2">wants anything nearby — tap to edit</div></div></div>';
+  h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setBuyerAnchor(\'' + escJs(bid) + '\')"><div class="txt"><div class="t1">' + esc(anchor) + '</div><div class="t2">wants anything nearby — tap to edit</div></div></div>';
   var hits = anchorCandidates(bid);
   if (hits.length) {
     h += hits.slice(0, 6).map(function (n) {
       var label = n.matchType === 'street' ? ('same street, ' + n.numDelta + ' address' + (n.numDelta === 1 ? '' : 'es') + ' away') : ('~' + Math.round(n.distance_km * 1000) + 'm away (same area)');
-      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(n.table) + '\',\'' + esc(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(label) + ' — approximate, not confirmed parcel-contiguous</div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(n.table) + '\',\'' + escJs(String(n.id)) + '\')"><div class="txt"><div class="t1">' + esc(n.address || '') + ' <span class="hint">→ open</span></div><div class="t2">' + esc(label) + ' — approximate, not confirmed parcel-contiguous</div></div></div>';
     }).join('');
   } else h += '<div class="hint">Nothing nearby in Spiro OS yet.</div>';
   return h;
@@ -6439,10 +6439,10 @@ function listingChainHtml(sid) {
   var checked = !!(l.extra && l.extra.chain_checked);
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   if (!architect) {
-    h += '<button class="qbtn" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')">&#65291; Set architect</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();setListingArchitect(\'' + escJs(sid) + '\')">&#65291; Set architect</button>';
   } else {
-    h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + esc(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
-    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" onclick="event.stopPropagation();toggleChainChecked(\'' + esc(sid) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark chain checked') + '</button>';
+    h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + escJs(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
+    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" onclick="event.stopPropagation();toggleChainChecked(\'' + escJs(sid) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark chain checked') + '</button>';
   }
   h += styleChainHtml('listings', sid) + buildingChainHtml('listings', sid) + chainMatchListHtml('listings', sid);
   return h;
@@ -6484,15 +6484,15 @@ function pressMentionsHtml(table, id) {
   if (list.length) {
     h += list.slice().reverse().slice(0, 6).map(function (p) {
       var line = esc(p.outlet || '') + (p.date ? ' · ' + esc(p.date) : '');
-      var clickable = p.url ? ' style="cursor:pointer;" onclick="event.stopPropagation();window.open(\'' + esc(p.url) + '\',\'_blank\')"' : '';
+      var clickable = p.url ? ' style="cursor:pointer;" onclick="event.stopPropagation();window.open(\'' + escJs(p.url) + '\',\'_blank\')"' : '';
       return '<div class="qi"' + clickable + '><div class="txt"><div class="t1">' + line + '</div>' + (p.url ? '<div class="t2">' + esc(p.url) + '</div>' : '') + '</div></div>';
     }).join('');
   } else h += '<div class="hint">No press mentions logged yet.</div>';
-  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logPressMention(\'' + esc(table) + '\',\'' + esc(id) + '\')">&#65291; Log a mention</button>';
+  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logPressMention(\'' + escJs(table) + '\',\'' + escJs(id) + '\')">&#65291; Log a mention</button>';
   if (table === 'listings') {
     var l = recOf('listings', id);
     var checked = !!(l && l.extra && l.extra.press_checked);
-    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" style="margin-top:4px;" onclick="event.stopPropagation();togglePressChecked(\'' + esc(id) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark press-checked') + '</button>';
+    h += '<button class="qbtn ' + (checked ? '' : 'done') + '" style="margin-top:4px;" onclick="event.stopPropagation();togglePressChecked(\'' + escJs(id) + '\')">' + (checked ? 'Mark not checked' : '&#10003; Mark press-checked') + '</button>';
   }
   return h;
 }
@@ -6637,7 +6637,7 @@ function compsHtml(rec, excludeTxId) {
   var h = '<div class="flabel" style="margin-top:12px;">Comps nearby <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; closed prices, within ~3km &middot; ' + esc(srcNote) + '</span></div>';
   h += comps.slice(0, 8).map(function (c) {
     if (c.needs_price) {
-      return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + '</div><div class="t2">' + esc(c.status || 'In escrow') + ' — no contract price on file</div></div><button class="qbtn" onclick="event.stopPropagation();promptEscrowPrice(\'' + esc(String(c.tx_id)) + '\')">Enter price</button></div>';
+      return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.address || '') + '</div><div class="t2">' + esc(c.status || 'In escrow') + ' — no contract price on file</div></div><button class="qbtn" onclick="event.stopPropagation();promptEscrowPrice(\'' + escJs(String(c.tx_id)) + '\')">Enter price</button></div>';
     }
     /* An area-level comp gets its neighborhood, not a distance. See the note in compsSignals: the
        MLS gives us no coordinates, and printing "0.3km away" off a neighborhood centroid would be
@@ -6682,7 +6682,7 @@ function agentIgFeaturesHtml(aid) {
       return '<div class="qi"><div class="txt"><div class="t1">' + esc(f.listing || '') + '</div><div class="t2">' + esc(f.date || '') + (f.note ? ' · ' + esc(f.note) : '') + '</div></div></div>';
     }).join('');
   } else h += '<div class="hint">Not featured yet.</div>';
-  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logIgFeature(\'' + esc(aid) + '\')">&#65291; Log a feature</button>';
+  h += '<button class="qbtn" style="margin-top:4px;" onclick="event.stopPropagation();logIgFeature(\'' + escJs(aid) + '\')">&#65291; Log a feature</button>';
   return h;
 }
 function editShareBlurb(sid) {
@@ -6760,7 +6760,7 @@ function newShareRecipientStepHtml() {
   var suggested = rankAgentsGeneral().filter(function (r) { return r.score > 0; }).slice(0, 5);
   if (suggested.length) {
     h += '<div class="chip-row" style="margin:6px 0;">' + suggested.map(function (r) {
-      return '<span class="chip" title="' + esc(r.reasons.slice(0, 2).join(' · ')) + '" onclick="newSharePickRecipient(\'' + esc(String(r.agent.id)) + '\')">' + esc(r.agent.name || r.agent.email || 'Agent') + '</span>';
+      return '<span class="chip" title="' + esc(r.reasons.slice(0, 2).join(' · ')) + '" onclick="newSharePickRecipient(\'' + escJs(String(r.agent.id)) + '\')">' + esc(r.agent.name || r.agent.email || 'Agent') + '</span>';
     }).join(' ') + '</div>';
   }
   var dlid = 'dl_newshare_agent';
@@ -6834,7 +6834,7 @@ function newShareBuyerRowsHtml() {
   }
   var h = !rows.length ? '<div class="empty">No buyers match.</div>' : rows.slice(0, 30).map(function (b) {
     var on = !!NEW_SHARE.selected[String(b.id)];
-    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newSharePickBuyer(\'' + esc(String(b.id)) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(b.name || 'Buyer') + '</div><div class="t2">' + esc([b.budget_min, b.budget_max].filter(Boolean).join('–')) + (b.areas ? ' · ' + esc(b.areas) : '') + '</div></div></div>';
+    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newSharePickBuyer(\'' + escJs(String(b.id)) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(b.name || 'Buyer') + '</div><div class="t2">' + esc([b.budget_min, b.budget_max].filter(Boolean).join('–')) + (b.areas ? ' · ' + esc(b.areas) : '') + '</div></div></div>';
   }).join('');
   var n = Object.keys(NEW_SHARE.selected).length;
   return h + '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
@@ -6864,7 +6864,7 @@ function newSharePropertyRowsHtml() {
   var h = !rows.length ? '<div class="empty">Nothing matches.</div>' : rows.slice(0, 40).map(function (x) {
     var on = !!NEW_SHARE.selected[String(x.id)];
     var addr = x.address || x.address_area || 'Property';
-    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newShareToggleItem(\'' + esc(String(x.id)) + '\',' + multi + ')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(addr) + '</div><div class="t2">' + esc([x.price, x.status].filter(Boolean).join(' · ')) + '</div></div></div>';
+    return '<div class="qi ns-row" style="cursor:pointer;" onclick="newShareToggleItem(\'' + escJs(String(x.id)) + '\',' + multi + ')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(addr) + '</div><div class="t2">' + esc([x.price, x.status].filter(Boolean).join(' · ')) + '</div></div></div>';
   }).join('');
   var n = Object.keys(NEW_SHARE.selected).length;
   return h + '<div style="margin-top:8px;"><button class="qbtn ns-btn" onclick="newShareBackTo(\'type\')">&larr; Back</button> '
@@ -7021,8 +7021,8 @@ function renderShareLinks() {
     var statusPill = revoked ? ' <span class="pill" style="margin-left:4px;">revoked</span>' : expired ? ' <span class="pill" style="margin-left:4px;">expired</span>' : '';
     var expiryHint = daysLeft != null ? (' &middot; expires in ' + daysLeft + 'd') : '';
     var actionBtn = expired
-      ? '<button class="qbtn" style="margin-left:6px;" onclick="event.stopPropagation();extendShareLink(\'' + esc(l.id) + '\')">Extend 90 days</button>'
-      : '<button class="qbtn" style="margin-left:6px;" onclick="event.stopPropagation();archiveShareLink(\'' + esc(l.id) + '\',' + (revoked ? 'false' : 'true') + ')">' + (revoked ? 'Restore' : 'Revoke') + '</button>';
+      ? '<button class="qbtn" style="margin-left:6px;" onclick="event.stopPropagation();extendShareLink(\'' + escJs(l.id) + '\')">Extend 90 days</button>'
+      : '<button class="qbtn" style="margin-left:6px;" onclick="event.stopPropagation();archiveShareLink(\'' + escJs(l.id) + '\',' + (revoked ? 'false' : 'true') + ')">' + (revoked ? 'Restore' : 'Revoke') + '</button>';
     return '<div class="cap-item">'
       + '<div style="display:flex;justify-content:space-between;gap:8px;">'
       + '<span style="font-weight:600;color:var(--ink);">' + esc(shareLinkLabel(l)) + statusPill + '</span>'
@@ -7194,7 +7194,7 @@ function buyerPortalHtml(id) {
   if (!photoLinksAt) return '';
   var b = PORTALBUYERS[String(id)];
   var inner;
-  if (!b) inner = 'Not on the portal yet <button class="qbtn" onclick="event.stopPropagation();giveBuyerAccess(\'' + esc(String(id)) + '\')">&#9733; Give portal access</button>';
+  if (!b) inner = 'Not on the portal yet <button class="qbtn" onclick="event.stopPropagation();giveBuyerAccess(\'' + escJs(String(id)) + '\')">&#9733; Give portal access</button>';
   else {
     var bits = [b.active ? 'active account' : 'account disabled'];
     bits.push(b.last_seen ? 'last visit ' + fmtDate(isoLocal(new Date(b.last_seen))) : 'never visited');
@@ -7203,8 +7203,8 @@ function buyerPortalHtml(id) {
        profile id by the stable crm_buyer_id link so the button manages THIS buyer. */
     var ppid = null, PB = (PORTAL_OVERVIEW && PORTAL_OVERVIEW.buyers) || [];
     for (var pi = 0; pi < PB.length; pi++) { if (String(PB[pi].crm_buyer_id) === String(id)) { ppid = PB[pi].id; break; } }
-    var resetBtn = ppid ? ' <button class="qbtn" onclick="event.stopPropagation();resetBuyerPassword(\'' + esc(String(ppid)) + '\')">Reset password</button>' : '';
-    inner = bits.join(' &middot; ') + ' <button class="qbtn" onclick="event.stopPropagation();refreshBuyerBrief(\'' + esc(String(id)) + '\')">Refresh brief</button>' + resetBtn;
+    var resetBtn = ppid ? ' <button class="qbtn" onclick="event.stopPropagation();resetBuyerPassword(\'' + escJs(String(ppid)) + '\')">Reset password</button>' : '';
+    inner = bits.join(' &middot; ') + ' <button class="qbtn" onclick="event.stopPropagation();refreshBuyerBrief(\'' + escJs(String(id)) + '\')">Refresh brief</button>' + resetBtn;
   }
   return '<div class="flabel" style="margin-top:10px;">Portal</div><div class="hint">' + inner + '</div>';
 }
@@ -7375,8 +7375,8 @@ function renderPortal() { try {
     var announce = hot ? '<button class="qbtn" onclick="announceToBuyer(' + "'" + esc(b.id) + "'," + (b.unnotified || 0) + ')">Announce ' + b.unnotified + ' new</button>' : '';
     var showBtn = '<button class="qbtn" onclick="portalTogglePick(' + "'" + esc(b.id) + "'" + ')">' + (PORTAL_PICK[b.id] ? 'Done' : '&#65291; Show a listing') + '</button>';
     var linkBtn = pid.state === 'auto_linkable' ? '<button class="qbtn done" onclick="event.stopPropagation();linkBuyer(\'' + escJs(b.id) + '\',\'' + escJs(pid.crmId) + '\',\'' + escJs(pid.crmName) + '\')">Link to ' + esc(pid.crmName) + '</button>' : '';
-    var activeBtn = '<button class="qbtn" onclick="event.stopPropagation();setBuyerActive(\'' + esc(b.id) + '\',' + (b.active ? 'false' : 'true') + ')">' + (b.active ? 'Deactivate' : 'Activate') + '</button>';
-    var resetBtn = pid.state === 'demo' ? '' : '<button class="qbtn" onclick="event.stopPropagation();resetBuyerPassword(\'' + esc(b.id) + '\')">Reset password</button>';
+    var activeBtn = '<button class="qbtn" onclick="event.stopPropagation();setBuyerActive(\'' + escJs(b.id) + '\',' + (b.active ? 'false' : 'true') + ')">' + (b.active ? 'Deactivate' : 'Activate') + '</button>';
+    var resetBtn = pid.state === 'demo' ? '' : '<button class="qbtn" onclick="event.stopPropagation();resetBuyerPassword(\'' + escJs(b.id) + '\')">Reset password</button>';
     var head = '<div class="qi' + (hot ? ' deadline' : '') + '"><div class="txt"><div class="t1">' +
       esc(b.name) + badge + '</div><div class="t2">' + esc(bits.join(' · ')) + '</div></div><div class="acts">' + announce + showBtn + linkBtn + activeBtn + resetBtn + '</div></div>';
     return head + (PORTAL_PICK[b.id] ? portalPickPanel(b, listings) : '');
@@ -7689,7 +7689,7 @@ function propertyHistoryHtml(table, id) {
       var sub = propStageInfo(r.t, r.rec);
       var line = r.label + (sub ? ' · ' + sub : '');
       if (r.self) return '<div class="qi"><div class="txt"><div class="t2">' + esc(line) + ' <span class="pill">this record</span></div></div></div>';
-      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(r.t) + '\',\'' + esc(r.id) + '\')"><div class="txt"><div class="t2">' + esc(line) + ' <span class="hint">— ' + esc(recLabel(r.t, r.id) || '') + '</span></div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(r.t) + '\',\'' + escJs(r.id) + '\')"><div class="txt"><div class="t2">' + esc(line) + ' <span class="hint">— ' + esc(recLabel(r.t, r.id) || '') + '</span></div></div></div>';
     }).join('');
   }
   if (docs.length) {
@@ -7856,7 +7856,7 @@ function globalSearch() {
   });
   hits = hits.slice(0, 8);
   var h = hits.map(function (x) {
-    return '<div class="qi" style="cursor:pointer;" onclick="gsGo(\'' + x.t + '\',\'' + esc(String(x.id)) + '\')"><div class="txt"><div class="t1">' + esc(x.label) + ' <span class="hint">' + esc(x.sub) + ' &rarr; open</span></div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="gsGo(\'' + x.t + '\',\'' + escJs(String(x.id)) + '\')"><div class="txt"><div class="t1">' + esc(x.label) + ' <span class="hint">' + esc(x.sub) + ' &rarr; open</span></div></div></div>';
   }).join('');
   if (hasStreetNumber(raw) && raw.length > 3) {
     h += '<div class="qi" style="border-top:1px solid var(--line);padding-top:6px;"><div class="txt" style="width:100%;"><div class="t2">Not here yet? Add &ldquo;' + esc(raw) + '&rdquo; as:</div>'
@@ -8093,8 +8093,8 @@ function buyerLinksHtml(bid) {
      where you'd actually look for it. Keeping it in two different places under two different labels
      was the discoverability problem, not a missing feature. */
   h += addMenuHtml('buyers', bid, [
-    '<button class="qbtn" onclick="event.stopPropagation();openLinkPicker(\'' + esc(bid) + '\')">&#65291; Link a property</button>',
-    '<button class="qbtn" onclick="event.stopPropagation();openMemForm(\'buyers\',\'' + esc(bid) + '\')">&#65291; Add memory</button>'
+    '<button class="qbtn" onclick="event.stopPropagation();openLinkPicker(\'' + escJs(bid) + '\')">&#65291; Link a property</button>',
+    '<button class="qbtn" onclick="event.stopPropagation();openMemForm(\'buyers\',\'' + escJs(bid) + '\')">&#65291; Add memory</button>'
   ]);
   return h;
 }
@@ -8161,9 +8161,9 @@ function leadBuyersHtml(oid) {
   });
   h += rows.join('') || '<span class="hint">no one linked yet</span> ';
   h += addMenuHtml('offmarket', oid, [
-    '<button class="qbtn" onclick="event.stopPropagation();openBuyerPicker(\'' + esc(oid) + '\')">&#65291; Link a buyer</button>',
-    '<button class="qbtn" onclick="event.stopPropagation();proposeMatches(\'offmarket\',\'' + esc(oid) + '\')">&#10024; Propose matches</button>',
-    '<button class="qbtn" onclick="event.stopPropagation();openMemForm(\'offmarket\',\'' + esc(oid) + '\')">&#65291; Add memory</button>'
+    '<button class="qbtn" onclick="event.stopPropagation();openBuyerPicker(\'' + escJs(oid) + '\')">&#65291; Link a buyer</button>',
+    '<button class="qbtn" onclick="event.stopPropagation();proposeMatches(\'offmarket\',\'' + escJs(oid) + '\')">&#10024; Propose matches</button>',
+    '<button class="qbtn" onclick="event.stopPropagation();openMemForm(\'offmarket\',\'' + escJs(oid) + '\')">&#65291; Add memory</button>'
   ]);
   return h;
 }
@@ -8204,10 +8204,10 @@ function agentDealsHtml(aid) {
       var side = d.agent_side === 'buyer' ? 'they repped buyer' : d.agent_side === 'seller' ? 'they repped seller' : '';
       var line = [d.address || 'Deal', d.price ? money(d.price) : '', d.close_date ? fmtDate(d.close_date) : '', side, d.source === 'docusign' ? 'via DocuSign' : ''].filter(Boolean).join(' · ');
       return '<div class="qi"><div class="txt"><div class="t2">' + esc(line) + (d.notes ? '<br><span class="hint">' + esc(d.notes) + '</span>' : '') + '</div></div>'
-        + '<button class="qbtn" onclick="event.stopPropagation();removeAgentDeal(\'' + esc(String(d.id)) + '\',\'' + esc(String(aid)) + '\')">&#10005;</button></div>';
+        + '<button class="qbtn" onclick="event.stopPropagation();removeAgentDeal(\'' + escJs(String(d.id)) + '\',\'' + escJs(String(aid)) + '\')">&#10005;</button></div>';
     }).join('');
   } else { h += '<div class="hint">No deals logged yet — add from memory now; DocuSign backfill can populate these later.</div>'; }
-  h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();addAgentDeal(\'' + esc(String(aid)) + '\')">&#65291; Add a deal</button></div>';
+  h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();addAgentDeal(\'' + escJs(String(aid)) + '\')">&#65291; Add a deal</button></div>';
   return h + '<div id="deal-' + esc(String(aid)) + '"></div>';
 }
 function addAgentDeal(aid) {
@@ -8218,7 +8218,7 @@ function addAgentDeal(aid) {
     + '<input type="date" id="dl-date-' + esc(aid) + '" style="width:48%;box-sizing:border-box;margin-bottom:6px;">'
     + '<select id="dl-side-' + esc(aid) + '" style="width:100%;box-sizing:border-box;margin-bottom:6px;"><option value="">Which side did they rep?</option><option value="buyer">They repped the buyer (brought a buyer to me)</option><option value="seller">They repped the seller (I brought the buyer)</option></select>'
     + '<input type="text" id="dl-notes-' + esc(aid) + '" placeholder="Notes (optional)" style="width:100%;box-sizing:border-box;margin-bottom:8px;">'
-    + '<button class="qbtn done" onclick="event.stopPropagation();saveAgentDeal(\'' + esc(aid) + '\')">Save deal</button> '
+    + '<button class="qbtn done" onclick="event.stopPropagation();saveAgentDeal(\'' + escJs(aid) + '\')">Save deal</button> '
     + '<button class="qbtn" onclick="event.stopPropagation();var b=document.getElementById(\'deal-' + esc(aid) + '\');if(b)b.innerHTML=\'\';">Cancel</button></div>';
 }
 async function saveAgentDeal(aid) {
@@ -8266,7 +8266,7 @@ function agentLeadsHtml(aid) {
   if (!all.length) return '';
   var active = all.filter(function (o) { return !o.converted && !o.archived; });
   var past = all.filter(function (o) { return o.converted || o.archived; });
-  var live = function (o) { return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'offmarket\',\'' + esc(String(o.id)) + '\')">' + esc(o.address_area || 'Lead') + '</span>'; };
+  var live = function (o) { return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'offmarket\',\'' + escJs(String(o.id)) + '\')">' + esc(o.address_area || 'Lead') + '</span>'; };
   var gone = function (o) { return '<span class="pill" style="margin:0 4px 4px 0;opacity:.6;">' + esc(o.address_area || 'Lead') + '</span>'; };
   var h = '<div class="flabel" style="margin-top:12px;">Off-market listings they’ve brought you <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; tap to open</span></div>';
   if (active.length) h += '<div>' + active.map(live).join('') + '</div>';
@@ -8306,11 +8306,11 @@ function listAgentHtml(oid) {
   var pills = '';
   if (o.list_agent_id) {
     var lab = recLabel('agents', o.list_agent_id) || 'Agent';
-    pills += '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + esc(String(o.list_agent_id)) + '\')">' + esc(lab) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeListingAgent(\'' + esc(oid) + '\',\'' + esc(String(o.list_agent_id)) + '\')">&#10005;</span></span>';
+    pills += '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + escJs(String(o.list_agent_id)) + '\')">' + esc(lab) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeListingAgent(\'' + escJs(oid) + '\',\'' + escJs(String(o.list_agent_id)) + '\')">&#10005;</span></span>';
   }
   pills += co.map(function (r) {
     var lb = recLabel('agents', r.agent_id) || 'Agent';
-    return '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + esc(String(r.agent_id)) + '\')">' + esc(lb) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeListingAgent(\'' + esc(oid) + '\',\'' + esc(String(r.agent_id)) + '\')">&#10005;</span></span>';
+    return '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + escJs(String(r.agent_id)) + '\')">' + esc(lb) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeListingAgent(\'' + escJs(oid) + '\',\'' + escJs(String(r.agent_id)) + '\')">&#10005;</span></span>';
   }).join('');
   h += pills ? '<div>' + pills + '</div>' : '';
   if (!o.list_agent_id && !co.length) {
@@ -8321,9 +8321,9 @@ function listAgentHtml(oid) {
     var sug = (o.extra && o.extra.suggested_list_agent && String(o.extra.suggested_list_agent).trim()) || '';
     var src = String(o.source || '').trim();
     var cand = sug || (looksLikeAgentName(src) ? src : '');
-    if (cand) h += '<div style="margin-bottom:4px;"><button class="qbtn done" onclick="event.stopPropagation();linkSuggestedAgent(\'' + esc(oid) + '\')">Link ' + esc(cand) + (sug ? ' as agent' : '') + '</button></div>';
+    if (cand) h += '<div style="margin-bottom:4px;"><button class="qbtn done" onclick="event.stopPropagation();linkSuggestedAgent(\'' + escJs(oid) + '\')">Link ' + esc(cand) + (sug ? ' as agent' : '') + '</button></div>';
   }
-  h += '<button class="qbtn" onclick="event.stopPropagation();listAgentPicker(\'' + esc(oid) + '\')">&#65291; Add agent</button>';
+  h += '<button class="qbtn" onclick="event.stopPropagation();listAgentPicker(\'' + escJs(oid) + '\')">&#65291; Add agent</button>';
   h += '<div id="listagent-box-' + esc(oid) + '" data-open="0"></div>';
   return h;
 }
@@ -8333,7 +8333,7 @@ function listAgentPicker(oid) {
   box.setAttribute('data-open', '1');
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">Add anyone who represents this — search or type a new name. First one added is the primary; adding more just means more than one agent reps it.</div>'
-    + '<input id="listagent-q-' + esc(oid) + '" placeholder="Search agents, or type a new name…" oninput="listAgentFilter(\'' + esc(oid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<input id="listagent-q-' + esc(oid) + '" placeholder="Search agents, or type a new name…" oninput="listAgentFilter(\'' + escJs(oid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<div id="listagent-list-' + esc(oid) + '"></div></div>';
   var qi = document.getElementById('listagent-q-' + oid); var o = recOf('offmarket', oid);
   if (qi && o && !o.list_agent_id && looksLikeAgentName(o.source)) { qi.value = String(o.source).trim(); }
@@ -8347,10 +8347,10 @@ function listAgentFilter(oid) {
   var matches = (DATA.agents || []).filter(function (a) { return !already[String(a.id)] && (!ql || String(a.name || '').toLowerCase().indexOf(ql) >= 0 || String(a.brokerage || '').toLowerCase().indexOf(ql) >= 0); });
   matches.sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); });
   var h = matches.slice(0, 10).map(function (a) {
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(a.name || '') + (a.brokerage ? ' <span class="hint">' + esc(a.brokerage) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();addListingAgent(\'' + esc(oid) + '\',\'' + esc(String(a.id)) + '\')">Add</button></div>';
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(a.name || '') + (a.brokerage ? ' <span class="hint">' + esc(a.brokerage) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();addListingAgent(\'' + escJs(oid) + '\',\'' + escJs(String(a.id)) + '\')">Add</button></div>';
   }).join('');
   if (q && !matches.some(function (a) { return identityKey(a.name) === identityKey(q); }) && !(o && o.list_agent_id && identityKey(recLabel('agents', o.list_agent_id) || '') === identityKey(q))) {
-    h += '<div class="qi"><div class="txt"><div class="t2">Add new agent &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();addListingAgent(\'' + esc(oid) + '\',\'\')">Add + link</button></div>';
+    h += '<div class="qi"><div class="txt"><div class="t2">Add new agent &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();addListingAgent(\'' + escJs(oid) + '\',\'\')">Add + link</button></div>';
   }
   list.innerHTML = h || '<div class="hint">Type a name to add them.</div>';
 }
@@ -8418,12 +8418,12 @@ function clientHtml(tx) {
   var otherDeals = tx.client_contact_id ? (DATA.transactions || []).filter(function (t) { return String(t.client_contact_id) === String(tx.client_contact_id) && String(t.id) !== sid; }) : [];
   var h = '<div class="flabel" style="margin-top:12px;">Client</div>';
   if (cur) {
-    h += '<span class="pill" style="margin:0 4px 4px 0;">' + (tx.client_contact_id ? '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'people\',\'' + esc(String(tx.client_contact_id)) + '\')">' + esc(cur) + '</span>' : esc(cur))
-      + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();setClient(\'' + esc(sid) + '\',\'__clear__\')">&#10005;</span></span>';
-    h += ' <button class="qbtn" onclick="event.stopPropagation();clientPicker(\'' + esc(sid) + '\')">Change</button>';
+    h += '<span class="pill" style="margin:0 4px 4px 0;">' + (tx.client_contact_id ? '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'people\',\'' + escJs(String(tx.client_contact_id)) + '\')">' + esc(cur) + '</span>' : esc(cur))
+      + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();setClient(\'' + escJs(sid) + '\',\'__clear__\')">&#10005;</span></span>';
+    h += ' <button class="qbtn" onclick="event.stopPropagation();clientPicker(\'' + escJs(sid) + '\')">Change</button>';
     if (otherDeals.length) h += '<div class="hint" style="margin-top:4px;">Also on: ' + otherDeals.map(function (t) { return esc(t.address || 'a deal'); }).join(', ') + '</div>';
   } else {
-    h += '<button class="qbtn" onclick="event.stopPropagation();clientPicker(\'' + esc(sid) + '\')">&#65291; Assign client</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();clientPicker(\'' + escJs(sid) + '\')">&#65291; Assign client</button>';
   }
   h += '<div id="client-box-' + esc(sid) + '" data-open="0"></div>';
   return h;
@@ -8434,7 +8434,7 @@ function clientPicker(sid) {
   box.setAttribute('data-open', '1');
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">If this client is on another deal too, search their name here instead of retyping it — picking the same person links both deals together.</div>'
-    + '<input id="client-q-' + esc(sid) + '" placeholder="Search contacts, or type a new name…" oninput="clientFilter(\'' + esc(sid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<input id="client-q-' + esc(sid) + '" placeholder="Search contacts, or type a new name…" oninput="clientFilter(\'' + escJs(sid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<div id="client-list-' + esc(sid) + '"></div></div>';
   clientFilter(sid);
 }
@@ -8444,10 +8444,10 @@ function clientFilter(sid) {
   var matches = (DATA.contacts || []).filter(function (c) { return !(c.extra && c.extra.merged_into) && (!ql || String(c.display_name || '').toLowerCase().indexOf(ql) >= 0); });
   matches.sort(function (a, b) { return String(a.display_name || '').localeCompare(String(b.display_name || '')); });
   var h = matches.slice(0, 10).map(function (c) {
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + (c.kind ? ' <span class="hint">' + esc(c.kind) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();setClient(\'' + esc(sid) + '\',\'' + esc(String(c.id)) + '\')">Assign</button></div>';
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + (c.kind ? ' <span class="hint">' + esc(c.kind) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();setClient(\'' + escJs(sid) + '\',\'' + escJs(String(c.id)) + '\')">Assign</button></div>';
   }).join('');
   if (q && !(DATA.contacts || []).some(function (c) { return contactKey(c.display_name) === contactKey(q); })) {
-    h += '<div class="qi"><div class="txt"><div class="t2">Add new client &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();setClient(\'' + esc(sid) + '\',\'\')">Add + assign</button></div>';
+    h += '<div class="qi"><div class="txt"><div class="t2">Add new client &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();setClient(\'' + escJs(sid) + '\',\'\')">Add + assign</button></div>';
   }
   list.innerHTML = h || '<div class="hint">Type a name to add them.</div>';
 }
@@ -8487,10 +8487,10 @@ function coopAgentHtml(tx) {
   var cur = tx.coop_agent_id ? (recLabel('agents', tx.coop_agent_id) || 'Agent') : null;
   var h = '<div class="flabel" style="margin-top:12px;">Other-side agent <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; the ' + coopSideWord(tx) + ' on this deal</span></div>';
   if (cur) {
-    h += '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + esc(String(tx.coop_agent_id)) + '\')">' + esc(cur) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();setCoopAgent(\'' + esc(sid) + '\',\'__clear__\')">&#10005;</span></span>';
-    h += ' <button class="qbtn" onclick="event.stopPropagation();coopAgentPicker(\'' + esc(sid) + '\')">Change</button>';
+    h += '<span class="pill" style="margin:0 4px 4px 0;"><span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'agents\',\'' + escJs(String(tx.coop_agent_id)) + '\')">' + esc(cur) + '</span> <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();setCoopAgent(\'' + escJs(sid) + '\',\'__clear__\')">&#10005;</span></span>';
+    h += ' <button class="qbtn" onclick="event.stopPropagation();coopAgentPicker(\'' + escJs(sid) + '\')">Change</button>';
   } else {
-    h += '<button class="qbtn" onclick="event.stopPropagation();coopAgentPicker(\'' + esc(sid) + '\')">&#65291; Assign the other-side agent</button>';
+    h += '<button class="qbtn" onclick="event.stopPropagation();coopAgentPicker(\'' + escJs(sid) + '\')">&#65291; Assign the other-side agent</button>';
   }
   h += '<div id="coopagent-box-' + esc(sid) + '" data-open="0"></div>';
   return h;
@@ -8501,7 +8501,7 @@ function coopAgentPicker(sid) {
   box.setAttribute('data-open', '1');
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">The agent on the other side of this deal — their brokerage helps track who you owe / who owes you.</div>'
-    + '<input id="coopagent-q-' + esc(sid) + '" placeholder="Search agents, or type a new name…" oninput="coopAgentFilter(\'' + esc(sid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<input id="coopagent-q-' + esc(sid) + '" placeholder="Search agents, or type a new name…" oninput="coopAgentFilter(\'' + escJs(sid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<div id="coopagent-list-' + esc(sid) + '"></div></div>';
   coopAgentFilter(sid);
 }
@@ -8511,10 +8511,10 @@ function coopAgentFilter(sid) {
   var matches = (DATA.agents || []).filter(function (a) { return (!ql || String(a.name || '').toLowerCase().indexOf(ql) >= 0 || String(a.brokerage || '').toLowerCase().indexOf(ql) >= 0); });
   matches.sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); });
   var h = matches.slice(0, 10).map(function (a) {
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(a.name || '') + (a.brokerage ? ' <span class="hint">' + esc(a.brokerage) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();setCoopAgent(\'' + esc(sid) + '\',\'' + esc(String(a.id)) + '\')">Assign</button></div>';
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(a.name || '') + (a.brokerage ? ' <span class="hint">' + esc(a.brokerage) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();setCoopAgent(\'' + escJs(sid) + '\',\'' + escJs(String(a.id)) + '\')">Assign</button></div>';
   }).join('');
   if (q && !(DATA.agents || []).some(function (a) { return identityKey(a.name) === identityKey(q); })) {
-    h += '<div class="qi"><div class="txt"><div class="t2">Add new agent &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();setCoopAgent(\'' + esc(sid) + '\',\'\')">Add + assign</button></div>';
+    h += '<div class="qi"><div class="txt"><div class="t2">Add new agent &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();setCoopAgent(\'' + escJs(sid) + '\',\'\')">Add + assign</button></div>';
   }
   list.innerHTML = h || '<div class="hint">Type a name to add them.</div>';
 }
@@ -8556,9 +8556,9 @@ function dealVendorsHtml(tid) {
   var h = '<div class="flabel" style="margin-top:12px;">Vendors on this deal <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; who inspected / worked it</span></div>';
   h += (vends.map(function (v) {
     return '<span class="pill" style="margin:0 4px 4px 0;">' + esc(contactLabel(v.contact_id)) + (v.role ? ' &middot; ' + esc(v.role) : '')
-      + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeDealVendor(\'' + esc(String(tid)) + '\',\'' + esc(String(v.contact_id)) + '\')">&#10005;</span></span>';
+      + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeDealVendor(\'' + escJs(String(tid)) + '\',\'' + escJs(String(v.contact_id)) + '\')">&#10005;</span></span>';
   }).join('')) || '<span class="hint">none yet</span>';
-  h += ' <button class="qbtn" onclick="event.stopPropagation();dealVendorPicker(\'' + esc(String(tid)) + '\')">&#65291; Add vendor</button>';
+  h += ' <button class="qbtn" onclick="event.stopPropagation();dealVendorPicker(\'' + escJs(String(tid)) + '\')">&#65291; Add vendor</button>';
   h += '<div id="dealvendor-box-' + esc(String(tid)) + '" data-open="0"></div>';
   return h;
 }
@@ -8568,7 +8568,7 @@ function dealVendorPicker(tid) {
   box.setAttribute('data-open', '1');
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">Vendor who worked this deal (inspector, contractor, lender, escrow, photographer…).</div>'
-    + '<input id="dv-name-' + esc(tid) + '" placeholder="Vendor name or company…" oninput="dealVendorFilter(\'' + esc(tid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<input id="dv-name-' + esc(tid) + '" placeholder="Vendor name or company…" oninput="dealVendorFilter(\'' + escJs(tid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<input id="dv-role-' + esc(tid) + '" placeholder="Role (e.g. Termite inspector)" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<div id="dv-list-' + esc(tid) + '"></div></div>';
   dealVendorFilter(tid);
@@ -8579,9 +8579,9 @@ function dealVendorFilter(tid) {
   var vendors = (DATA.contacts || []).filter(function (c) { return c.kind === 'vendor' && !(c.extra && c.extra.merged_into) && (!ql || String(c.display_name || '').toLowerCase().indexOf(ql) >= 0); });
   vendors.sort(function (a, b) { return String(a.display_name || '').localeCompare(String(b.display_name || '')); });
   var h = vendors.slice(0, 8).map(function (c) {
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();addDealVendor(\'' + esc(tid) + '\',\'' + esc(String(c.id)) + '\')">Add</button></div>';
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();addDealVendor(\'' + escJs(tid) + '\',\'' + escJs(String(c.id)) + '\')">Add</button></div>';
   }).join('');
-  if (q) h += '<div class="qi"><div class="txt"><div class="t2">New vendor &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();addDealVendor(\'' + esc(tid) + '\',\'\')">Add + create</button></div>';
+  if (q) h += '<div class="qi"><div class="txt"><div class="t2">New vendor &ldquo;' + esc(q) + '&rdquo;</div></div><button class="qbtn done" onclick="event.stopPropagation();addDealVendor(\'' + escJs(tid) + '\',\'\')">Add + create</button></div>';
   list.innerHTML = h || '<div class="hint">Type a name to add a vendor.</div>';
 }
 async function addDealVendor(tid, contactId) {
@@ -8685,19 +8685,19 @@ function agentSetMinPrice(aid, val) { var n = numFrom(val); agentPatchExtra(aid,
 function agentSignalsHtml(aid) {
   var a = agentRec(aid); if (!a) return ''; var e = a.extra || {};
   var roleChips = AGENT_ROLES.map(function (r) {
-    return '<span class="chip' + (e.role === r ? ' on' : '') + '" onclick="event.stopPropagation();agentSetRole(\'' + esc(aid) + '\',\'' + esc(r) + '\')">' + esc(r) + '</span>';
+    return '<span class="chip' + (e.role === r ? ' on' : '') + '" onclick="event.stopPropagation();agentSetRole(\'' + escJs(aid) + '\',\'' + escJs(r) + '\')">' + esc(r) + '</span>';
   }).join('');
   var curTags = e.tags || [];
   var tagChips = AGENT_TAGS.map(function (t) {
-    return '<span class="chip' + (curTags.indexOf(t) >= 0 ? ' on' : '') + '" onclick="event.stopPropagation();agentToggleTag(\'' + esc(aid) + '\',\'' + esc(t) + '\')">' + esc(t) + '</span>';
+    return '<span class="chip' + (curTags.indexOf(t) >= 0 ? ' on' : '') + '" onclick="event.stopPropagation();agentToggleTag(\'' + escJs(aid) + '\',\'' + escJs(t) + '\')">' + esc(t) + '</span>';
   }).join('');
   var minp = e.min_preview_price;
   return '<div class="flabel" style="margin-top:12px;">Relationship <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; drives who gets suggested for previews</span></div>'
     + '<div class="chip-row"><span class="chip-label">Standing</span> ' + roleChips + '</div>'
     + '<div class="chip-row" style="margin-top:4px;"><span class="chip-label">Traits</span> ' + tagChips + '</div>'
     + '<div class="chip-row" style="margin-top:4px;"><span class="chip-label">Focus</span> '
-    + '<span class="chip' + (e.high_end_only ? ' on' : '') + '" onclick="event.stopPropagation();agentToggleHighEnd(\'' + esc(aid) + '\')">high-end only</span> '
-    + '<span class="hint">suggest only above </span><input type="text" value="' + esc(minp ? Number(minp).toLocaleString() : '') + '" placeholder="10M" style="width:76px;" onclick="event.stopPropagation()" onchange="agentSetMinPrice(\'' + esc(aid) + '\',this.value)"></div>';
+    + '<span class="chip' + (e.high_end_only ? ' on' : '') + '" onclick="event.stopPropagation();agentToggleHighEnd(\'' + escJs(aid) + '\')">high-end only</span> '
+    + '<span class="hint">suggest only above </span><input type="text" value="' + esc(minp ? Number(minp).toLocaleString() : '') + '" placeholder="10M" style="width:76px;" onclick="event.stopPropagation()" onchange="agentSetMinPrice(\'' + escJs(aid) + '\',this.value)"></div>';
 }
 /* Editable enrichment: brokerage from email domain, name best-guess from local part — a SUGGESTION Nick applies. */
 function suggestFromEmail(email) {
@@ -8721,7 +8721,7 @@ function agentSuggestHtml(aid) {
   if (needBrok && s.brokerage) bits.push('brokerage <b>' + esc(s.brokerage) + '</b>');
   if (!bits.length) return '';
   return '<div class="qi" style="margin-top:8px;"><div class="txt"><div class="t2">Suggested from email: ' + bits.join(' · ') + '</div><div class="hint">best-guess &mdash; edit the record if wrong</div></div>'
-    + '<button class="qbtn done" onclick="event.stopPropagation();agentApplySuggest(\'' + esc(aid) + '\')">Use</button></div>';
+    + '<button class="qbtn done" onclick="event.stopPropagation();agentApplySuggest(\'' + escJs(aid) + '\')">Use</button></div>';
 }
 async function agentApplySuggest(aid) {
   var a = agentRec(aid); if (!a || !a.email) return;
@@ -8860,7 +8860,7 @@ function pricingPreviewLinkHtml(listingId) {
   var x = recOf('listings', listingId); if (!x || !(DATA.agents || []).length) return '';
   var ranked = rankAgentsForListing(x).filter(function (r) { return r.score > 0; });
   if (!ranked.length) return '';
-  return '<div class="qi" style="cursor:pointer;margin-top:12px;" onclick="event.stopPropagation();menuShowPricingPreview(\'' + esc(listingId) + '\')"><div class="txt"><div class="t1">Pricing preview <span class="hint">→ open dashboard</span></div><div class="t2">' + ranked.length + ' agent' + (ranked.length === 1 ? '' : 's') + ' worth previewing to</div></div></div>';
+  return '<div class="qi" style="cursor:pointer;margin-top:12px;" onclick="event.stopPropagation();menuShowPricingPreview(\'' + escJs(listingId) + '\')"><div class="txt"><div class="t1">Pricing preview <span class="hint">→ open dashboard</span></div><div class="t2">' + ranked.length + ' agent' + (ranked.length === 1 ? '' : 's') + ' worth previewing to</div></div></div>';
 }
 function previewToggle(lid, aid) {
   PREVIEW_SEL[lid] = PREVIEW_SEL[lid] || {};
@@ -8880,11 +8880,11 @@ function previewSuggestHtml(listingId) {
     var aid = String(r.agent.id), on = !!sel[aid];
     var why = r.reasons.slice(0, 3).join(' · ');
     var caut = r.cautions.length ? ' <span style="color:var(--clay,#b3382c);">&#9888; ' + esc(r.cautions.join(' · ')) + '</span>' : '';
-    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();previewToggle(\'' + esc(listingId) + '\',\'' + esc(aid) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(r.agent.name || r.agent.email || 'Agent') + (r.agent.brokerage ? ' <span class="hint">' + esc(r.agent.brokerage) + '</span>' : '') + '</div><div class="t2">' + esc(why) + caut + '</div></div></div>';
+    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();previewToggle(\'' + escJs(listingId) + '\',\'' + escJs(aid) + '\')"><div class="txt"><div class="t1">' + (on ? '&#10003; ' : '&#9633; ') + esc(r.agent.name || r.agent.email || 'Agent') + (r.agent.brokerage ? ' <span class="hint">' + esc(r.agent.brokerage) + '</span>' : '') + '</div><div class="t2">' + esc(why) + caut + '</div></div></div>';
   }).join('');
   var n = Object.keys(sel).length;
-  h += '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();previewDraft(\'' + esc(listingId) + '\')">Draft invite' + (n ? ' (' + n + ')' : '') + '</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();previewMarkInvited(\'' + esc(listingId) + '\')">Mark selected invited</button></div>';
+  h += '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();previewDraft(\'' + escJs(listingId) + '\')">Draft invite' + (n ? ' (' + n + ')' : '') + '</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();previewMarkInvited(\'' + escJs(listingId) + '\')">Mark selected invited</button></div>';
   return h + '<div id="prev-draft-' + esc(listingId) + '"></div>';
 }
 function previewDraft(listingId) {
@@ -8901,7 +8901,7 @@ function previewDraft(listingId) {
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + (names.length ? '<div class="hint" style="margin-bottom:6px;">For: ' + esc(names.join(', ')) + '</div>' : '<div class="hint" style="margin-bottom:6px;">Pick agents above, or use this as a template.</div>')
     + '<textarea id="prev-txt-' + esc(listingId) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
-    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();previewCopy(\'' + esc(listingId) + '\')">Copy</button> '
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();previewCopy(\'' + escJs(listingId) + '\')">Copy</button> '
     + '<span class="hint">Editable draft &mdash; you send it. Nothing goes out from here.</span></div></div>';
 }
 function previewCopy(listingId) {
@@ -9353,18 +9353,18 @@ function marketEventLine(e) {
   var facts = [e.neighborhood, fmtDate(e.event_date), fmtMoney(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ');
   var actions = '', pending = e.review_status === 'pending';
   if (pending) {
-    actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + esc(e.id) + '\')">&times; Not interesting</button>'
-      + '<button class="qbtn done" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Flag for buyer</button>';
+    actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + escJs(e.id) + '\')">&times; Not interesting</button>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();openFlagMarketEvent(\'' + escJs(e.id) + '\')">Flag for buyer</button>';
   } else if (e.review_status === 'dismissed') {
     /* Show the reason back. A captured signal Nick can't see is indistinguishable from one that
        was never captured -- which is exactly how the buyer-match version went 157 dismissals
        without anyone noticing it had recorded nothing. */
     var dl = MARKET_DISMISS_LABEL[e.dismiss_reason];
-    actions = '<span class="hint">Dismissed' + (dl ? ' &mdash; ' + esc(dl.toLowerCase()) : '') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>';
+    actions = '<span class="hint">Dismissed' + (dl ? ' &mdash; ' + esc(dl.toLowerCase()) : '') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + escJs(e.id) + '\')">Undo</button>';
   } else if (e.review_status === 'flagged') {
     var flagNames = marketEventFlaggedIds(e).map(function (bid) { return recLabel('buyers', bid) || 'a buyer'; });
-    actions = '<span class="hint">Flagged for ' + esc(flagNames.join(', ') || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + esc(e.id) + '\')">Undo</button>'
-      + ' <button class="qbtn" onclick="event.stopPropagation();openFlagMarketEvent(\'' + esc(e.id) + '\')">Edit</button>';
+    actions = '<span class="hint">Flagged for ' + esc(flagNames.join(', ') || 'a buyer') + '</span> <button class="qbtn" onclick="event.stopPropagation();undoMarketEventReview(\'' + escJs(e.id) + '\')">Undo</button>'
+      + ' <button class="qbtn" onclick="event.stopPropagation();openFlagMarketEvent(\'' + escJs(e.id) + '\')">Edit</button>';
   }
   /* Tracking folder (2026-07-24, per Nick) — orthogonal to review_status/buyer-flag: a property
      can be tracked whether it's pending, dismissed-for-buyer-matching, or flagged, so this button
@@ -9372,8 +9372,8 @@ function marketEventLine(e) {
      third swipe direction (two is already the natural limit on a phone). */
   var tr = marketEventTracking(e);
   actions += (actions ? ' ' : '') + (tr
-    ? '<button class="qbtn done" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">&#9733; Tracked' + (tr.outcome ? ' (' + esc(tr.outcome === 'converted' ? 'converted' : 'went nowhere') + ')' : '') + '</button>'
-    : '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">&#9734; Track</button>');
+    ? '<button class="qbtn done" onclick="event.stopPropagation();openTrackMarketEvent(\'' + escJs(e.id) + '\')">&#9733; Tracked' + (tr.outcome ? ' (' + esc(tr.outcome === 'converted' ? 'converted' : 'went nowhere') + ')' : '') + '</button>'
+    : '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + escJs(e.id) + '\')">&#9734; Track</button>');
   /* Swipe (2026-07-24, per Nick, "like on an iPhone"): pending rows only -- mkt-swipe class + data-id
      is what the delegated touch handler (bindMarketSwipe(), defined near renderMarketReview) looks
      for. Swipe right-to-left = dismiss, left-to-right = open the buyer-flag picker; buttons stay as
@@ -9528,7 +9528,7 @@ function openFlagMarketEvent(id) {
   var pickerHtml = '<div class="card" style="margin:10px 0;padding:12px;border:1px solid var(--line);">'
     + '<div class="flabel">Flag for which buyer(s)? <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— pick as many as apply; tags it for you to review later, doesn&rsquo;t send anything or create a real match yet</span></div>'
     + '<div style="margin-top:6px;max-height:260px;overflow-y:auto;">' + opts + '</div>'
-    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="closeFlagMarketEvent(\'' + esc(String(id)) + '\')">Cancel</button></div>'
+    + '<div style="margin-top:10px;"><button class="primary" onclick="confirmFlagMarketEvent()">Flag</button> <button class="quiet" onclick="closeFlagMarketEvent(\'' + escJs(String(id)) + '\')">Cancel</button></div>'
     + '</div>';
   if (host) {
     if (host.innerHTML) { host.innerHTML = ''; flagMarketEventId = null; return; }
@@ -9614,8 +9614,8 @@ function openTrackMarketEvent(id) {
     + '<div style="margin-top:6px;">' + opts + '</div>'
     + '<textarea id="market-track-note" placeholder="Note (optional)" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:50px;">' + esc(cur.note || '') + '</textarea>'
     + '<div style="margin-top:10px;"><button class="primary" onclick="confirmTrackMarketEvent()">Save</button> '
-    + (cur.tracked_at ? '<button class="qbtn" onclick="untrackMarketEvent(\'' + esc(id) + '\')">Remove from tracking</button> ' : '')
-    + '<button class="quiet" onclick="closeTrackMarketEvent(\'' + esc(String(id)) + '\')">Cancel</button></div>'
+    + (cur.tracked_at ? '<button class="qbtn" onclick="untrackMarketEvent(\'' + escJs(id) + '\')">Remove from tracking</button> ' : '')
+    + '<button class="quiet" onclick="closeTrackMarketEvent(\'' + escJs(String(id)) + '\')">Cancel</button></div>'
     + '</div>';
   if (host) {
     if (host.innerHTML) { host.innerHTML = ''; trackMarketEventId = null; return; }  /* second tap closes it */
@@ -9710,9 +9710,9 @@ function marketTrackingHtml() {
     return '<div class="qi"><div class="txt"><div class="t1">' + esc((e.address || e.neighborhood || '')) + '</div>'
       + '<div class="t2">' + esc(facts) + (reasonLabels.length ? ' — ' + esc(reasonLabels.join(', ')) : '') + (t.note ? '<br>' + esc(t.note) : '') + '</div>'
       + '<div style="margin-top:6px;">'
-      + '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + esc(e.id) + '\')">Edit</button> '
-      + '<button class="qbtn done" onclick="event.stopPropagation();convertTrackedToProspect(\'' + esc(e.id) + '\')">Add as prospect</button> '
-      + '<button class="qbtn" onclick="event.stopPropagation();markMarketTrackOutcome(\'' + esc(e.id) + '\',\'went_nowhere\')">Went nowhere</button>'
+      + '<button class="qbtn" onclick="event.stopPropagation();openTrackMarketEvent(\'' + escJs(e.id) + '\')">Edit</button> '
+      + '<button class="qbtn done" onclick="event.stopPropagation();convertTrackedToProspect(\'' + escJs(e.id) + '\')">Add as prospect</button> '
+      + '<button class="qbtn" onclick="event.stopPropagation();markMarketTrackOutcome(\'' + escJs(e.id) + '\',\'went_nowhere\')">Went nowhere</button>'
       + '</div></div></div>';
   }).join('');
   return h;
@@ -9891,7 +9891,7 @@ async function renderClimateCard(force) {
   var summaryEl = document.getElementById('flood-cluster-summary');
   if (summaryEl) {
     summaryEl.innerHTML = clusters.length ? clusters.map(function (c) {
-      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + esc(c.records[0].table) + '\',\'' + esc(String(c.records[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(c.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + c.records.length + ' records in a special flood hazard area</div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="jumpToRecord(\'' + escJs(c.records[0].table) + '\',\'' + escJs(String(c.records[0].id)) + '\')"><div class="txt"><div class="t1">' + esc(c.area) + ' <span class="hint">→ open one</span></div><div class="t2">' + c.records.length + ' records in a special flood hazard area</div></div></div>';
     }).join('') : '';
   }
 }
@@ -10249,7 +10249,7 @@ function farmingPinDetail(id) {
     + '<div class="r1"><span class="nm">' + esc(p.address || '') + '</span><span class="rside">' + esc(p.priority || '') + '</span></div>'
     + '<div class="r2">' + esc(seg) + (e.house_number_read ? ' &middot; #' + esc(e.house_number_read) + ' read off photo' : '') + '</div>'
     + (p.notes ? '<div class="det">' + esc(p.notes) + '</div>' : '')
-    + '<div style="margin-top:8px;"><button class="qbtn" onclick="jumpToRecord(\'prospects\',\'' + esc(String(p.id)) + '\')">View full record</button></div>'
+    + '<div style="margin-top:8px;"><button class="qbtn" onclick="jumpToRecord(\'prospects\',\'' + escJs(String(p.id)) + '\')">View full record</button></div>'
     + '</div>';
 }
 /* Tracerfy hand-off, scoped to what's actually on this map (2026-07-24, per Nick — "farms to parse
@@ -10993,7 +10993,7 @@ function engageDraft(id) {
   box.innerHTML = '<div style="margin-top:6px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">Personal check-in note — you send it. Nothing goes out from here.</div>'
     + '<textarea id="engage-txt-' + esc(id) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
-    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();engageCopy(\'' + esc(id) + '\')">Copy</button></div></div>';
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();engageCopy(\'' + escJs(id) + '\')">Copy</button></div></div>';
 }
 function engageCopy(id) {
   var t = document.getElementById('engage-txt-' + id); if (!t) return;
@@ -11035,10 +11035,10 @@ function promoteEngageToProspect(id) {
 function engageRow(c) {
   var e = c.extra.engage, id = String(c.id);
   var badge = e.type === 'seller' ? '<span class="pill warn">Might list</span>' : '<span class="pill">Might buy</span>';
-  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + esc(id) + '\')">Draft note</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + esc(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + esc(id) + '\',7)">Remind in 1wk</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + esc(id) + '\',\'engage.dismissed\')">Not now</button>';
+  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + escJs(id) + '\')">Draft note</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + escJs(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + escJs(id) + '\',7)">Remind in 1wk</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + escJs(id) + '\',\'engage.dismissed\')">Not now</button>';
   return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.display_name || '—') + ' ' + badge + '</div></div><div class="acts">' + acts + '</div></div><div id="engage-draft-' + esc(id) + '"></div>';
 }
 function engageHtml() {
@@ -11080,8 +11080,8 @@ function reengageRow(c) {
   var badge = r.type === 'seller' ? '<span class="pill warn">Seller</span>' : '<span class="pill">Buyer</span>';
   var sub = esc(r.reason || '') + (r.last ? ' · last activity ' + fmtDate(r.last) : '') + (active ? ' <span class="pill ok">Re-engaging</span>' : '');
   var acts = active
-    ? '<button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + esc(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'candidate\')">Undo</button>'
-    : '<button class="qbtn done" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'active\')">Re-engage</button> <button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + esc(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'dismissed\')">Not now</button>';
+    ? '<button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + escJs(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'candidate\')">Undo</button>'
+    : '<button class="qbtn done" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'active\')">Re-engage</button> <button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + escJs(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'dismissed\')">Not now</button>';
   return '<div class="qi"><div class="txt"><div class="t1">' + esc(c.display_name || '—') + ' ' + badge + '</div><div class="t2">' + sub + '</div></div><div class="acts">' + acts + '</div></div><div id="reengage-draft-' + esc(id) + '"></div>';
 }
 async function contactSetReengage(id, status) {
@@ -11105,7 +11105,7 @@ function reengageDraft(id) {
   box.innerHTML = '<div style="margin-top:6px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">Personal re-engagement note — you send it. Nothing goes out from here.</div>'
     + '<textarea id="reengage-txt-' + esc(id) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
-    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();reengageCopy(\'' + esc(id) + '\')">Copy</button></div></div>';
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();reengageCopy(\'' + escJs(id) + '\')">Copy</button></div></div>';
 }
 function reengageCopy(id) {
   var t = document.getElementById('reengage-txt-' + id); if (!t) return;
@@ -11187,7 +11187,7 @@ function peopleRow(c) {
      personRoles/personExtras entirely and just jump straight to the real Agent record. */
   if (c._agentOnly) {
     var bits = [c._brokerage, c.email, c.phone].filter(Boolean).join(' · ');
-    return '<div class="row" style="cursor:pointer;" onclick="jumpToRecord(\'agents\',\'' + esc(c._agentId) + '\')">'
+    return '<div class="row" style="cursor:pointer;" onclick="jumpToRecord(\'agents\',\'' + escJs(c._agentId) + '\')">'
       + '<div class="r1"><span class="nm">' + esc(c.display_name || '—') + '</span><span class="rside">' + esc(bits) + '</span></div>'
       + '<div class="r2" style="margin-top:4px;"><span class="pill">Agent</span></div></div>';
   }
@@ -11215,14 +11215,14 @@ function personExtras(id) {
   if (vd.length) {
     h += '<div class="flabel" style="margin-top:8px;">Deals worked</div><div>' + vd.map(function (t) {
       var role = (((t.extra && t.extra.vendors) || []).filter(function (v) { return String(v.contact_id) === String(id); })[0] || {}).role;
-      return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'transactions\',\'' + esc(String(t.id)) + '\')">' + esc(t.address || 'Deal') + (role ? ' &middot; ' + esc(role) : '') + '</span>';
+      return '<span class="pill" style="margin:0 4px 4px 0;cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'transactions\',\'' + escJs(String(t.id)) + '\')">' + esc(t.address || 'Deal') + (role ? ' &middot; ' + esc(role) : '') + '</span>';
     }).join('') + '</div>';
   }
   var roles = personRoles(id);
   if (roles.length) {
     h += '<div class="flabel">Where they show up</div>';
     h += roles.map(function (r) {
-      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + esc(r.t) + '\',\'' + esc(r.id) + '\')"><div class="txt"><div class="t2"><b>' + esc(r.label) + '</b> — ' + esc(r.name || '') + ' <span class="hint">View record →</span></div></div></div>';
+      return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(r.t) + '\',\'' + escJs(r.id) + '\')"><div class="txt"><div class="t2"><b>' + esc(r.label) + '</b> — ' + esc(r.name || '') + ' <span class="hint">View record →</span></div></div></div>';
     }).join('');
   }
   h += contactExternalHtml(id);
@@ -11233,8 +11233,8 @@ function personExtras(id) {
   h += '<div class="flabel" style="margin-top:12px;">Engage</div>';
   if (eng && eng.status === 'active') h += personEngageHtml(c);
   else h += '<div class="hint" style="margin-bottom:4px;">Currently chatting/warming up with them?</div>'
-    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + esc(id) + '\',\'buyer\')">+ Might buy</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + esc(id) + '\',\'seller\')">+ Might list</button>';
+    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + escJs(id) + '\',\'buyer\')">+ Might buy</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactSetEngage(\'' + escJs(id) + '\',\'seller\')">+ Might list</button>';
   var re = (c.extra && c.extra.reengage) || null;
   if (re) { h += '<div class="flabel" style="margin-top:12px;">Re-engagement</div>' + personReengageHtml(c); }
   var envs = personEnvelopes(id);
@@ -11248,7 +11248,7 @@ function personExtras(id) {
     if (envs.length > 14) h += '<div class="hint" style="margin-top:4px;">+ ' + (envs.length - 14) + ' more</div>';
   }
   if (!roles.length && !envs.length && !re) h += '<div class="hint">No linked records or documents yet.</div>';
-  h += '<div style="margin-top:12px;"><button class="qbtn" onclick="event.stopPropagation();personMergePicker(\'' + esc(id) + '\')">Same as another person? Merge…</button></div><div id="merge-box-' + esc(id) + '" data-open="0"></div>';
+  h += '<div style="margin-top:12px;"><button class="qbtn" onclick="event.stopPropagation();personMergePicker(\'' + escJs(id) + '\')">Same as another person? Merge…</button></div><div id="merge-box-' + esc(id) + '" data-open="0"></div>';
   return h;
 }
 /* Known context (2026-07-22): personRoles() only knows about deals Nick actually has a record
@@ -11263,10 +11263,10 @@ function contactExternalHtml(id) {
   if (items.length) {
     h += items.map(function (it) {
       return '<div class="qi"><div class="txt"><div class="t2">' + esc(it.text) + '</div>' + (it.created_at ? '<div class="hint">' + esc(fmtDate(String(it.created_at).slice(0, 10))) + '</div>' : '') + '</div>'
-        + '<button class="qbtn" onclick="event.stopPropagation();removeContactExternal(\'' + esc(String(id)) + '\',\'' + esc(String(it.id)) + '\')">&#10005;</button></div>';
+        + '<button class="qbtn" onclick="event.stopPropagation();removeContactExternal(\'' + escJs(String(id)) + '\',\'' + escJs(String(it.id)) + '\')">&#10005;</button></div>';
     }).join('');
   } else h += '<span class="hint">none yet</span>';
-  h += ' <button class="qbtn" onclick="event.stopPropagation();addContactExternal(\'' + esc(String(id)) + '\')">&#65291; Add</button>';
+  h += ' <button class="qbtn" onclick="event.stopPropagation();addContactExternal(\'' + escJs(String(id)) + '\')">&#65291; Add</button>';
   return h;
 }
 async function addContactExternal(id) {
@@ -11291,10 +11291,10 @@ async function removeContactExternal(id, itemId) {
 function personEngageHtml(c) {
   var e = c.extra.engage, id = String(c.id);
   var badge = e.type === 'seller' ? '<span class="pill warn">Might list</span>' : '<span class="pill">Might buy</span>';
-  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + esc(id) + '\')">Draft note</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + esc(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + esc(id) + '\',7)">Remind in 1wk</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + esc(id) + '\',\'engage.dismissed\')">Not now</button>';
+  var acts = '<button class="qbtn" onclick="event.stopPropagation();engageDraft(\'' + escJs(id) + '\')">Draft note</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();' + (e.type === 'seller' ? 'promoteEngageToProspect' : 'promoteEngageToBuyer') + '(\'' + escJs(id) + '\')">Promote to ' + (e.type === 'seller' ? 'Prospect' : 'Buyer') + '</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();engageSetFollowup(\'' + escJs(id) + '\',7)">Remind in 1wk</button> '
+    + '<button class="qbtn" onclick="event.stopPropagation();contactClearEngage(\'' + escJs(id) + '\',\'engage.dismissed\')">Not now</button>';
   return '<div class="qi"><div class="txt">' + badge + '</div><div class="acts">' + acts + '</div></div><div id="engage-draft-' + esc(id) + '"></div>';
 }
 function personReengageHtml(c) {
@@ -11302,8 +11302,8 @@ function personReengageHtml(c) {
   var status = active ? '<span class="pill ok">Re-engaging</span>' : r.status === 'dismissed' ? '<span class="pill">Set aside</span>' : '<span class="pill warn">Worth another look</span>';
   var sub = '<div class="t2">' + esc(r.reason || '') + (r.last ? ' · last activity ' + esc(fmtDate(r.last)) : '') + ' ' + status + '</div>';
   var acts = active
-    ? '<button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + esc(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'candidate\')">Undo</button>'
-    : '<button class="qbtn done" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'active\')">Re-engage</button> <button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + esc(id) + '\')">Draft note</button>' + (r.status === 'dismissed' ? '' : ' <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + esc(id) + '\',\'dismissed\')">Not now</button>');
+    ? '<button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + escJs(id) + '\')">Draft note</button> <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'candidate\')">Undo</button>'
+    : '<button class="qbtn done" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'active\')">Re-engage</button> <button class="qbtn" onclick="event.stopPropagation();reengageDraft(\'' + escJs(id) + '\')">Draft note</button>' + (r.status === 'dismissed' ? '' : ' <button class="qbtn" onclick="event.stopPropagation();contactSetReengage(\'' + escJs(id) + '\',\'dismissed\')">Not now</button>');
   return '<div class="qi"><div class="txt">' + sub + '</div><div class="acts">' + acts + '</div></div><div id="reengage-draft-' + esc(id) + '"></div>';
 }
 /* ---- Merge two people (soft + reversible): move every role/document onto the primary, then set
@@ -11315,7 +11315,7 @@ function personMergePicker(id) {
   box.setAttribute('data-open', '1');
   box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
     + '<div class="hint" style="margin-bottom:6px;">Pick the record that is the SAME person. Their roles and documents move onto this one; the duplicate is set aside (reversible).</div>'
-    + '<input id="merge-q-' + esc(id) + '" placeholder="Search name…" oninput="personMergeFilter(\'' + esc(id) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<input id="merge-q-' + esc(id) + '" placeholder="Search name…" oninput="personMergeFilter(\'' + escJs(id) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
     + '<div id="merge-list-' + esc(id) + '"></div></div>';
   personMergeFilter(id);
 }
@@ -11325,7 +11325,7 @@ function personMergeFilter(id) {
   var others = (DATA.contacts || []).filter(function (c) { return String(c.id) !== String(id) && !(c.extra && c.extra.merged_into) && (!q || String(c.display_name || '').toLowerCase().indexOf(q) >= 0); });
   others.sort(function (a, b) { return String(a.display_name || '').localeCompare(String(b.display_name || '')); });
   list.innerHTML = others.slice(0, 12).map(function (c) {
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + '</div></div><button class="qbtn" onclick="event.stopPropagation();mergePeople(\'' + esc(id) + '\',\'' + esc(String(c.id)) + '\')">This is the same</button></div>';
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + '</div></div><button class="qbtn" onclick="event.stopPropagation();mergePeople(\'' + escJs(id) + '\',\'' + escJs(String(c.id)) + '\')">This is the same</button></div>';
   }).join('') || '<div class="hint">No match.</div>';
 }
 var mergeBusy = false;
@@ -11409,8 +11409,8 @@ function duplicatesHtml() {
   var h = '<div class="flabel" style="margin-top:4px;">Possible duplicates <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">— the same person may be on more than one card. Keep one; the rest fold in.</span></div>';
   h += groups.slice(0, 8).map(function (g) {
     var list = g.members.map(function (m) { return esc(m.display_name || ''); }).join('  ·  ');
-    var keeps = g.members.map(function (m) { return '<button class="qbtn done" onclick="event.stopPropagation();mergeGroupKeep(\'' + esc(g.key) + '\',\'' + esc(String(m.id)) + '\')">Keep ' + esc((m.display_name || '').split(',')[0]) + '</button>'; }).join(' ');
-    return '<div class="qi"><div class="txt"><div class="t2">' + list + ' <span class="hint">' + esc(g.why) + '</span></div><div style="margin-top:6px;">' + keeps + ' <button class="qbtn" onclick="event.stopPropagation();dupDismiss(\'' + esc(g.key) + '\')">Not the same</button></div></div></div>';
+    var keeps = g.members.map(function (m) { return '<button class="qbtn done" onclick="event.stopPropagation();mergeGroupKeep(\'' + escJs(g.key) + '\',\'' + escJs(String(m.id)) + '\')">Keep ' + esc((m.display_name || '').split(',')[0]) + '</button>'; }).join(' ');
+    return '<div class="qi"><div class="txt"><div class="t2">' + list + ' <span class="hint">' + esc(g.why) + '</span></div><div style="margin-top:6px;">' + keeps + ' <button class="qbtn" onclick="event.stopPropagation();dupDismiss(\'' + escJs(g.key) + '\')">Not the same</button></div></div></div>';
   }).join('');
   return '<div style="margin-bottom:10px;">' + h + '</div>';
 }
@@ -11747,7 +11747,7 @@ function buyerControls() {
   function c(k, lab) { return '<span class="filter-chip" onclick="setBuyerSort(\'' + k + '\')" style="cursor:pointer;' + (buyerSort === k ? 'font-weight:600;border-color:var(--ink);' : '') + '">' + lab + '</span>'; }
   return '<div class="chip-row" style="margin-bottom:8px;"><span class="chip-label">Sort</span> ' + c('active', 'Actively looking') + c('vip', 'VIP') + c('budget', 'Budget') + c('type', 'Type') + '</div>';
 }
-function buyerVipBtn(x) { var v = buyerIsVip(x); return '<button class="qbtn' + (v ? ' done' : '') + '" onclick="event.stopPropagation();toggleVip(\'' + esc(String(x.id)) + '\')">' + (v ? '★ VIP' : '☆ VIP') + '</button>'; }
+function buyerVipBtn(x) { var v = buyerIsVip(x); return '<button class="qbtn' + (v ? ' done' : '') + '" onclick="event.stopPropagation();toggleVip(\'' + escJs(String(x.id)) + '\')">' + (v ? '★ VIP' : '☆ VIP') + '</button>'; }
 async function toggleVip(id) {
   var r = recOf('buyers', id); if (!r) return;
   r.extra = r.extra || {}; r.extra.vip = !r.extra.vip;
@@ -11797,9 +11797,9 @@ function duplicatesBannerHtml() {
     return '<div style="border:1px solid var(--line);border-radius:2px;padding:8px;margin-bottom:8px;">' + grp.map(function (r) {
       var linked = dupLinkedEscrow(r, grp);
       var tag = esc(TITLES[r.table] || r.table) + (linked ? ' &middot; part of the listing’s escrow' : '');
-      var arch = linked ? '' : '<button class="qbtn" onclick="event.stopPropagation();archiveDuplicate(\'' + r.table + '\',\'' + esc(String(r.id)) + '\')">Archive this</button>';
+      var arch = linked ? '' : '<button class="qbtn" onclick="event.stopPropagation();archiveDuplicate(\'' + r.table + '\',\'' + escJs(String(r.id)) + '\')">Archive this</button>';
       return '<div class="qi"><div class="txt"><div class="t2">' + esc(r.label || '') + ' <span class="hint">' + tag + '</span></div></div>'
-        + '<button class="qbtn" onclick="event.stopPropagation();jumpToRecord(\'' + r.table + '\',\'' + esc(String(r.id)) + '\')">Open</button>'
+        + '<button class="qbtn" onclick="event.stopPropagation();jumpToRecord(\'' + r.table + '\',\'' + escJs(String(r.id)) + '\')">Open</button>'
         + arch + '</div>';
     }).join('') + '</div>';
   }).join('');
@@ -11918,7 +11918,7 @@ function archivedListHtml(table, list, labelFn) {
     var iso = r.archived_at || r.updated_at;
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(labelFn(r)) + '</div>'
       + '<div class="t2">Archived ' + (iso ? esc(fmtDate(String(iso).slice(0, 10))) : '') + '</div></div>'
-      + '<button class="qbtn" onclick="restoreArchived(\'' + table + '\',\'' + esc(String(r.id)) + '\')">Restore</button></div>';
+      + '<button class="qbtn" onclick="restoreArchived(\'' + table + '\',\'' + escJs(String(r.id)) + '\')">Restore</button></div>';
   }).join('');
   if (old.length) {
     var groups = {};
