@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.184.0';
+var APP_VERSION = 'v5.185.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -10181,7 +10181,7 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
   return '<div class="row' + swipeCls + '" data-rid="' + esc(String(id)) + '" data-atable="' + esc(rowTable) + '" onclick="toggleRow(this)">' + cov
     + '<div class="r1"><span class="nm">' + esc(nm) + (hot ? ' <span class="pill hot">HOT</span>' : '') + '</span><span class="rside">' + esc(side || '') + (actions || '') + '</span></div>'
     + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
-    + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(browseTab, id) + '</div>'
+    + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(rowTable, id) + '</div>'
     + '</div>';
 }
 /* Leads grouped by neighborhood (2026-07-24) -- see the call site in renderBrowse() for the why.
