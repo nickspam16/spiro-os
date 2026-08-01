@@ -666,7 +666,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.193.0';
+var APP_VERSION = 'v5.194.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6909,21 +6909,25 @@ function compsHtml(rec, excludeTxId) {
   return h;
 }
 
-/* ===== CMA engine (2026-08-01) =====
+/* ===== CMA engine (2026-08-01, geo added same day) =====
    Standalone comps_sets/comps_members-backed CMA, wired to the one-time 90-day listings_live
    backfill (3,705 rows, prompt_registry 'listings-live-seed-v1'/'comps-without-mls'). Deliberately
    NOT the same code path as compsHtml() above -- that card is Nick's-own-deals + hotsheet-solds,
    already live, left alone. This is the separate, heavier "Run CMA" report: a value range with
    confidence, built server-side by fn_build_comps() (SECURITY DEFINER, owner-only).
-   NO GEO-RADIUS, NO RECENCY FILTER: listings_live has no lat/lng and no close_date/on_market_date
-   for any backfilled row -- confirmed permanent for this data source, not a bug. Area match goes
-   through listings_live_area_alias instead of haversine; there is no way to know how old a given
-   "Closed" comp actually is, so confidence can never reach 'high' from this source (server-side cap,
-   see the comps_engine_v1 migration) and the result always carries an explicit staleness note. */
+   GEO IS NOW REAL for ~96% of listings_live (Census Bureau geocoder + TomTom fallback for the
+   addresses Census's guard rejected, run 2026-08-01 -- see comps_engine_geo_distance_v1 migration).
+   Subject lat/lng (from the linked property's own geocoded point, same source compsPoint() above
+   already uses) is passed through so fn_build_comps can compute a real distance per comp instead
+   of relying only on the MLS neighbourhood label. STILL NO RECENCY FILTER, THOUGH: listings_live has
+   no close_date/on_market_date for any backfilled row -- that gap is unrelated to geocoding and is
+   still permanent for this data source. A "Closed" comp's actual sale date stays unknowable, so
+   confidence still cannot reach 'high' from this source (server-side cap, unchanged by the geo
+   work) and the result always carries an explicit staleness note. */
 function cmaResolveSubject(rec) {
   var addr = rec.address || '';
   var beds = numFrom(rec.beds), sqft = numFrom(rec.sqft);
-  var neighborhood = null;
+  var neighborhood = null, lat = null, lng = null;
   var prop = rec.property_id ? (DATA.properties || []).filter(function (p) { return String(p.id) === String(rec.property_id); })[0] : null;
   if (prop && prop.neighborhood) {
     neighborhood = prop.neighborhood;
@@ -6938,15 +6942,19 @@ function cmaResolveSubject(rec) {
     var known = (DATA.area_centroids || []).some(function (c) { return c.name === cityTitle; });
     if (known) neighborhood = cityTitle;
   }
-  if (!neighborhood) {
-    var pp = compsPoint(rec);
-    if (pp) neighborhood = pp.exact ? compsNearestArea(pp) : (pp.name || compsNearestArea(pp));
-  }
+  var pp = compsPoint(rec);
+  if (!neighborhood && pp) neighborhood = pp.exact ? compsNearestArea(pp) : (pp.name || compsNearestArea(pp));
+  /* Subject position for the new distance-ranking in fn_build_comps. Only pass it when it's a real
+     rooftop point (pp.exact, i.e. resolved through properties.lat/lng) -- a centroid-level pp still
+     has lat/lng but printing "0.3mi away" off a neighbourhood centroid would fabricate precision
+     the same way compsSignals() above already refuses to do. fn_build_comps treats it as optional:
+     comps still build fine without it, just without the distance column. */
+  if (pp && pp.exact) { lat = pp.lat; lng = pp.lng; }
   /* No property_subtype column exists anywhere on `listings` or `properties` -- a real gap, not
      wired around. This is the one, weak, address-text heuristic available; when it doesn't match,
      fn_build_comps runs without a type filter and says so in its params rather than guessing. */
   var subtype = /(#\s*\w|\bunit\b|\bapt\b|\bste\b|\bcondo\b|\bco-?op\b)/i.test(addr) ? 'Condo/Co-Op' : null;
-  return { address: addr, beds: beds, sqft: sqft, property_subtype: subtype, neighborhood: neighborhood };
+  return { address: addr, beds: beds, sqft: sqft, property_subtype: subtype, neighborhood: neighborhood, lat: lat, lng: lng };
 }
 function cmaResultHtml(set, members) {
   if (!set || !set.comp_count) {
@@ -6958,11 +6966,14 @@ function cmaResultHtml(set, members) {
   var h = '<div class="flabel" style="margin-top:8px;">CMA result <span class="' + confPill + '">' + esc(conf) + ' confidence</span></div>';
   h += '<div class="t1" style="font-size:18px;">' + fmtMoney(set.value_point) + '</div>';
   h += '<div class="hint">Range ' + fmtMoney(set.value_low) + '&ndash;' + fmtMoney(set.value_high) + ' &middot; ' + set.comp_count + ' comps &middot; $' + Math.round(set.ppsf_median) + '/sqft median</div>';
-  h += '<div class="hint" style="margin-top:4px;">From the 2026-08-01 90-day MLS snapshot &mdash; no sale dates or exact positions in this data, so this is directional, not live. Verify against current activity before quoting a seller.</div>';
+  var geoPct = set.params && set.params.geo_coverage_pct;
+  h += '<div class="hint" style="margin-top:4px;">From the 2026-08-01 90-day MLS snapshot &mdash; no sale dates in this data, so this is directional, not live, regardless of distance shown below. Verify against current activity before quoting a seller.'
+    + (geoPct != null ? ' Real position available for ' + geoPct + '% of these comps.' : '') + '</div>';
   h += members.slice(0, 8).map(function (m) {
     return '<div class="qi"><div class="txt"><div class="t1">MLS ' + esc(m.listing_key) + '</div><div class="t2">'
       + esc(m.neighborhood || '') + ' &middot; $' + Number(m.close_price).toLocaleString('en-US') + ' &middot; $' + Math.round(m.ppsf) + '/sqft'
-      + (m.bed_delta ? ' &middot; ' + (m.bed_delta > 0 ? '+' : '') + m.bed_delta + ' bed' : '') + '</div></div></div>';
+      + (m.bed_delta ? ' &middot; ' + (m.bed_delta > 0 ? '+' : '') + m.bed_delta + ' bed' : '')
+      + (m.distance_mi != null ? ' &middot; ' + Number(m.distance_mi).toFixed(2) + 'mi away' : '') + '</div></div></div>';
   }).join('');
   return h;
 }
