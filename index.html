@@ -666,7 +666,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.191.0';
+var APP_VERSION = 'v5.192.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6061,7 +6061,7 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + cmaHtml(sid) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
@@ -6891,6 +6891,89 @@ function compsHtml(rec, excludeTxId) {
       + ' &middot; ' + where + '</div></div></div>';
   }).join('');
   return h;
+}
+
+/* ===== CMA engine (2026-08-01) =====
+   Standalone comps_sets/comps_members-backed CMA, wired to the one-time 90-day listings_live
+   backfill (3,705 rows, prompt_registry 'listings-live-seed-v1'/'comps-without-mls'). Deliberately
+   NOT the same code path as compsHtml() above -- that card is Nick's-own-deals + hotsheet-solds,
+   already live, left alone. This is the separate, heavier "Run CMA" report: a value range with
+   confidence, built server-side by fn_build_comps() (SECURITY DEFINER, owner-only).
+   NO GEO-RADIUS, NO RECENCY FILTER: listings_live has no lat/lng and no close_date/on_market_date
+   for any backfilled row -- confirmed permanent for this data source, not a bug. Area match goes
+   through listings_live_area_alias instead of haversine; there is no way to know how old a given
+   "Closed" comp actually is, so confidence can never reach 'high' from this source (server-side cap,
+   see the comps_engine_v1 migration) and the result always carries an explicit staleness note. */
+function cmaResolveSubject(rec) {
+  var addr = rec.address || '';
+  var beds = numFrom(rec.beds), sqft = numFrom(rec.sqft);
+  var neighborhood = null;
+  var prop = rec.property_id ? (DATA.properties || []).filter(function (p) { return String(p.id) === String(rec.property_id); })[0] : null;
+  if (prop && prop.neighborhood) {
+    neighborhood = prop.neighborhood;
+  } else if (prop && prop.city) {
+    /* properties.neighborhood is unpopulated for every one of Nick's own listings (geocoding
+       backfill only ever wrote lat/lng/city/zip) -- try the city name directly first, since for
+       this luxury-farm area set city and neighborhood are usually the same string ("Beverly Hills",
+       "Santa Monica", "Malibu"). Only fall back to nearest-centroid-by-distance below, because that
+       can land on a small, unmapped enclave centroid (e.g. Trousdale) for a property that everyone,
+       including TheMLS export, would call "Beverly Hills". */
+    var cityTitle = String(prop.city).toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    var known = (DATA.area_centroids || []).some(function (c) { return c.name === cityTitle; });
+    if (known) neighborhood = cityTitle;
+  }
+  if (!neighborhood) {
+    var pp = compsPoint(rec);
+    if (pp) neighborhood = pp.exact ? compsNearestArea(pp) : (pp.name || compsNearestArea(pp));
+  }
+  /* No property_subtype column exists anywhere on `listings` or `properties` -- a real gap, not
+     wired around. This is the one, weak, address-text heuristic available; when it doesn't match,
+     fn_build_comps runs without a type filter and says so in its params rather than guessing. */
+  var subtype = /(#\s*\w|\bunit\b|\bapt\b|\bste\b|\bcondo\b|\bco-?op\b)/i.test(addr) ? 'Condo/Co-Op' : null;
+  return { address: addr, beds: beds, sqft: sqft, property_subtype: subtype, neighborhood: neighborhood };
+}
+function cmaResultHtml(set, members) {
+  if (!set || !set.comp_count) {
+    var note = (set && set.params && set.params.note) || 'Not enough comps to build a CMA yet.';
+    return '<div class="hint">' + esc(note) + '</div>';
+  }
+  var conf = set.confidence || 'insufficient';
+  var confPill = conf === 'medium' ? 'pill ok' : conf === 'low' ? 'pill warn' : 'pill';
+  var h = '<div class="flabel" style="margin-top:8px;">CMA result <span class="' + confPill + '">' + esc(conf) + ' confidence</span></div>';
+  h += '<div class="t1" style="font-size:18px;">' + fmtMoney(set.value_point) + '</div>';
+  h += '<div class="hint">Range ' + fmtMoney(set.value_low) + '&ndash;' + fmtMoney(set.value_high) + ' &middot; ' + set.comp_count + ' comps &middot; $' + Math.round(set.ppsf_median) + '/sqft median</div>';
+  h += '<div class="hint" style="margin-top:4px;">From the 2026-08-01 90-day MLS snapshot &mdash; no sale dates or exact positions in this data, so this is directional, not live. Verify against current activity before quoting a seller.</div>';
+  h += members.slice(0, 8).map(function (m) {
+    return '<div class="qi"><div class="txt"><div class="t1">MLS ' + esc(m.listing_key) + '</div><div class="t2">'
+      + esc(m.neighborhood || '') + ' &middot; $' + Number(m.close_price).toLocaleString('en-US') + ' &middot; $' + Math.round(m.ppsf) + '/sqft'
+      + (m.bed_delta ? ' &middot; ' + (m.bed_delta > 0 ? '+' : '') + m.bed_delta + ' bed' : '') + '</div></div></div>';
+  }).join('');
+  return h;
+}
+async function runCma(sid) {
+  var rec = recOf('listings', sid); if (!rec) return;
+  var box = document.getElementById('cma-' + sid); if (!box) return;
+  box.innerHTML = '<div class="hint">Building CMA&hellip;</div>';
+  var subject = cmaResolveSubject(rec);
+  if (!subject.beds || !subject.sqft) {
+    box.innerHTML = '<div class="hint">Need beds and sqft on file for this listing to run a CMA. <button class="qbtn" onclick="event.stopPropagation();runCma(\'' + escJs(sid) + '\')">Retry</button></div>';
+    return;
+  }
+  var r = await withTimeout(sb.rpc('fn_build_comps', {
+    p_subject: subject,
+    p_opts: { subject_type: 'listing', subject_id: sid, property_id: rec.property_id || null }
+  }), 15000, { error: { message: 'timeout — could not reach the server' } });
+  if (r.error) { box.innerHTML = '<div class="hint">Could not run CMA: ' + esc(r.error.message || 'unknown error') + '</div>'; return; }
+  var setId = r.data;
+  var setRes = await sb.from('comps_sets').select('*').eq('id', setId).single();
+  var memRes = await sb.from('comps_members').select('*').eq('set_id', setId).order('similarity', { ascending: false });
+  if (setRes.error || !setRes.data) { box.innerHTML = '<div class="hint">CMA ran but the result could not be loaded — check the Comps sets table.</div>'; return; }
+  box.innerHTML = cmaResultHtml(setRes.data, memRes.data || []);
+}
+function cmaHtml(sid) {
+  return '<div class="flabel" style="margin-top:12px;">CMA <button class="hbtn" onclick="event.stopPropagation();runCma(\'' + escJs(sid) + '\')" title="Build a comps-based value range from the MLS backfill">Run CMA</button></div>'
+    + '<div class="hint">Comps-based value range from the 2026-08-01 90-day MLS snapshot &mdash; separate from "Comps nearby" above, which is your own deals + live hotsheet solds.</div>'
+    + '<div id="cma-' + esc(sid) + '"></div>';
 }
 
 /* ===== Agent-relationship / IG-feature credit log (2026-07-24) =====
