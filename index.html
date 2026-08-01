@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.187.0';
+var APP_VERSION = 'v5.188.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -7856,7 +7856,7 @@ async function announceToBuyer(buyerId, count) {
 }
 
 /* ---------- buyer ↔ property links (junction for leads, matches for the rest) ---------- */
-var LINK_KIND = { offmarket: 'Lead', listings: 'Listing', prospects: 'Prospect' };
+var LINK_KIND = { offmarket: 'Lead', listings: 'Listing', prospects: 'Prospect', listings_live: 'Active (backfill)' };
 var LINK_GROUPS = [['offmarket', 'Off-market leads'], ['listings', 'Listings'], ['prospects', 'Prospects']];
 function recLabel(t, id) {
   var r = null;
@@ -7920,9 +7920,18 @@ function buyerLinkRows(bid) {
   });
   DATA.matches.forEach(function (m) {
     if (String(m.buyer_id) !== bid) return;
-    var t = m.target_type, k = t + ':' + m.target_id;
-    if (seen[k] || !DATA[t]) return;
-    var lab = recLabel(t, m.target_id);
+    var t = m.target_type;
+    /* listings_live matches (2026-08-01, one-time backfill-seed) are the one target_type with no
+       browsable DATA table and no target_id — matches.target_ref (mls_number) is the real key, per
+       the schema note on that column. Dedup/label must key off target_ref here, not target_id
+       (every row for a buyer would otherwise collide on the same "listings_live:null" key and only
+       the first would ever render), and the label comes straight from target_address/target_ref
+       since there's no record to look up via recLabel(). */
+    var isListingsLive = (t === 'listings_live');
+    var k = isListingsLive ? (t + ':' + (m.target_ref || m.id)) : (t + ':' + m.target_id);
+    if (seen[k]) return;
+    if (!isListingsLive && !DATA[t]) return;
+    var lab = isListingsLive ? (m.target_address || m.target_ref || 'Active listing (backfill)') : recLabel(t, m.target_id);
     if (!lab) return;
     if (m.status === 'confirmed') { seen[k] = 1; linked.push({ type: t, id: String(m.target_id), label: lab, via: 'match', matchId: m.id,
       sent_at: m.sent_at, response: m.response, response_at: m.response_at, response_notes: m.response_notes }); }
@@ -8003,8 +8012,14 @@ async function logBuyerResponse(via, recType, recId, buyerId, matchId, response)
   await loadAll(false); toast('Logged ✓');
 }
 function linkChip(bid, l) {
+  /* listings_live has no browsable record to jump to (jumpToRecord no-ops safely on it either
+     way, via its own !DATA[t] guard, but a plain label reads better than a dead-looking click
+     target). Everything else keeps the existing jump-to-record behavior. */
+  var labelSpan = (l.type === 'listings_live')
+    ? '<span>' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>'
+    : '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(' + "'" + l.type + "','" + l.id + "'" + ')">' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>';
   return '<div class="qi"><div class="txt"><div class="t1">'
-    + '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(' + "'" + l.type + "','" + l.id + "'" + ')">' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>'
+    + labelSpan
     + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();unlinkBuyer(' + "'" + bid + "','" + l.type + "','" + l.id + "','" + (l.matchId || '') + "','" + l.via + "'" + ')">&#10005;</span></div>'
     + sendStatusLine(l.sent_at, l.response, l.response_at, l.response_notes) + '</div>'
     + '<div class="acts">' + sendActionsHtml(l.via, l.type, l.id, bid, l.matchId, l.sent_at, l.response) + '</div></div>';
