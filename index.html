@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.188.0';
+var APP_VERSION = 'v5.189.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -5015,7 +5015,13 @@ function escrowExtras(sid) {
     + '</div>';
   if (envs.length) {
     h += '<div onclick="event.stopPropagation()">' + envs.map(function (e) {
-      var who = (e.recipients || []).map(function (r) { return r.name || r.email; }).filter(Boolean).join(', ');
+      /* Bug fix (2026-08-01): esign_envelopes.recipients is stored as {signers:[...]}, not a bare
+         array -- confirmed against live data (every row checked has this shape). This line was
+         reading it as if it were the array itself, so (e.recipients||[]) evaluated to the
+         {signers:[...]} object (truthy, not falsy) and .map() threw, crashing the whole Unconfirmed/
+         Escrows row render (caught by safeRender, so it failed silently -- looked like a dead
+         button, not a crash). envClient() (~L11784) already has the correct pattern; matched here. */
+      var who = ((e.recipients && e.recipients.signers) || []).map(function (r) { return r.name || r.email; }).filter(Boolean).join(', ');
       var st = e.status || 'created';
       var meta = st + (who ? ' · ' + who : '') + (e.sent_at ? ' · sent ' + new Date(e.sent_at).toLocaleDateString() : '') + (e.completed_at ? ' · signed ' + new Date(e.completed_at).toLocaleDateString() : '');
       var pill = st === 'completed' ? '<span class="pill ok">Signed</span>' : st === 'sent' ? '<span class="pill">Out for signature</span>' : '<span class="pill warn">Ready to send</span>';
