@@ -565,8 +565,9 @@
          Needs-review items group together up top so they're easy to parse in one pass; already-
          handled ones collapse below for reference/undo. -->
     <div class="card" id="market-card" style="display:none;">
-      <h2>Market <button class="hbtn" onclick="event.stopPropagation();fetchMarket(true)" title="Refresh">&#8635;</button></h2>
+      <h2>Market <button class="hbtn" onclick="event.stopPropagation();fetchMarket(true)" title="Refresh">&#8635;</button> <button class="hbtn" onclick="event.stopPropagation();toggleHotsheetPaste()" title="Manual hotsheet paste">Paste hotsheet</button></h2>
       <div class="hint" style="margin:-6px 0 10px;">New listings, sales, and price changes from your Mon/Thu MLS monitor — dismiss what's not interesting, or flag one for a buyer to review later.</div>
+      <div id="hotsheet-paste-box" style="display:none;"></div>
       <div id="market-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
@@ -665,7 +666,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.190.0';
+var APP_VERSION = 'v5.191.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -9655,6 +9656,47 @@ async function fetchMarket(force) {
     if (mCard && mCard.style.display !== 'none') renderMarketReview();
     renderCoverage(); /* freshness half of the coverage card depends on MARKET, which lands after the initial render() */
   } catch (e) {}
+}
+
+/* Manual hotsheet paste (2026-08-01) -- fallback for when the automated TheMLS "Daily Hotsheet"
+   pipeline breaks (as it did 2026-07-19 through at least 2026-07-31; full incident history in
+   Supabase prompt_registry.hotsheet_ingest). Per the 2026-07-30 strategic architecture review's
+   #1-ranked action: restore the feed with a manual fallback so a future break degrades to a
+   2-minute paste instead of another silent multi-week gap. The parsing itself happens server-side
+   in the hotsheet-manual-ingest edge function (same v2 reference parser already proven on 1,345+
+   real listings) -- this is just the paste box + result display. */
+function toggleHotsheetPaste() {
+  var box = document.getElementById('hotsheet-paste-box');
+  if (!box) return;
+  var open = box.style.display !== 'none';
+  if (open) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.innerHTML = '<div class="hint" style="margin:0 0 6px;">Paste the raw HTML of a "Daily Hotsheet" email (View source / Show original in Gmail, or Inspect → copy the message body\'s outerHTML) — use this if the automated feed has gone quiet. Safe to paste the same email twice; monitored-area listings dedupe automatically.</div>'
+    + '<textarea id="hotsheet-paste-input" style="width:100%;min-height:120px;font-family:monospace;font-size:11px;" placeholder="Paste hotsheet HTML here…"></textarea>'
+    + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();submitHotsheetPaste()">Parse &amp; ingest</button></div>'
+    + '<div id="hotsheet-paste-result"></div>';
+}
+async function submitHotsheetPaste() {
+  var ta = document.getElementById('hotsheet-paste-input');
+  var out = document.getElementById('hotsheet-paste-result');
+  var html = ta ? ta.value : '';
+  if (!html || !html.trim()) { toast('Paste the hotsheet HTML first'); return; }
+  if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;">Parsing…</div>';
+  try {
+    var r = await withTimeout(sb.functions.invoke('hotsheet-manual-ingest', { body: { html: html } }), 30000, { error: { message: 'timed out' } });
+    if (r.error) { if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;color:#b3382c;">Failed — ' + esc(r.error.message || 'unknown error') + '</div>'; return; }
+    var d = r.data || {};
+    if (!d.ok) { if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;color:#b3382c;">' + esc(d.error || 'Failed') + '</div>'; return; }
+    if (!d.parsed_total) { if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;">' + esc(d.note || 'Nothing usable found in that paste.') + '</div>'; return; }
+    var byEv = Object.keys(d.by_event_type || {}).map(function (k) { return d.by_event_type[k] + ' ' + k; }).join(', ');
+    if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;">Parsed ' + d.parsed_total + ' listing(s) for ' + esc(d.event_date) + ': ' + esc(byEv) + '. '
+      + d.tier1_newly_inserted + ' newly written to market_events (' + (d.tier1_inserted_or_deduped - d.tier1_newly_inserted) + ' already on file), '
+      + d.tier2_areas_touched + ' area snapshot(s) updated, ' + d.unmonitored_area_count + ' listing(s) in non-monitored areas (aggregate-only).</div>';
+    toast('Hotsheet ingested ✓');
+    fetchMarket(true);
+  } catch (e) {
+    if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;color:#b3382c;">' + esc(String(e && e.message || e)) + '</div>';
+  }
 }
 function fmtMoney(n) { return n == null ? '' : '$' + Number(n).toLocaleString('en-US'); }
 /* Market review queue (2026-07-24) — replaces the old read-only marketHtml(). Needs-review events
