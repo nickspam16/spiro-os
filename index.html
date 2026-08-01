@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.186.0';
+var APP_VERSION = 'v5.187.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1336,7 +1336,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
 var pendingEmail = '';
-var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [], market_solds: [], transaction_documents: [], tc_document_templates: [] };
+var DATA = { feedHealth: [], addrCandidates: [], dupContacts: [], followups: [], buyers: [], listings: [], offmarket: [], transactions: [], prospects: [], captures: [], events: [], memories: [], graveyard: [], links: [], matches: [], transaction_deadlines: [], esign_envelopes: [], showings: [], open_houses: [], area_centroids: [], app_config: [], agents: [], agent_deals: [], contacts: [], properties: [], agent_leads: [], property_photos: [], listing_agents: [], share_links: [], share_link_views: [], area_aliases: [], calendar_suggestions: [], prospects_archived: [], offmarket_archived: [], transaction_tasks: [], tc_task_templates: [], transaction_commission_items: [], tc_template_feedback: [], market_solds: [], transaction_documents: [], tc_document_templates: [], transaction_parties: [] };
 var lastLoad = 0;
 var lastLoadPartial = false; /* S8: true when the last loadAll couldn't refresh every table (flaky net / partial failure) */
 /* 2026-07-23: was 'buyers' — a leftover from before the Records tab order changed. Reordering
@@ -1804,9 +1804,14 @@ async function loadAll(manual) {
        required-DOCUMENT list per deal. Small per-deal row counts (~15-22), same safe-to-load-in-
        full reasoning as transaction_tasks/tc_task_templates above. */
     sb.from('transaction_documents').select('*'),
-    sb.from('tc_document_templates').select('*')
+    sb.from('tc_document_templates').select('*'),
+    /* TC Week 3.0 prerequisite, deal roster (2026-08-01): escrow officer / lender / title officer /
+       trust attorney per transaction, so party-reminder buttons (Week 3 sub-deliverable 1) and
+       drafted comms have someone to draft to. Tiny per-deal row counts, same safe-to-load-in-full
+       reasoning as transaction_tasks/tc_task_templates above. */
+    sb.from('transaction_parties').select('*')
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
      truth, so this response is dropped entirely rather than partially applied — writing even
      some of these arrays would leave DATA a mix of two different points in time. */
@@ -4973,6 +4978,7 @@ function escrowExtras(sid) {
   if (tx.address) h += '<div style="margin:2px 0 10px;"><button class="qbtn done" onclick="event.stopPropagation();farmBlock(' + q + ')">Farm the block &#8614; neighbors</button> <span class="hint">pulls every parcel on this street into Prospects to mail.</span></div>';
   h += clientHtml(tx);
   h += coopAgentHtml(tx);
+  h += dealRosterHtml(tx.id);
   var dls = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) === sid; })
     .sort(function (a, b) { return String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')); });
   h += '<div class="flabel">Deadlines</div>';
@@ -8735,6 +8741,74 @@ async function setCoopAgent(sid, agentId) {
   flagAgentContactIfMissing(agentId);
   logEvent('transactions', sid, 'deal.coop_agent_set', 'Other-side agent: ' + (recLabel('agents', agentId) || ''));
   renderBrowse(); toast('Other-side agent assigned ✓');
+}
+/* Deal roster (TC Week 3.0 prerequisite, 2026-08-01) — escrow officer / lender / title officer /
+   trust attorney per transaction. Distinct from the vendor block below (inspectors/contractors/
+   photographers -- who WORKED the property) and from client/coop-agent above (the two parties
+   already wired) -- roster is the transaction-side professionals a TC drafts reminders to and
+   routes inbound email against (Week 3 sub-deliverables 1/2, not built yet). Junction table
+   (transaction_parties), not fixed columns, because a deal can have >1 of a role (e.g. two
+   lenders: buy-side pre-approval + list-side backup). Never gated -- a deal with zero roster
+   still works, just has fewer reminder-target buttons once those are built. Per "TC Week 3 deep
+   scope" (Notion, 2026-08-01), approved by Nick same day. */
+var TC_ROSTER_ROLES = [['escrow_officer', 'Escrow officer'], ['lender', 'Lender'], ['title_officer', 'Title officer'], ['trust_attorney', 'Trust attorney'], ['other', 'Other']];
+function tcRosterRoleLabel(role) { var m = null; TC_ROSTER_ROLES.forEach(function (r) { if (r[0] === role) m = r[1]; }); return m || role; }
+function dealRosterHtml(tid) {
+  var sid = String(tid);
+  var rows = (DATA.transaction_parties || []).filter(function (p) { return String(p.transaction_id) === sid; });
+  var h = '<div class="flabel" style="margin-top:12px;">Roster <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; escrow, lender, title, trust attorney on this deal</span></div>';
+  h += (rows.map(function (p) {
+    var who = p.contact_id ? contactLabel(p.contact_id) : (p.label || 'Unnamed');
+    return '<span class="pill" style="margin:0 4px 4px 0;">' + esc(tcRosterRoleLabel(p.role)) + ': ' + (p.contact_id ? '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'people\',\'' + escJs(String(p.contact_id)) + '\')">' + esc(who) + '</span>' : esc(who))
+      + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();removeTransactionParty(\'' + escJs(sid) + '\',\'' + escJs(String(p.id)) + '\')">&#10005;</span></span>';
+  }).join('')) || '<span class="hint">none yet</span>';
+  h += ' <button class="qbtn" onclick="event.stopPropagation();dealRosterPicker(\'' + escJs(sid) + '\')">&#65291; Add to roster</button>';
+  h += '<div id="roster-box-' + esc(sid) + '" data-open="0"></div>';
+  return h;
+}
+function dealRosterPicker(sid) {
+  var box = document.getElementById('roster-box-' + sid); if (!box) return;
+  if (box.getAttribute('data-open') === '1') { box.innerHTML = ''; box.setAttribute('data-open', '0'); return; }
+  box.setAttribute('data-open', '1');
+  var roleOpts = TC_ROSTER_ROLES.map(function (r) { return '<option value="' + r[0] + '">' + esc(r[1]) + '</option>'; }).join('');
+  box.innerHTML = '<div style="margin-top:8px;padding:10px;border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);" onclick="event.stopPropagation()">'
+    + '<div class="hint" style="margin-bottom:6px;">Role on this deal, then search contacts or type a name — a deal can have more than one of the same role.</div>'
+    + '<select id="roster-role-' + esc(sid) + '" style="width:100%;box-sizing:border-box;margin-bottom:6px;">' + roleOpts + '</select>'
+    + '<input id="roster-q-' + esc(sid) + '" placeholder="Search contacts, or type a new name…" oninput="dealRosterFilter(\'' + escJs(sid) + '\')" style="width:100%;box-sizing:border-box;margin-bottom:6px;">'
+    + '<div id="roster-list-' + esc(sid) + '"></div></div>';
+  dealRosterFilter(sid);
+}
+function dealRosterFilter(sid) {
+  var qel = document.getElementById('roster-q-' + sid), q = (qel && qel.value || '').trim(), ql = q.toLowerCase();
+  var list = document.getElementById('roster-list-' + sid); if (!list) return;
+  var matches = (DATA.contacts || []).filter(function (c) { return !(c.extra && c.extra.merged_into) && (!ql || String(c.display_name || '').toLowerCase().indexOf(ql) >= 0); });
+  matches.sort(function (a, b) { return String(a.display_name || '').localeCompare(String(b.display_name || '')); });
+  var h = matches.slice(0, 8).map(function (c) {
+    return '<div class="qi"><div class="txt"><div class="t2">' + esc(c.display_name || '') + (c.kind ? ' <span class="hint">' + esc(c.kind) + '</span>' : '') + '</div></div><button class="qbtn done" onclick="event.stopPropagation();addTransactionParty(\'' + escJs(sid) + '\',\'' + escJs(String(c.id)) + '\')">Add</button></div>';
+  }).join('');
+  if (q) h += '<div class="qi"><div class="txt"><div class="t2">Add as a plain label &ldquo;' + esc(q) + '&rdquo; (no contact record)</div></div><button class="qbtn done" onclick="event.stopPropagation();addTransactionParty(\'' + escJs(sid) + '\',\'\')">Add</button></div>';
+  list.innerHTML = h || '<div class="hint">Type a name to add.</div>';
+}
+async function addTransactionParty(sid, contactId) {
+  var tx = recOf('transactions', sid); if (!tx) return;
+  var roleEl = document.getElementById('roster-role-' + sid);
+  var role = (roleEl && roleEl.value) || 'other';
+  var qel = document.getElementById('roster-q-' + sid);
+  var typed = (qel && qel.value || '').trim();
+  if (!contactId && !typed) { toast('Enter a name'); return; }
+  var row = { transaction_id: sid, role: role, contact_id: contactId || null, label: contactId ? null : typed };
+  var ins = await sb.from('transaction_parties').insert(row).select('*');
+  if (ins.error || !ins.data || !ins.data[0]) { toast('Could not add'); reportError('addTransactionParty.insert', (ins.error || new Error('insert returned no row'))); return; }
+  DATA.transaction_parties = (DATA.transaction_parties || []).concat(ins.data[0]);
+  logEvent('transactions', sid, 'deal.roster_added', tcRosterRoleLabel(role) + ': ' + (contactId ? contactLabel(contactId) : typed));
+  renderBrowse(); toast('Added to roster ✓');
+}
+async function removeTransactionParty(sid, partyId) {
+  var del = await sb.from('transaction_parties').delete().eq('id', partyId).select('id');
+  if (del.error) { toast('Could not remove'); return; }
+  DATA.transaction_parties = (DATA.transaction_parties || []).filter(function (p) { return String(p.id) !== String(partyId); });
+  logEvent('transactions', sid, 'deal.roster_removed', 'Removed a roster entry');
+  renderBrowse(); toast('Removed');
 }
 /* #6: vendors on a deal — inspectors, contractors, lenders, escrow, photographers, stagers. A vendor
    is a contact tagged kind='vendor' (no new silo); the deal stores {contact_id, role} on
