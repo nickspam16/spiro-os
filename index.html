@@ -665,7 +665,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.188.0';
+var APP_VERSION = 'v5.190.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -4969,6 +4969,29 @@ function escrowFollowups(sid, address) {
     return lab.indexOf(addr) !== -1 || addr.indexOf(lab) !== -1;
   });
 }
+/* TC Week 3 sub-deliverable 2 (inbound email routing), phase 1 of 3 -- 2026-08-01, per Nick's
+   explicit choice of the "explicit tag convention" matching strategy over address/roster-email
+   matching. Derived deterministically from the transaction id (no new column, no migration): the
+   same 8 hex chars are trivially recomputable server-side later by whatever parses inbound mail,
+   so the tag never drifts from what's on screen. Phase 2 is Nick asking escrow/lender/title to
+   use it going forward -- nothing to route on until real tagged replies exist. Phase 3 (the actual
+   inbound parser -> followups rows with record_type='transactions') is intentionally NOT built yet:
+   building it before any tagged email exists would be untestable. */
+function txnEmailTag(sid) {
+  return 'SPIRO-' + String(sid || '').replace(/-/g, '').slice(0, 8).toUpperCase();
+}
+function copyTxnTag(sid) {
+  var tag = txnEmailTag(sid);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tag).then(function () { toast('Tag copied ✓'); }, function () { toast('Could not copy — select manually'); });
+  else toast('Could not copy — select manually');
+}
+function txnEmailTagHtml(sid) {
+  var tag = txnEmailTag(sid);
+  return '<div class="flabel" style="margin-top:10px;">Email tag</div>'
+    + '<div class="hint" style="margin:-4px 0 6px;">Ask escrow, lender, and title to include this in the subject line of replies on this deal — once replies carry it, inbound routing can match them to this transaction automatically.</div>'
+    + '<div class="qi"><div class="txt"><div class="t1" style="font-family:monospace;letter-spacing:.5px;">' + esc(tag) + '</div></div>'
+    + '<button class="qbtn" onclick="event.stopPropagation();copyTxnTag(' + "'" + esc(sid) + "'" + ')">Copy</button></div>';
+}
 function escrowExtras(sid) {
   var tx = null;
   DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
@@ -4979,6 +5002,7 @@ function escrowExtras(sid) {
   h += clientHtml(tx);
   h += coopAgentHtml(tx);
   h += dealRosterHtml(tx.id);
+  h += txnEmailTagHtml(tx.id);
   var dls = (DATA.transaction_deadlines || []).filter(function (d) { return String(d.transaction_id) === sid; })
     .sort(function (a, b) { return String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')); });
   h += '<div class="flabel">Deadlines</div>';
@@ -5015,7 +5039,13 @@ function escrowExtras(sid) {
     + '</div>';
   if (envs.length) {
     h += '<div onclick="event.stopPropagation()">' + envs.map(function (e) {
-      var who = (e.recipients || []).map(function (r) { return r.name || r.email; }).filter(Boolean).join(', ');
+      /* Bug fix (2026-08-01): esign_envelopes.recipients is stored as {signers:[...]}, not a bare
+         array -- confirmed against live data (every row checked has this shape). This line was
+         reading it as if it were the array itself, so (e.recipients||[]) evaluated to the
+         {signers:[...]} object (truthy, not falsy) and .map() threw, crashing the whole Unconfirmed/
+         Escrows row render (caught by safeRender, so it failed silently -- looked like a dead
+         button, not a crash). envClient() (~L11784) already has the correct pattern; matched here. */
+      var who = ((e.recipients && e.recipients.signers) || []).map(function (r) { return r.name || r.email; }).filter(Boolean).join(', ');
       var st = e.status || 'created';
       var meta = st + (who ? ' · ' + who : '') + (e.sent_at ? ' · sent ' + new Date(e.sent_at).toLocaleDateString() : '') + (e.completed_at ? ' · signed ' + new Date(e.completed_at).toLocaleDateString() : '');
       var pill = st === 'completed' ? '<span class="pill ok">Signed</span>' : st === 'sent' ? '<span class="pill">Out for signature</span>' : '<span class="pill warn">Ready to send</span>';
