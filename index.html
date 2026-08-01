@@ -666,7 +666,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.192.0';
+var APP_VERSION = 'v5.193.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2721,10 +2721,26 @@ async function notDuplicate(aId, bId) {
   toast('Kept as separate people'); fetchDuplicateContacts();
 }
 
+/* FEED HEALTH DISPLAY (2026-08-01 fix). Nick's read on this, verbatim: "none of those items are
+   clickable or even things i can actually fix, they seem like items you need to address" -- correct
+   on both counts, and the bucket was not saying so. Two real bugs, not one:
+   (1) it rendered with the exact same bucket/qi shape as the genuinely actionable buckets above it
+       (dupContactsHtml, addrCandidatesHtml -- which DO have buttons), with no button and no
+       explanation, so it read as a broken task rather than a status you don't act on.
+   (2) 'selftest' itself showed up as a 4th "feed" needing attention. fn_feed_health_scan() (called
+       here) does not exclude it, unlike fn_selftest()'s own internal check which does
+       ("...where feed <> 'selftest'"). Since selftest's own feed_health row just reflects whatever
+       fn_selftest_run() found at its last cron tick, this could show a STALE failure (an hour-old
+       snapshot) alongside the three real, live feed problems it was itself summarizing -- confirmed
+       live 2026-08-01: 8 of 10 checks flagged at 13:15 UTC had already self-resolved by 17:30 UTC,
+       but the dashboard kept showing "selftest is failing" the whole time regardless.
+   Fix: drop the self-referential row (matches the exclusion fn_selftest() already applies), and say
+   plainly that this list is infrastructure Claude is tracking, not a queue waiting on a tap. */
 function feedHealthHtml() {
-  var rows = DATA.feedHealth || [];
+  var rows = (DATA.feedHealth || []).filter(function (f) { return f.feed !== 'selftest'; });
   if (!rows.length) return '';
-  return '<div class="bucket red">&#9888; Automation needs attention &middot; ' + rows.length + '</div>'
+  return '<div class="bucket red">&#9888; Automation health &middot; ' + rows.length + '</div>'
+    + '<div class="t2 hint" style="margin:2px 0 8px;">Backend jobs Claude is already tracking &mdash; not something to tap here, just visibility into what it&rsquo;s working on.</div>'
     + rows.map(function (f) {
         var what = FEED_PROBLEM_LABEL[f.problem] || String(f.problem || 'has a problem');
         return '<div class="qi"><div class="txt">'
