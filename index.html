@@ -360,6 +360,7 @@
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowReviewQueue()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Review queue <span id="more-menu-rq-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowLearning()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">What Spiro&rsquo;s learned</a>
+            <a href="javascript:void(0)" onclick="menuShowArchitectRegistry()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Architect Registry <span id="more-menu-archreg-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuShowCalendarSuggestions()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Calendar suggestions <span id="more-menu-calsug-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
@@ -534,6 +535,33 @@
       <div id="learn-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Architect Registry (2026-08-01): standing lookup of ~300 known-architect LA-area addresses,
+         built from an Exa deep-research pass across 55 architects (legacy, standing/demolished
+         status, prospecting sweep). Dual-purpose per Nick: Instagram content research AND a real
+         prospecting/farming tool — "I type in A. Quincy Jones houses in Brentwood and Spiro has a
+         record of them." Complementary to the existing extra.architect chain-tagging system (see
+         chainIntroHtml/setRecordArchitect) — that system is Nick's own manual tags on his CRM
+         records; this is Spiro's own reference knowledge of where the architecturally-significant
+         addresses actually are, independent of whether Nick has a record there yet. Read-only —
+         this table has no editor in the app; it's refreshed by re-running the research, not by
+         hand-editing rows in Spiro OS. -->
+    <div class="card" id="architect-registry-card" style="display:none;">
+      <h2>Architect Registry</h2>
+      <div class="hint" style="margin:-6px 0 10px;">~300 known addresses tied to 55 LA-area architects — search by architect and/or area. Tier A = standing, undesignated, real prospecting target · B = standing but landmarked/famous (content only) · C = demolished/lost · Flag = status unconfirmed, re-verify before use.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <input type="text" id="archreg-q-architect" placeholder="Architect (e.g. A Quincy Jones)" oninput="archRegSetFilter('architect',this.value)" style="flex:1;min-width:160px;">
+        <input type="text" id="archreg-q-area" placeholder="Area / city (e.g. Brentwood)" oninput="archRegSetFilter('area',this.value)" style="flex:1;min-width:160px;">
+        <select id="archreg-q-tier" onchange="archRegSetFilter('tier',this.value)" style="min-width:110px;">
+          <option value="">All tiers</option>
+          <option value="A">A — prospect</option>
+          <option value="B">B — content only</option>
+          <option value="C">C — lost</option>
+          <option value="Flag">Flag — unconfirmed</option>
+        </select>
+      </div>
+      <div id="archreg-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <!-- Pricing Preview dashboard (2026-07-24): moved out of the per-listing detail card, per Nick
          — off-market pricing previews to agents happen ~3x/year, not something that should sit in
          the daily listing view every time he opens a property. Same previewSuggestHtml/previewDraft/
@@ -666,7 +694,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.194.0';
+var APP_VERSION = 'v5.195.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -779,7 +807,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card', 'form-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card', 'form-card', 'architect-registry-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -823,6 +851,124 @@ function menuShowBrief() {
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
 function menuShowReviewQueue() { openPanel('review-queue-card'); renderReviewQueue(); }
 function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
+/* Architect Registry (2026-08-01) -- see the architect-registry-card comment above for the full
+   rationale. Two independent text filters (architect / area) + a tier dropdown, all client-side
+   over the ~300-row table already sitting in DATA from loadAll(). archAddrNorm/architectMatchesForAddress
+   are shared with the auto-suggest chip wired into the four existing chain-tag renderers below
+   (listingChainHtml/offmarketChainHtml/prospectChainHtml/transactionChainHtml) -- one normalization
+   function, one matching function, used by both the search UI and the suggestion feature so they
+   can never disagree about what "matches an address" means. */
+function menuShowArchitectRegistry() { openPanel('architect-registry-card'); renderArchitectRegistry(); }
+var ARCH_REG_FILTER = { architect: '', area: '', tier: '' };
+function archRegSetFilter(field, val) { ARCH_REG_FILTER[field] = val; renderArchitectRegistry(); }
+var ARCH_TIER_LABEL = { A: 'Prospect', B: 'Content only', C: 'Lost', Flag: 'Unconfirmed' };
+var ARCH_TIER_COLOR = { A: 'var(--green)', B: 'var(--muted)', C: '#b3382c', Flag: '#b3382c' };
+function renderArchitectRegistry() {
+  var body = document.getElementById('archreg-body'); if (!body) return;
+  var rows = DATA.architect_registry || [];
+  if (!rows.length) { body.innerHTML = '<div class="empty">Registry not loaded yet — reopen this panel after the next sync.</div>'; return; }
+  var qA = ARCH_REG_FILTER.architect.trim().toLowerCase();
+  var qArea = ARCH_REG_FILTER.area.trim().toLowerCase();
+  var qTier = ARCH_REG_FILTER.tier;
+  var filtered = rows.filter(function (r) {
+    if (qA && (r.architect || '').toLowerCase().indexOf(qA) === -1) return false;
+    if (qArea && (r.neighborhood || '').toLowerCase().indexOf(qArea) === -1 && (r.city || '').toLowerCase().indexOf(qArea) === -1) return false;
+    if (qTier && r.prospecting_tier !== qTier) return false;
+    return true;
+  }).sort(function (a, b) { return (a.architect || '').localeCompare(b.architect || '') || (a.address || '').localeCompare(b.address || ''); });
+  if (!qA && !qArea && !qTier) { body.innerHTML = '<div class="hint">Type an architect name and/or area above to search ' + rows.length + ' addresses across ' + (function () { var s = {}; rows.forEach(function (r) { s[r.architect] = 1; }); return Object.keys(s).length; })() + ' architects.</div>'; return; }
+  if (!filtered.length) { body.innerHTML = '<div class="empty">No matches. Try a shorter architect name or area — this is exact-substring search, not fuzzy.</div>'; return; }
+  body.innerHTML = '<div class="hint" style="margin-bottom:6px;">' + filtered.length + ' match' + (filtered.length === 1 ? '' : 'es') + '</div>' + filtered.slice(0, 150).map(function (r) {
+    var existing = archExistingCrmMatches(r);
+    var tierBadge = '<span style="font-size:11px;font-weight:700;color:' + (ARCH_TIER_COLOR[r.prospecting_tier] || 'var(--muted)') + ';border:1px solid currentColor;border-radius:4px;padding:1px 5px;margin-left:6px;">' + esc(r.prospecting_tier || '?') + '</span>';
+    var loc = [r.neighborhood, r.city].filter(Boolean).join(', ');
+    var meta = [r.year_built, r.landmark_status].filter(Boolean).join(' — ');
+    var crmLine = existing.length
+      ? existing.map(function (m) { return '<div class="qi" style="cursor:pointer;margin-top:4px;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(m.table) + '\',\'' + escJs(String(m.id)) + '\')"><div class="txt"><div class="t2">Already in your CRM (' + esc(m.table) + ') <span class="hint">→ open</span></div></div></div>'; }).join('')
+      : '';
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(r.architect) + tierBadge + '</div>'
+      + '<div class="t2">' + esc(r.address || 'address not confirmed') + (loc ? ' — ' + esc(loc) : '') + '</div>'
+      + (meta ? '<div class="t2">' + esc(meta) + '</div>' : '')
+      + (r.notes ? '<div class="t2">' + esc(r.notes) + '</div>' : '')
+      + (r.status ? '<div class="t2">' + esc(r.status) + '</div>' : '')
+      + crmLine
+      + '</div></div>';
+  }).join('') + (filtered.length > 150 ? '<div class="hint" style="margin-top:6px;">Showing first 150 of ' + filtered.length + ' — narrow your search for the rest.</div>' : '');
+}
+/* Shared address normalization -- mirrors the Postgres norm_address column (lower, strip a
+   trailing "(...)" parenthetical, strip non-alphanumerics) so client-side matching against
+   DATA.architect_registry agrees with how norm_address was actually populated. */
+function archAddrNorm(s) {
+  if (!s) return '';
+  return String(s).toLowerCase().replace(/\s+\([^)]*\)\s*$/, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+/* Conservative match: same leading house number AND overlapping first street-name token.
+   Deliberately NOT a loose substring match -- "100 Delfern Dr" vs "1000 Delfern Dr" must not
+   collide just because one string contains the other. A wrong architect suggestion is worse than
+   no suggestion (same principle as the geo-backfill work), so this only returns matches it's
+   confident in; anything looser is left for Nick's own eyes in the search panel above instead. */
+function architectMatchesForAddress(address) {
+  // silent-ok: pure client-side lookup over already-loaded data, not I/O -- "no confident match"
+  // is the normal/common case (most addresses aren't in a 306-row registry), not a failure to report.
+  var norm = archAddrNorm(address);
+  if (!norm) return [];
+  var numMatch = norm.match(/^(\d+)\s+(.*)$/);
+  if (!numMatch) return [];
+  var num = numMatch[1], street = numMatch[2], firstWord = street.split(' ')[0];
+  if (!firstWord) return [];
+  return (DATA.architect_registry || []).filter(function (r) {
+    // silent-ok: filter predicate -- false means "this row isn't a match", not an I/O failure.
+    if (!r.norm_address) return false;
+    if (r.norm_address === norm) return true;
+    var rMatch = r.norm_address.match(/^(\d+)\s+(.*)$/);
+    // silent-ok: same as above -- false here just excludes this row from the match set.
+    if (!rMatch || rMatch[1] !== num) return false;
+    var rFirstWord = rMatch[2].split(' ')[0];
+    return !!rFirstWord && (rFirstWord === firstWord);
+  });
+}
+/* For the search panel: does Nick already have a CRM record near/at this registry address?
+   Cheap linear scan over the (small) already-loaded arrays -- fine at this scale, matches the
+   scanning approach convergenceSignals/styleNeighbors already use elsewhere in this file. */
+function archExistingCrmMatches(regRow) {
+  if (!regRow.norm_address) return [];
+  var out = [];
+  function scan(table, list, addrField) {
+    (list || []).forEach(function (r) {
+      var n = archAddrNorm(r[addrField]);
+      if (n && n === regRow.norm_address) out.push({ table: table, id: r.id });
+    });
+  }
+  scan('listings', DATA.listings, 'address');
+  scan('offmarket', DATA.offmarket, 'address_area');
+  scan('prospects', DATA.prospects, 'address');
+  scan('transactions', DATA.transactions, 'address');
+  return out;
+}
+/* Suggestion chip shown in place of the bare "+ Set architect" button when architectMatchesForAddress
+   finds a confident hit and no architect tag is set yet. One tap accepts and writes extra.architect
+   via the SAME sb.from(table).update() path setListingArchitect/setRecordArchitect already use --
+   this is a suggestion the user must actively confirm, never a silent auto-write (Nick's standing
+   "a wrong coordinate is worse than a missing one" rule, applied here to architect tags). */
+function archSuggestChipHtml(table, id, matches) {
+  var m = matches[0];
+  return '<div class="qi" style="cursor:pointer;border-color:var(--green);" onclick="event.stopPropagation();acceptArchitectSuggestion(\'' + table + '\',\'' + escJs(String(id)) + '\',\'' + escJs(m.architect) + '\')"><div class="txt"><div class="t1">Suggested: ' + esc(m.architect) + '</div><div class="t2">Matched by address from the Architect Registry — tap to confirm, or set manually below</div></div></div>';
+}
+function acceptArchitectSuggestion(table, id, architectName) {
+  var r = recOf(table, id); if (!r) return;
+  r.extra = Object.assign({}, r.extra || {});
+  r.extra.architect = architectName;
+  sb.from(table).update({ extra: r.extra, updated_at: nowStamp() }).eq('id', id).then(function () { toast('Architect set ✓'); renderBrowse(); });
+}
+/* Badge count for the More-menu entry -- see the call site in render() for the full rationale. */
+function archPendingSuggestionCount() {
+  var n = 0;
+  (DATA.listings || []).forEach(function (l) { if (!(l.extra && l.extra.architect) && architectMatchesForAddress(l.address).length) n++; });
+  (DATA.offmarket || []).forEach(function (o) { if (!(o.extra && o.extra.architect) && architectMatchesForAddress(o.address_area).length) n++; });
+  (DATA.prospects || []).forEach(function (p) { if (!(p.extra && p.extra.architect) && architectMatchesForAddress(p.address).length) n++; });
+  (DATA.transactions || []).forEach(function (t) { if (!(t.extra && t.extra.architect) && architectMatchesForAddress(t.address).length) n++; });
+  return n;
+}
 async function renderLearning() {
   var body = document.getElementById('learn-body'); if (!body) return;
   body.innerHTML = '<div class="empty">Loading&hellip;</div>';
@@ -1810,9 +1956,16 @@ async function loadAll(manual) {
        trust attorney per transaction, so party-reminder buttons (Week 3 sub-deliverable 1) and
        drafted comms have someone to draft to. Tiny per-deal row counts, same safe-to-load-in-full
        reasoning as transaction_tasks/tc_task_templates above. */
-    sb.from('transaction_parties').select('*')
+    sb.from('transaction_parties').select('*'),
+    /* Architect Registry (2026-08-01): standing reference table of ~300 known-architect LA-area
+       addresses (John Lautner, A. Quincy Jones, Krisel tracts, etc — see architect_registry_inserts
+       and the companion prospecting-sweep doc). Complementary to the existing extra.architect
+       chain-tagging system, not a replacement: this is a lookup ("does Spiro know of an architect-
+       significant house near this one?"), the chain system is still what you manually tag records
+       with. Small, mostly-static table — safe to load in full every time, same as tc_task_templates. */
+    sb.from('architect_registry').select('id,architect,address,neighborhood,city,status,year_built,landmark_status,notes,prospecting_tier,norm_address')
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties', 'architect_registry'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
      truth, so this response is dropped entirely rather than partially applied — writing even
      some of these arrays would leave DATA a mix of two different points in time. */
@@ -1926,6 +2079,15 @@ function render() {
   if (moreCalSugN) { var pendingSug = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending' || (s.status === 'confirmed' && s.flag); }); moreCalSugN.textContent = pendingSug.length ? String(pendingSug.length) : ''; }
   var calSugCard = document.getElementById('calendar-suggestions-card');
   if (calSugCard && calSugCard.style.display !== 'none') renderCalendarSuggestionsCard();
+  /* Architect Registry badge (2026-08-01): count of your own CRM records (listings/offmarket/
+     prospects/transactions) that have NO architect tag yet but DO have a confident address match
+     in the registry -- i.e. an unclaimed suggestion sitting in the chain-tag UI somewhere. Zero
+     most of the time until the two datasets actually overlap; this just makes it visible when
+     they do, same "needs action" badge pattern as Review queue / Calendar suggestions above. */
+  var moreArchRegN = document.getElementById('more-menu-archreg-n');
+  if (moreArchRegN) { var archPending = archPendingSuggestionCount(); moreArchRegN.textContent = archPending ? String(archPending) : ''; }
+  var archRegCard = document.getElementById('architect-registry-card');
+  if (archRegCard && archRegCard.style.display !== 'none') safeRender('archreg', renderArchitectRegistry);
   /* SECURITY: APP_VERSION must stay a bare version tag -- see the note at its declaration. It is
      NO LONGER the internal changelog (removed 2026-07-23). This split() is kept purely as defence
      in depth, so that if anything is ever appended, only the leading "vX.Y.Z" token can reach the
@@ -6370,10 +6532,11 @@ function chainIntroHtml() {
 function offmarketChainHtml(oid) {
   var o = recOf('offmarket', oid); if (!o) return '';
   var architect = o.extra && o.extra.architect;
+  var archSuggest = !architect ? architectMatchesForAddress(o.address_area) : [];
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + escJs(oid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + escJs(oid) + '\')">&#65291; Set architect</button>';
+    : (archSuggest.length ? archSuggestChipHtml('offmarket', oid, archSuggest) : '') + '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'offmarket\',\'' + escJs(oid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('offmarket', oid) + buildingChainHtml('offmarket', oid) + chainMatchListHtml('offmarket', oid);
   return h;
 }
@@ -6387,10 +6550,11 @@ function offmarketChainHtml(oid) {
 function prospectChainHtml(pid) {
   var p = recOf('prospects', pid); if (!p) return '';
   var architect = p.extra && p.extra.architect;
+  var archSuggest = !architect ? architectMatchesForAddress(p.address) : [];
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + escJs(pid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + escJs(pid) + '\')">&#65291; Set architect</button>';
+    : (archSuggest.length ? archSuggestChipHtml('prospects', pid, archSuggest) : '') + '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'prospects\',\'' + escJs(pid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('prospects', pid) + buildingChainHtml('prospects', pid) + chainMatchListHtml('prospects', pid);
   return h;
 }
@@ -6405,10 +6569,11 @@ function prospectChainHtml(pid) {
 function transactionChainHtml(tid) {
   var t = recOf('transactions', tid); if (!t) return '';
   var architect = t.extra && t.extra.architect;
+  var archSuggest = !architect ? architectMatchesForAddress(t.address) : [];
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   h += architect
     ? '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + escJs(tid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">tap to edit</div></div></div>'
-    : '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + escJs(tid) + '\')">&#65291; Set architect</button>';
+    : (archSuggest.length ? archSuggestChipHtml('transactions', tid, archSuggest) : '') + '<button class="qbtn" onclick="event.stopPropagation();setRecordArchitect(\'transactions\',\'' + escJs(tid) + '\')">&#65291; Set architect</button>';
   h += styleChainHtml('transactions', tid) + buildingChainHtml('transactions', tid) + chainMatchListHtml('transactions', tid);
   return h;
 }
@@ -6692,6 +6857,8 @@ function listingChainHtml(sid) {
   var checked = !!(l.extra && l.extra.chain_checked);
   var h = chainIntroHtml() + '<div class="flabel" style="margin-top:12px;">Architect tag</div>';
   if (!architect) {
+    var archSuggest = architectMatchesForAddress(l.address);
+    if (archSuggest.length) h += archSuggestChipHtml('listings', sid, archSuggest);
     h += '<button class="qbtn" onclick="event.stopPropagation();setListingArchitect(\'' + escJs(sid) + '\')">&#65291; Set architect</button>';
   } else {
     h += '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();setListingArchitect(\'' + escJs(sid) + '\')"><div class="txt"><div class="t1">' + esc(architect) + '</div><div class="t2">' + (checked ? 'Chain checked' : 'Not yet chain-checked — tap to edit architect') + '</div></div></div>';
