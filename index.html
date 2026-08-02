@@ -710,7 +710,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.200.0';
+var APP_VERSION = 'v5.201.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2296,6 +2296,22 @@ function convergenceSignals() {
     var area = areaKeyOf(tx.address); if (!area) return;
     add(area, 'deals', { id: tx.id, address: tx.address, label: Number(tx.contract_price_num).toLocaleString('en-US') });
   });
+  /* Market solds folded in (2026-08-02, chain audit per Nick — "fold that in"). 'deals' used to
+     count ONLY Nick's own ~32 closed transactions, so a neighborhood buzzing with real market
+     activity he wasn't personally part of never showed up as a convergence signal even though
+     compsSignals() has been reading DATA.market_solds (real hotsheet solds) for this exact purpose
+     since 2026-07-30. Same source, same "his vs market" honesty compsHtml already uses. Uses
+     e.neighborhood directly (market_solds carries no lat/lng — see compsSignals' own note) rather
+     than areaKeyOf/propPoint, which would silently drop every row Spiro's centroid map doesn't
+     recognize the area name for. Deduped against Nick's own transactions by address so a deal he
+     closed himself doesn't get counted twice — once as his, once as market. */
+  var txAddrKeys = {};
+  (DATA.transactions || []).forEach(function (tx) { if (tx.address) txAddrKeys[propKey(tx.address)] = true; });
+  (DATA.market_solds || []).forEach(function (e) {
+    if (!e.sold_price || !e.neighborhood) return;
+    if (e.address && txAddrKeys[propKey(e.address)]) return;
+    add(e.neighborhood, 'deals', { id: e.mls_number, address: e.address, label: Number(e.sold_price).toLocaleString('en-US'), source: 'market' });
+  });
   reactivationSignals().forEach(function (r) {
     var area = areaKeyOf(r.addr); if (!area) return;
     add(area, 'reactivation', { buyer_id: r.buyer_id, address: r.addr, label: recLabel('buyers', r.buyer_id) || 'a buyer' });
@@ -2309,7 +2325,10 @@ function convergenceSignals() {
   out.sort(function (a, b) { return b.kinds.length - a.kinds.length; });
   return out;
 }
-var CONVERGENCE_LABEL = { architect: 'architect tag', style: 'style tag', deals: 'real escrow price', reactivation: 'buyer passed, then something changed', propensity: 'sell-propensity lead' };
+/* 'deals' label widened from "real escrow price" (2026-08-02) -- the bucket now mixes Nick's own
+   closed transactions with MLS solds from market_solds (see convergenceSignals' comment), and both
+   are genuinely closed sales, just not both his own escrows. */
+var CONVERGENCE_LABEL = { architect: 'architect tag', style: 'style tag', deals: 'closed sale', reactivation: 'buyer passed, then something changed', propensity: 'sell-propensity lead' };
 function convergenceHtml() {
   var hits = convergenceSignals(); if (!hits.length) return '';
   var h = '<div class="flabel" style="margin-top:14px;">Converging signals <span class="hint" style="font-weight:400;text-transform:none;letter-spacing:0;">&mdash; 2+ chains active in the same area at once</span></div>';
@@ -6813,7 +6832,15 @@ function chainMatches(table, id) {
   var building = r.extra && r.extra.building;
   if (!architect && !style && !building) return [];
   var styleFamily = style ? styleFamilyOf(style) : null;
-  var pp = style ? propPoint({ address: r.address || r.address_area }) : null;
+  /* Precision fix (2026-08-02, chain audit per Nick): this used to call propPoint({address:...}),
+     a bare object stripped of everything else on the record -- so even for listings/offmarket rows
+     that DO carry a real geocode (extra.lat/extra.lng, written at save time by
+     geocodeRecordInBackground), propPoint never got the chance to use it and silently fell back to
+     a neighborhood-centroid guess every time. Passing the real record lets propPoint's own
+     lat/lng-first logic (see propPoint's definition) actually take effect. Prospects/transactions
+     still have no save-time geocode call, so they still fall back to the centroid for now --
+     genuinely nothing to pass for those two, not a bug in this fix. */
+  var pp = style ? propPoint(r) : null;
   var byKey = {};
   function addReason(o, t, reason) {
     var key = t + ':' + o.id;
@@ -6832,7 +6859,7 @@ function chainMatches(table, id) {
         var exact = oStyle.indexOf(sLower) !== -1 || sLower.indexOf(oStyle) !== -1;
         var famMatch = !exact && styleFamily && styleFamilyOf(oe.style) === styleFamily;
         if ((exact || famMatch) && pp) {
-          var op = propPoint({ address: o.address || o.address_area });
+          var op = propPoint(o); /* same precision fix as pp above -- real geocode when the record has one */
           if (op) {
             var d = haversineKm(pp, op);
             if (d <= 2) addReason(o, t, { type: 'style', label: (exact ? 'same style' : 'same family: ' + styleFamily) + ' · ' + d.toFixed(1) + 'km away', distance_km: d });
