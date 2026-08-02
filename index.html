@@ -710,7 +710,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.201.0';
+var APP_VERSION = 'v5.204.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6837,9 +6837,17 @@ function chainMatches(table, id) {
      that DO carry a real geocode (extra.lat/extra.lng, written at save time by
      geocodeRecordInBackground), propPoint never got the chance to use it and silently fell back to
      a neighborhood-centroid guess every time. Passing the real record lets propPoint's own
-     lat/lng-first logic (see propPoint's definition) actually take effect. Prospects/transactions
-     still have no save-time geocode call, so they still fall back to the centroid for now --
-     genuinely nothing to pass for those two, not a bug in this fix. */
+     lat/lng-first logic (see propPoint's definition) actually take effect.
+     Follow-up (2026-08-02, later same day): propPoint() now also falls back to the linked
+     properties.lat/lng spine via property_id (same join cmaResolveSubject() uses for CMA) before
+     giving up to the centroid -- discovered while validating fn_build_comps that 8 of Nick's own
+     listings carry a confirmed geocode only as extra.postal_lat (a USPS/Census-verified value that
+     backfills properties.lat, per fn_geo_spine_drift -- verified 0 rows drifting) with no
+     extra.lat of their own, so the "real geocode when the record has one" comment above undersold
+     it: propPoint's own record-level check still won't see extra.postal_lat directly (deliberately
+     -- postal_lat is the pre-spine-reconciliation value, properties.lat is the reconciled one), but
+     now picks it up one hop later via property_id. This also reaches prospects/transactions for the
+     first time -- both link to properties too, and never had a save-time geocode of their own. */
   var pp = style ? propPoint(r) : null;
   var byKey = {};
   function addReason(o, t, reason) {
@@ -9866,11 +9874,22 @@ function centroidsIn(text) {
   });
   return Object.keys(hits).map(function (k) { return hits[k]; });
 }
-/* A property's point: true coords if present (future MLS), else its neighborhood centroid (longest name wins = most specific). */
+/* A property's point: true coords if present (future MLS), else the linked properties.lat/lng spine
+   (same join cmaResolveSubject() already uses for CMA — properties is the canonical geocode spine,
+   backfilled by geo-backfill/fn_geo_spine_drift; a listing/prospect/offmarket/transaction row often
+   carries no geocode of its own even when its linked property does), else its neighborhood centroid
+   (longest name wins = most specific). */
 function propPoint(prop) {
   var lat = Number(prop.lat != null ? prop.lat : (prop.extra && prop.extra.lat)),
       lng = Number(prop.lng != null ? prop.lng : (prop.extra && prop.extra.lng));
   if (isFinite(lat) && isFinite(lng) && lat !== 0 && lng !== 0) return { lat: lat, lng: lng, name: null };
+  if (prop.property_id) {
+    var linked = (DATA.properties || []).filter(function (p) { return String(p.id) === String(prop.property_id); })[0];
+    if (linked) {
+      var plat = Number(linked.lat), plng = Number(linked.lng);
+      if (isFinite(plat) && isFinite(plng) && plat !== 0 && plng !== 0) return { lat: plat, lng: plng, name: null };
+    }
+  }
   var hits = centroidsIn(prop.address || prop.address_area);
   if (!hits.length) return null;
   hits.sort(function (a, b) { return b.name.length - a.name.length; });
@@ -11145,16 +11164,39 @@ function titleAddr(s) {
   return String(s || '').toLowerCase().replace(/\b([a-z])/g, function (m, c) { return c.toUpperCase(); })
     .replace(/\bCa\b/g, 'CA').replace(/\b(Ne|Nw|Se|Sw)\b/g, function (m) { return m.toUpperCase(); });
 }
-/* Rebuild a clean "line1, City, CA zip" from a comma-less parcel string, using the known city so
-   the mail-first letter's street line (address.split(',')[0]) stays correct. */
+/* Known incorporated cities safe to auto-split on even without a `city` argument -- LA County
+   parcel strings reliably end "... CITY CA ZIP" with no comma, so finding one of these directly in
+   the string is more reliable than trusting a `city` argument to have threaded through correctly.
+   Same list geo-backfill trusts (v7, 2026-08-02), for the same "unambiguous, don't guess beyond
+   this" reason -- keep the two in sync if either grows.
+   ROOT CAUSE (2026-08-02): farming a street from a Walk-by pocket calls farmStreet(street, city)
+   with city = cityOf(p.address) from walkByPockets() -- and cityOf() only returns anything when the
+   address ALREADY has 3 comma parts, which a pre-farm walk-by lead usually doesn't. So `city` came
+   through empty, this function's old `if (city)` branch never ran, and every parcel on the street
+   was inserted as the raw title-cased county string with no comma at all: "107 N Cliffwood Ave Los
+   Angeles CA 90049" x 50, in prospects.address AND (via linkSpines) properties.display_address --
+   which then failed geo-backfill's street-name guard, because "Los Angeles CA 90049" got parsed as
+   if it were part of the street. Nick caught this from the live data, not from a test. */
+var KNOWN_PARCEL_CITIES = ['Los Angeles', 'West Hollywood', 'Beverly Hills', 'Culver City',
+  'Santa Monica', 'Malibu', 'Manhattan Beach'];
+/* Rebuild a clean "line1, City, CA zip" from a comma-less parcel string. Tries the passed `city`
+   first (unchanged behavior when it's right); if that's missing or doesn't match the actual string,
+   falls back to checking each KNOWN_PARCEL_CITIES entry against the string itself before giving up
+   -- so a caller that fails to supply `city` no longer silently produces unsplit output. */
 function cleanParcelAddr(full, city) {
-  var zip = (String(full || '').match(/\b(\d{5})(?:-\d+)?\s*$/) || [])[1] || '';
-  if (city) {
-    var re = new RegExp('\\s+' + city.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+CA\\s+\\d{5}.*$', 'i');
-    var line1 = String(full || '').replace(re, '').trim();
-    if (line1 && line1.length < String(full).length) return titleAddr(line1) + ', ' + city + ', CA' + (zip ? ' ' + zip : '');
+  var raw = String(full || '');
+  var zip = (raw.match(/\b(\d{5})(?:-\d+)?\s*$/) || [])[1] || '';
+  var trySplit = function (name) {
+    var re = new RegExp('\\s+' + String(name).toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + '\\s+CA\\s+\\d{5}.*$', 'i');
+    var line1 = raw.replace(re, '').trim();
+    return (line1 && line1.length < raw.length) ? titleAddr(line1) + ', ' + name + ', CA' + (zip ? ' ' + zip : '') : null;
+  };
+  if (city) { var viaCity = trySplit(city); if (viaCity) return viaCity; }
+  for (var i = 0; i < KNOWN_PARCEL_CITIES.length; i++) {
+    var viaKnown = trySplit(KNOWN_PARCEL_CITIES[i]);
+    if (viaKnown) return viaKnown;
   }
-  return titleAddr(full);   // fallback: no known city — keep it whole, still readable
+  return titleAddr(full);   // fallback: no known city matched anywhere in the string — keep it whole
 }
 async function farmStreet(street, city, anchor) {
   if (farmBusy) return;
