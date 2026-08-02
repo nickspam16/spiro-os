@@ -490,9 +490,16 @@
     </div>
 
     <div>
+    <!-- Collapsed by default (2026-08-02, per Nick): this used to be the first big block on the
+         desktop/wide layout, right beside Records, but most of what led it (automation-health
+         warnings, feed noise) isn't something he can act on in the moment -- it just read as
+         clutter up top. Same collapse pattern as Morning Brief / Activity / Share Links (caret +
+         localStorage), but with a plain-text summary line that's always visible even collapsed,
+         so a real overdue/due-today count is still one glance away without expanding anything. -->
     <div class="card" id="focus-card">
-      <h2>Today&rsquo;s Focus <button class="hbtn" onclick="openNew('followups')">+ To-do</button></h2>
-      <div id="queue"><div class="empty">Loading&hellip;</div></div>
+      <h2 onclick="toggleFocus()" style="cursor:pointer;">Today&rsquo;s Focus <span id="focus-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();openNew('followups')">+ To-do</button></h2>
+      <div id="focus-summary" class="hint" style="margin:-10px 0 10px;">Loading&hellip;</div>
+      <div id="queue" style="display:none;"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <div class="card" id="intel-card" style="display:none;">
@@ -703,7 +710,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.196.0';
+var APP_VERSION = 'v5.198.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -720,6 +727,13 @@ function toggleBrief() {
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
   try { localStorage.setItem('spiro_brief_open', open ? '1' : '0'); } catch (e) {}
+}
+function toggleFocus() {
+  var b = document.getElementById('queue'), c = document.getElementById('focus-caret');
+  var open = b.style.display === 'none';
+  b.style.display = open ? '' : 'none';
+  c.innerHTML = open ? '&#9662;' : '&#9656;';
+  try { localStorage.setItem('spiro_focus_open', open ? '1' : '0'); } catch (e) {}
 }
 function toggleCoverage() {
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
@@ -1511,6 +1525,11 @@ function toggleShareLinksCard() {
       if (b3) { b3.style.display = ''; }
       if (c3) { c3.innerHTML = '&#9662;'; }
     }
+    if (localStorage.getItem('spiro_focus_open') === '1') {
+      var b4 = document.getElementById('queue'), c4 = document.getElementById('focus-caret');
+      if (b4) { b4.style.display = ''; }
+      if (c4) { c4.innerHTML = '&#9662;'; }
+    }
   } catch (e) {}
 })();
 function toggleSpiroTheme() {
@@ -1934,7 +1953,7 @@ async function loadAll(manual) {
        its table's select. The one-line fix is not the fix; the test is. */
     sb.from('offmarket').select('id,address_area,price,price_num,priority,source,beds,baths,sqft,lot_sqft,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('transactions').select('*').not('archived', 'is', true),
-    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,connection,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
     sb.from('events').select('ts,entity_type,entity_id,event_type,actor,source,summary').order('ts', { ascending: false }).limit(120),
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
@@ -2027,7 +2046,15 @@ async function loadAll(manual) {
     /* Total failure: keep any previously-loaded data on screen (stale-but-usable) and flag it, rather than wiping the UI. */
     lastLoadPartial = true;
     renderSyncAge();
-    if (!lastLoad) document.getElementById('queue').innerHTML = '<div class="empty">&#128274; Signed in, but data access is locked. This app only opens for the owner&rsquo;s email &mdash; make sure you signed in with your own address, then tell Claude if it still will not load.</div>';
+    if (!lastLoad) {
+      /* Force this open regardless of the collapsed-by-default state (2026-08-02) -- a lockout
+         message must never be silently hidden behind a collapsed card. */
+      var qEl = document.getElementById('queue'), qCaret = document.getElementById('focus-caret');
+      if (qEl) qEl.style.display = '';
+      if (qCaret) qCaret.innerHTML = '&#9662;';
+      var qSummary = document.getElementById('focus-summary'); if (qSummary) qSummary.textContent = 'Locked';
+      document.getElementById('queue').innerHTML = '<div class="empty">&#128274; Signed in, but data access is locked. This app only opens for the owner&rsquo;s email &mdash; make sure you signed in with your own address, then tell Claude if it still will not load.</div>';
+    }
     else if (manual) toast('Couldn’t reach the server — showing last synced data');
     return;
   }
@@ -2965,6 +2992,20 @@ function renderQueue() {
   var b = queueItems();
   var groups = [['Overdue', 'red', b.overdue], ['Today', 'gold', b.today], ['This week', '', b.week]];
   var total = b.overdue.length + b.today.length + b.week.length;
+  /* Collapsed-state summary (2026-08-02): deliberately excludes feedHealthHtml()'s automation-health
+     count -- those are explicitly "not something to tap here" (see feedHealthHtml's own comment),
+     so they don't belong in a one-line signal meant to say what's actually actionable right now.
+     Duplicate-contact and address-confirm counts DO have real tap actions, so they're included. */
+  var dupCount = (DATA.dupContacts || []).filter(function (d) { return (d.confidence || 0) >= 6; }).length;
+  var addrCount = (DATA.addrCandidates || []).length;
+  var summaryBits = [];
+  if (b.overdue.length) summaryBits.push(b.overdue.length + ' overdue');
+  if (b.today.length) summaryBits.push(b.today.length + ' due today');
+  if (!b.overdue.length && !b.today.length && b.week.length) summaryBits.push(b.week.length + ' due this week');
+  if (dupCount) summaryBits.push(dupCount + ' possible duplicate' + (dupCount === 1 ? '' : 's'));
+  if (addrCount) summaryBits.push(addrCount + ' address' + (addrCount === 1 ? '' : 'es') + ' to confirm');
+  var summaryEl = document.getElementById('focus-summary');
+  if (summaryEl) summaryEl.textContent = summaryBits.length ? summaryBits.join(' · ') : 'All clear.';
   var h = '', shown = 0, cap = qShowAll ? 9999 : 5;
   groups.forEach(function (g) {
     var items = g[2].slice(0, Math.max(0, cap - shown));
@@ -3181,7 +3222,7 @@ function renderCaptures() {
 var FORM_SPECS = {
   offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
   buyers: [['name','Client name',null,'Kevin & Mike'],['contact','Email or phone',null,'kevin@gmail.com or 310-555-1212','Either or both — so you can reach them from here'],['budget_min','Budget — from',null,'2.5M','Type it any way — 2.5M, 2,500,000, 900k'],['budget_max','Budget — up to',null,'5M'],['areas','Neighborhoods',null,'Brentwood, Santa Monica'],['timeline','How soon',null,'ASAP · 3–6 months · just looking'],['must_haves','Must-haves',null,'pool, view, room for an office'],['notes','Notes','textarea','Anything worth remembering']],
-  prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
+  prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['connection','Your connection',null,'family friend, met at an open house, referred by an agent','How you already know this owner, if you do — flagged in the list so you never cold-approach someone you actually know.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
   listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
   transactions: [['address','Address'],['status','Status'],['contract_price','Contract price',null,'2.9M'],['contingency_date','Contingency date','date'],['closing_date','Closing date','date'],['notes','Notes','textarea']],
   followups: [['action_text','What needs doing?',null,'Call Bianca about St. Ives photos'],['record_label','About which client / property? (optional)',null,'9146 St. Ives'],['due_date','Due date','date'],['urgency','How urgent?',['now','soon','later']]],
@@ -12792,9 +12833,9 @@ function renderBrowse() {
       side = x.priority || '';
       var ocFlag = (e.outreach && e.outreach.outcome) ? ({ appointment: 'appointment set', listed: 'listed', not_interested: 'not interested' })[e.outreach.outcome] : '';
       var stageFlag = ocFlag || (e.outreach && e.outreach.responded_at ? 'responded' : e.outreach && e.outreach.mailed_at ? 'mailed' : '');
-      var flags = [e.via_image ? 'Found on a walk' : '', stageFlag, (e.buildable && e.buildable.underbuilt) ? 'underbuilt' : '', e.probate ? 'probate' : '', e.absentee ? 'absentee' : '', e.litigator ? 'litigator — mail only' : ''].filter(Boolean).join(' · ');
+      var flags = [x.connection ? 'you know them' : '', e.via_image ? 'Found on a walk' : '', stageFlag, (e.buildable && e.buildable.underbuilt) ? 'underbuilt' : '', e.probate ? 'probate' : '', e.absentee ? 'absentee' : '', e.litigator ? 'litigator — mail only' : ''].filter(Boolean).join(' · ');
       sub = [x.owner_name, e.est_value ? '$' + Number(e.est_value).toLocaleString() : '', flags].filter(Boolean).join(' · ');
-      det = [x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
+      det = [x.connection ? 'Connection: ' + x.connection : '', x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
     return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
