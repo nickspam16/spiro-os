@@ -535,19 +535,23 @@
       <div id="learn-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
-    <!-- Architect Registry (2026-08-01): standing lookup of ~300 known-architect LA-area addresses,
-         built from an Exa deep-research pass across 55 architects (legacy, standing/demolished
-         status, prospecting sweep). Dual-purpose per Nick: Instagram content research AND a real
-         prospecting/farming tool — "I type in A. Quincy Jones houses in Brentwood and Spiro has a
-         record of them." Complementary to the existing extra.architect chain-tagging system (see
-         chainIntroHtml/setRecordArchitect) — that system is Nick's own manual tags on his CRM
-         records; this is Spiro's own reference knowledge of where the architecturally-significant
-         addresses actually are, independent of whether Nick has a record there yet. Read-only —
-         this table has no editor in the app; it's refreshed by re-running the research, not by
-         hand-editing rows in Spiro OS. -->
+    <!-- Architect Registry (2026-08-01, sale/tenure backfill added 2026-08-02): standing lookup of
+         ~300 known-architect LA-area addresses, built from an Exa deep-research pass across 55
+         architects (legacy, standing/demolished status, prospecting sweep). Dual-purpose per Nick:
+         Instagram content research AND a real prospecting/farming tool — "I type in A. Quincy Jones
+         houses in Brentwood and Spiro has a record of them." Complementary to the existing
+         extra.architect chain-tagging system (see chainIntroHtml/setRecordArchitect) — that system
+         is Nick's own manual tags on his CRM records; this is Spiro's own reference knowledge of
+         where the architecturally-significant addresses actually are, independent of whether Nick
+         has a record there yet. Read-only — this table has no editor in the app; it's refreshed by
+         re-running the research, not by hand-editing rows in Spiro OS. The 2026-08-02 addition is a
+         one-time public-records sale-history backfill (192/306 addresses had a locatable sale;
+         see prompt_registry.architect-registry-v1 v3) — last-sold date/price and current-owner
+         tenure now show per row, plus a sort control so this doubles as a live "longest-tenure
+         prospecting shortlist" (Tier A + sort by tenure) without re-running the one-off stats doc. -->
     <div class="card" id="architect-registry-card" style="display:none;">
       <h2>Architect Registry</h2>
-      <div class="hint" style="margin:-6px 0 10px;">~300 known addresses tied to 55 LA-area architects — search by architect and/or area. Tier A = standing, undesignated, real prospecting target · B = standing but landmarked/famous (content only) · C = demolished/lost · Flag = status unconfirmed, re-verify before use.</div>
+      <div class="hint" style="margin:-6px 0 10px;">~300 known addresses tied to 55 LA-area architects — search by architect and/or area. Tier A = standing, undesignated, real prospecting target · B = standing but landmarked/famous (content only) · C = demolished/lost · Flag = status unconfirmed, re-verify before use. Sale history is from a one-time public-records check (2026-08-02), not live MLS data.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
         <input type="text" id="archreg-q-architect" placeholder="Architect (e.g. A Quincy Jones)" oninput="archRegSetFilter('architect',this.value)" style="flex:1;min-width:160px;">
         <input type="text" id="archreg-q-area" placeholder="Area / city (e.g. Brentwood)" oninput="archRegSetFilter('area',this.value)" style="flex:1;min-width:160px;">
@@ -557,6 +561,11 @@
           <option value="B">B — content only</option>
           <option value="C">C — lost</option>
           <option value="Flag">Flag — unconfirmed</option>
+        </select>
+        <select id="archreg-q-sort" onchange="archRegSetFilter('sort',this.value)" style="min-width:150px;">
+          <option value="name">Sort: A–Z</option>
+          <option value="tenure">Sort: longest tenure first</option>
+          <option value="recent">Sort: most recent sale first</option>
         </select>
       </div>
       <div id="archreg-body"><div class="empty">Loading&hellip;</div></div>
@@ -694,7 +703,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.195.0';
+var APP_VERSION = 'v5.196.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -859,10 +868,28 @@ function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
    function, one matching function, used by both the search UI and the suggestion feature so they
    can never disagree about what "matches an address" means. */
 function menuShowArchitectRegistry() { openPanel('architect-registry-card'); renderArchitectRegistry(); }
-var ARCH_REG_FILTER = { architect: '', area: '', tier: '' };
+var ARCH_REG_FILTER = { architect: '', area: '', tier: '', sort: 'name' };
 function archRegSetFilter(field, val) { ARCH_REG_FILTER[field] = val; renderArchitectRegistry(); }
 var ARCH_TIER_LABEL = { A: 'Prospect', B: 'Content only', C: 'Lost', Flag: 'Unconfirmed' };
 var ARCH_TIER_COLOR = { A: 'var(--green)', B: 'var(--muted)', C: '#b3382c', Flag: '#b3382c' };
+/* Sale/tenure line (2026-08-02) -- from the one-time public-records backfill, see the loadAll()
+   comment above for provenance. 'found' rows show what was located (date may be year-only if that's
+   all a source disclosed, so current_owner_tenure_years can be null even when a date/price is known
+   -- shown as-is rather than guessing a precise tenure). 'no_data_found' says so explicitly rather
+   than rendering nothing, so it reads as "checked, nothing public" not "never looked." 'no_address'
+   rows (and legacy rows loaded before this backfill ran) render no line at all. */
+function archSaleLineHtml(r) {
+  if (r.sales_data_status === 'no_data_found') return '<div class="t2" style="color:var(--muted);">No public sale record found</div>';
+  if (r.sales_data_status !== 'found') return '';
+  var priceStr = (r.last_sale_price != null && r.last_sale_price !== '') ? '$' + Math.round(Number(r.last_sale_price)).toLocaleString() : '';
+  var dateStr = r.last_sale_date_text || r.last_sale_date || '';
+  var tenureStr = (r.current_owner_tenure_years != null && r.current_owner_tenure_years !== '') ? ('owner ' + Number(r.current_owner_tenure_years).toFixed(1) + ' yrs') : '';
+  var bits = ['Last sold' + (dateStr ? ' ' + esc(dateStr) : '')];
+  if (priceStr) bits.push('for ' + priceStr);
+  if (tenureStr) bits.push('— ' + tenureStr);
+  if (r.sale_count > 1) bits.push('(' + r.sale_count + ' sales on record)');
+  return '<div class="t2">' + bits.join(' ') + '</div>';
+}
 function renderArchitectRegistry() {
   var body = document.getElementById('archreg-body'); if (!body) return;
   var rows = DATA.architect_registry || [];
@@ -870,12 +897,30 @@ function renderArchitectRegistry() {
   var qA = ARCH_REG_FILTER.architect.trim().toLowerCase();
   var qArea = ARCH_REG_FILTER.area.trim().toLowerCase();
   var qTier = ARCH_REG_FILTER.tier;
+  var sortMode = ARCH_REG_FILTER.sort || 'name';
+  var byName = function (a, b) { return (a.architect || '').localeCompare(b.architect || '') || (a.address || '').localeCompare(b.address || ''); };
+  var sortFn = byName;
+  if (sortMode === 'tenure') {
+    sortFn = function (a, b) {
+      var av = a.current_owner_tenure_years, bv = b.current_owner_tenure_years;
+      if (av == null && bv == null) return byName(a, b);
+      if (av == null) return 1; if (bv == null) return -1;
+      return Number(bv) - Number(av) || byName(a, b);
+    };
+  } else if (sortMode === 'recent') {
+    sortFn = function (a, b) {
+      var av = a.last_sale_date, bv = b.last_sale_date;
+      if (!av && !bv) return byName(a, b);
+      if (!av) return 1; if (!bv) return -1;
+      return (av < bv ? 1 : av > bv ? -1 : 0) || byName(a, b);
+    };
+  }
   var filtered = rows.filter(function (r) {
     if (qA && (r.architect || '').toLowerCase().indexOf(qA) === -1) return false;
     if (qArea && (r.neighborhood || '').toLowerCase().indexOf(qArea) === -1 && (r.city || '').toLowerCase().indexOf(qArea) === -1) return false;
     if (qTier && r.prospecting_tier !== qTier) return false;
     return true;
-  }).sort(function (a, b) { return (a.architect || '').localeCompare(b.architect || '') || (a.address || '').localeCompare(b.address || ''); });
+  }).sort(sortFn);
   if (!qA && !qArea && !qTier) { body.innerHTML = '<div class="hint">Type an architect name and/or area above to search ' + rows.length + ' addresses across ' + (function () { var s = {}; rows.forEach(function (r) { s[r.architect] = 1; }); return Object.keys(s).length; })() + ' architects.</div>'; return; }
   if (!filtered.length) { body.innerHTML = '<div class="empty">No matches. Try a shorter architect name or area — this is exact-substring search, not fuzzy.</div>'; return; }
   body.innerHTML = '<div class="hint" style="margin-bottom:6px;">' + filtered.length + ' match' + (filtered.length === 1 ? '' : 'es') + '</div>' + filtered.slice(0, 150).map(function (r) {
@@ -889,6 +934,7 @@ function renderArchitectRegistry() {
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(r.architect) + tierBadge + '</div>'
       + '<div class="t2">' + esc(r.address || 'address not confirmed') + (loc ? ' — ' + esc(loc) : '') + '</div>'
       + (meta ? '<div class="t2">' + esc(meta) + '</div>' : '')
+      + archSaleLineHtml(r)
       + (r.notes ? '<div class="t2">' + esc(r.notes) + '</div>' : '')
       + (r.status ? '<div class="t2">' + esc(r.status) + '</div>' : '')
       + crmLine
@@ -1957,13 +2003,16 @@ async function loadAll(manual) {
        drafted comms have someone to draft to. Tiny per-deal row counts, same safe-to-load-in-full
        reasoning as transaction_tasks/tc_task_templates above. */
     sb.from('transaction_parties').select('*'),
-    /* Architect Registry (2026-08-01): standing reference table of ~300 known-architect LA-area
-       addresses (John Lautner, A. Quincy Jones, Krisel tracts, etc — see architect_registry_inserts
-       and the companion prospecting-sweep doc). Complementary to the existing extra.architect
-       chain-tagging system, not a replacement: this is a lookup ("does Spiro know of an architect-
-       significant house near this one?"), the chain system is still what you manually tag records
-       with. Small, mostly-static table — safe to load in full every time, same as tc_task_templates. */
-    sb.from('architect_registry').select('id,architect,address,neighborhood,city,status,year_built,landmark_status,notes,prospecting_tier,norm_address')
+    /* Architect Registry (2026-08-01, sale/tenure columns added 2026-08-02): standing reference
+       table of ~300 known-architect LA-area addresses (John Lautner, A. Quincy Jones, Krisel
+       tracts, etc — see architect_registry_inserts and the companion prospecting-sweep doc).
+       Complementary to the existing extra.architect chain-tagging system, not a replacement: this
+       is a lookup ("does Spiro know of an architect-significant house near this one?"), the chain
+       system is still what you manually tag records with. Small, mostly-static table — safe to
+       load in full every time, same as tc_task_templates. The sale/tenure columns come from a
+       one-time public-records backfill (prompt_registry.architect-registry-v1, v3) — not live data,
+       refreshed by re-running that research, not by anything in this app. */
+    sb.from('architect_registry').select('id,architect,address,neighborhood,city,status,year_built,landmark_status,notes,prospecting_tier,norm_address,last_sale_date,last_sale_date_text,last_sale_price,sale_count,current_owner_tenure_years,sales_data_status')
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
   var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties', 'architect_registry'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
