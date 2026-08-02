@@ -710,7 +710,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.198.0';
+var APP_VERSION = 'v5.200.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -944,7 +944,7 @@ function renderArchitectRegistry() {
     var meta = [r.year_built, r.landmark_status].filter(Boolean).join(' — ');
     var crmLine = existing.length
       ? existing.map(function (m) { return '<div class="qi" style="cursor:pointer;margin-top:4px;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(m.table) + '\',\'' + escJs(String(m.id)) + '\')"><div class="txt"><div class="t2">Already in your CRM (' + esc(m.table) + ') <span class="hint">→ open</span></div></div></div>'; }).join('')
-      : '';
+      : '<button class="qbtn" style="margin-top:6px;" onclick="event.stopPropagation();addArchRegToProspects(\'' + escJs(String(r.id)) + '\')">&#65291; Add to Prospects</button>';
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(r.architect) + tierBadge + '</div>'
       + '<div class="t2">' + esc(r.address || 'address not confirmed') + (loc ? ' — ' + esc(loc) : '') + '</div>'
       + (meta ? '<div class="t2">' + esc(meta) + '</div>' : '')
@@ -954,6 +954,22 @@ function renderArchitectRegistry() {
       + crmLine
       + '</div></div>';
   }).join('') + (filtered.length > 150 ? '<div class="hint" style="margin-top:6px;">Showing first 150 of ' + filtered.length + ' — narrow your search for the rest.</div>' : '');
+}
+/* "Add to Prospects" from a registry row (2026-08-02, per Nick — registry was read-only, no way to
+   act on a Tier A address he wants to work). Opens the normal New Prospect form pre-filled from the
+   registry row (address, a type tag, and a notes summary of what the registry knows) so Nick reviews
+   and completes it himself rather than silently inserting a row sight-unseen — same "a human confirms
+   before it lands in the CRM" shape as every other manual-add path in this app. Only shown for rows
+   with no existing CRM match (archExistingCrmMatches) since a match already has an "→ open" link.
+   Deliberately does NOT set extra.architect directly: the existing architectMatchesForAddress /
+   archSuggestChipHtml suggestion-chip system will offer that tag the first time the new prospect is
+   opened, the same one-tap-to-confirm path every other record type already uses. */
+function addArchRegToProspects(regId) {
+  var r = (DATA.architect_registry || []).filter(function (x) { return String(x.id) === String(regId); })[0];
+  if (!r) { toast('Registry row not found — try reopening this panel'); return; }
+  var meta = [r.prospecting_tier ? 'Tier ' + r.prospecting_tier : '', r.landmark_status, r.year_built ? 'built ' + r.year_built : ''].filter(Boolean).join(', ');
+  var notes = 'From Architect Registry: ' + (r.architect || 'architect unknown') + (meta ? ' (' + meta + ')' : '') + '.' + (r.notes ? ' ' + r.notes : '');
+  openNewPrefilled('prospects', { address: r.address || '', type: 'Architect Registry', notes: notes });
 }
 /* Shared address normalization -- mirrors the Postgres norm_address column (lower, strip a
    trailing "(...)" parenthetical, strip non-alphanumerics) so client-side matching against
@@ -3396,7 +3412,7 @@ function humanSaveError(msg) {
   if (/network|fetch|timeout/i.test(m)) return 'Couldn’t reach the server. Your typing is still here — try Save again.';
   return m || 'Could not save';
 }
-function showForm(table, row) {
+function showForm(table, row, prefill) {
   memTarget = null; /* a record form always supersedes a pending memory form */
   linkTarget = null;
   editing = { table: table, row: row || null };
@@ -3405,7 +3421,7 @@ function showForm(table, row) {
   document.getElementById('form-fields').innerHTML =
     '<div class="hint" style="margin:0 0 12px;">Only <b>' + esc(FORM_SPECS[table][0][1]) + '</b> is required — fill in the rest whenever.</div>'
     + '<div class="field-group">' + FORM_SPECS[table].map(function (f, i) {
-      var val = row ? (row[f[0]] || '') : '';
+      var val = row ? (row[f[0]] || '') : (prefill ? (prefill[f[0]] || '') : '');
       if (f[2] === 'agentpicker' && row && row.list_agent_id) val = recLabel('agents', row.list_agent_id) || '';
       return fieldHtml(f, val, i === 0);
     }).join('') + '</div>';
@@ -3425,6 +3441,10 @@ function showForm(table, row) {
    Same fix as jumpToRecord/jumpToFarmTriage/setTab: close the panel first so #home-view (and the
    form inside it) is actually visible before we show it. */
 function openNew(table) { if (PANEL_HOME) closePanel(); showForm(table, null); }
+/* Opens a New-record form pre-filled from a non-CRM source (e.g. an Architect Registry row) but
+   still routed through the normal insert path -- editing.row stays null so saveForm() INSERTs,
+   never UPDATEs, no matter what's in prefill. See addArchRegToProspects for the first caller. */
+function openNewPrefilled(table, prefill) { if (PANEL_HOME) closePanel(); showForm(table, null, prefill); }
 function openEdit(table, id) {
   if (PANEL_HOME) closePanel();
   var row = null;
@@ -6824,6 +6844,32 @@ function chainMatches(table, id) {
       }
     });
   });
+  /* Architect Registry cross-reference (2026-08-02, chain audit per Nick — "make sure all the
+     chains incorporate all the data we have access to now"). Everything above only ever compares
+     Nick's OWN tagged CRM records against each other, so an architect tag with no second CRM
+     record sharing it always came back empty even when the 306-address Architect Registry already
+     knows of other work by the same architect. Registry rows with NO existing CRM match
+     (archExistingCrmMatches — same check the registry panel itself uses) are added here as a
+     distinct, clearly-labeled kind of match: never conflated with a real CRM record (source:
+     'registry'), never auto-added to anything. Only extends the architect leg — style/building
+     tags have no registry-side data source to cross-reference (the registry only tracks
+     architect). Capped at 12 so one prolific architect (e.g. Paul R Williams) can't bury the
+     real CRM matches above it. */
+  if (architect) {
+    var regHits = 0;
+    (DATA.architect_registry || []).forEach(function (reg) {
+      if (regHits >= 12) return;
+      if (String(reg.architect || '').toLowerCase() !== String(architect).toLowerCase()) return;
+      if (archExistingCrmMatches(reg).length) return; /* already reachable via the CRM scan above, or from the registry panel itself */
+      var key = 'architect_registry:' + reg.id;
+      if (byKey[key]) return;
+      regHits++;
+      byKey[key] = {
+        table: 'architect_registry', id: reg.id, address: reg.address, source: 'registry',
+        reasons: [{ type: 'architect', label: 'Architect Registry: ' + reg.architect + (reg.prospecting_tier ? ' · Tier ' + reg.prospecting_tier : ''), distance_km: null }],
+      };
+    });
+  }
   var out = Object.keys(byKey).map(function (k) { return byKey[k]; });
   out.forEach(function (m) { m.score = m.reasons.length; });
   out.sort(function (a, b) {
@@ -6842,7 +6888,13 @@ function chainMatchListHtml(table, id) {
   h += matches.slice(0, 8).map(function (m) {
     var badge = m.score > 1 ? ' <span class="pill ok">' + m.score + ' ways</span>' : '';
     var reasonLine = m.reasons.map(function (x) { return x.label; }).join(' · ');
-    return '<div class="qi" style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'' + escJs(m.table) + '\',\'' + escJs(String(m.id)) + '\')"><div class="txt"><div class="t1">' + esc(m.address || '') + badge + ' <span class="hint">→ open</span></div><div class="t2">' + esc(reasonLine) + '</div></div></div>';
+    var action = m.source === 'registry'
+      ? ('<span class="hint">→ add to prospects</span></div><div class="t2">' + esc(reasonLine) + ' — not in your CRM yet</div></div></div>')
+      : ('<span class="hint">→ open</span></div><div class="t2">' + esc(reasonLine) + '</div></div></div>');
+    var onclick = m.source === 'registry'
+      ? "event.stopPropagation();addArchRegToProspects('" + escJs(String(m.id)) + "')"
+      : "event.stopPropagation();jumpToRecord('" + escJs(m.table) + "','" + escJs(String(m.id)) + "')";
+    return '<div class="qi" style="cursor:pointer;" onclick="' + onclick + '"><div class="txt"><div class="t1">' + esc(m.address || '') + badge + ' ' + action;
   }).join('');
   if (matches.length > 8) h += '<div class="hint" style="margin-top:4px;">+' + (matches.length - 8) + ' more not shown</div>';
   return h;
