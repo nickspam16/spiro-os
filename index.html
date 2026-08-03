@@ -710,7 +710,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.204.0';
+var APP_VERSION = 'v5.205.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1969,7 +1969,7 @@ async function loadAll(manual) {
        its table's select. The one-line fix is not the fix; the test is. */
     sb.from('offmarket').select('id,address_area,price,price_num,priority,source,beds,baths,sqft,lot_sqft,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('transactions').select('*').not('archived', 'is', true),
-    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,connection,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,connection,target_owner,target_reason,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
     sb.from('events').select('ts,entity_type,entity_id,event_type,actor,source,summary').order('ts', { ascending: false }).limit(120),
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
@@ -3257,7 +3257,7 @@ function renderCaptures() {
 var FORM_SPECS = {
   offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
   buyers: [['name','Client name',null,'Kevin & Mike'],['contact','Email or phone',null,'kevin@gmail.com or 310-555-1212','Either or both — so you can reach them from here'],['budget_min','Budget — from',null,'2.5M','Type it any way — 2.5M, 2,500,000, 900k'],['budget_max','Budget — up to',null,'5M'],['areas','Neighborhoods',null,'Brentwood, Santa Monica'],['timeline','How soon',null,'ASAP · 3–6 months · just looking'],['must_haves','Must-haves',null,'pool, view, room for an office'],['notes','Notes','textarea','Anything worth remembering']],
-  prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['connection','Your connection',null,'family friend, met at an open house, referred by an agent','How you already know this owner, if you do — flagged in the list so you never cold-approach someone you actually know.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
+  prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['connection','Your connection',null,'family friend, met at an open house, referred by an agent','How you already know this owner, if you do — flagged in the list so you never cold-approach someone you actually know.'],['target_owner','Farming for (optional)',null,'Penelope Cruz','Prospecting this one because of someone ELSE nearby — a listing angle off a connection you have, or a home you could sell them directly? Name them here. Groups with search and shows on the card, separate from this row’s own owner.'],['target_reason','Why this target (optional)',null,'adjacency listing angle, potential direct buyer for them'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
   listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
   transactions: [['address','Address'],['status','Status'],['contract_price','Contract price',null,'2.9M'],['contingency_date','Contingency date','date'],['closing_date','Closing date','date'],['notes','Notes','textarea']],
   followups: [['action_text','What needs doing?',null,'Call Bianca about St. Ives photos'],['record_label','About which client / property? (optional)',null,'9146 St. Ives'],['due_date','Due date','date'],['urgency','How urgent?',['now','soon','later']]],
@@ -12954,9 +12954,9 @@ function renderBrowse() {
       side = x.priority || '';
       var ocFlag = (e.outreach && e.outreach.outcome) ? ({ appointment: 'appointment set', listed: 'listed', not_interested: 'not interested' })[e.outreach.outcome] : '';
       var stageFlag = ocFlag || (e.outreach && e.outreach.responded_at ? 'responded' : e.outreach && e.outreach.mailed_at ? 'mailed' : '');
-      var flags = [x.connection ? 'you know them' : '', e.via_image ? 'Found on a walk' : '', stageFlag, (e.buildable && e.buildable.underbuilt) ? 'underbuilt' : '', e.probate ? 'probate' : '', e.absentee ? 'absentee' : '', e.litigator ? 'litigator — mail only' : ''].filter(Boolean).join(' · ');
+      var flags = [x.connection ? 'you know them' : '', x.target_owner ? 'targets ' + x.target_owner : '', e.via_image ? 'Found on a walk' : '', stageFlag, (e.buildable && e.buildable.underbuilt) ? 'underbuilt' : '', e.probate ? 'probate' : '', e.absentee ? 'absentee' : '', e.litigator ? 'litigator — mail only' : ''].filter(Boolean).join(' · ');
       sub = [x.owner_name, e.est_value ? '$' + Number(e.est_value).toLocaleString() : '', flags].filter(Boolean).join(' · ');
-      det = [x.connection ? 'Connection: ' + x.connection : '', x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
+      det = [x.connection ? 'Connection: ' + x.connection : '', x.target_owner ? 'Target: ' + x.target_owner + (x.target_reason ? ' — ' + x.target_reason : '') : '', x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
     return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
