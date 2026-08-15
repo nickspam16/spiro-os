@@ -4511,9 +4511,21 @@ function topActionsHtml(table, id) {
     photoBtn = '<input type="file" id="' + fid + '" accept="image/*" multiple style="display:none;" onchange="event.stopPropagation();pickPropertyPhotos(\'' + pid + '\',\'' + gid + '\',this)">'
       + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'' + fid + '\').click()">Add photos</button>';
   }
+  /* Archive button (2026-08-15, per Nick -- "idk how to delete a buyer"). He was right: buyers
+     aren't in the swipe-to-archive tables (that's prospects/offmarket only) and the duplicate-banner
+     archive button only ever shows up when an address collision is detected, so there was genuinely
+     no path to it. Starts with buyers since that's the reported gap; same archived=true convention
+     every other table already uses ("delete" always means archive, never a real delete, per the
+     swipeArchive() comment above), just reached from the row itself via archiveRecord(). */
+  var archiveBtn = '';
+  if (table === 'buyers') {
+    var label = (rec && rec.name) || 'this buyer';
+    archiveBtn = '<button class="qbtn" onclick="event.stopPropagation();archiveRecord(\'buyers\',\'' + escJs(String(id)) + '\',\'' + escJs(label) + '\')">Archive</button>';
+  }
   return '<div style="margin:8px 0 4px;display:flex;gap:8px;flex-wrap:wrap;">'
     + '<button class="qbtn done" onclick="event.stopPropagation();openEdit(\'' + escJs(table) + '\',\'' + escJs(String(id)) + '\')">Edit</button>'
     + photoBtn
+    + archiveBtn
     + '</div>';
 }
 
@@ -12681,6 +12693,22 @@ async function archiveDuplicate(table, id) {
   if (r.error) { toast('Could not archive'); return; }
   DATA[table] = (DATA[table] || []).filter(function (x) { return String(x.id) !== String(id); });
   logEvent(table, id, 'record.archived', 'Archived as duplicate address');
+  renderBrowse(); toast('Archived ✓');
+}
+/* General-purpose sibling to archiveDuplicate() above, for the "Archive" button in topActionsHtml
+   -- same archived=true/reversible convention, just generic copy instead of duplicate-specific
+   wording, and callable from any record row rather than only the duplicate-address banner. No
+   restore-from-UI view exists yet for tables outside prospects/offmarket's Archived view (same gap
+   that existed before this button), so the toast says so rather than overpromising a Restore tap. */
+async function archiveRecord(table, id, label) {
+  if (!confirm('Archive ' + (label || 'this record') + '? It just hides it going forward — reversible, ask Claude to restore it if needed.')) return;
+  /* archived_at deliberately omitted -- unlike offmarket/prospects, buyers (this button's only
+     caller so far) has no archived_at column, and this function is meant to stay generic across
+     whatever table calls it next. Same two-field payload archiveDuplicate() above already uses. */
+  var r = await sb.from(table).update({ archived: true, updated_at: nowStamp() }).eq('id', id).select('id');
+  if (r.error) { toast('Could not archive'); return; }
+  DATA[table] = (DATA[table] || []).filter(function (x) { return String(x.id) !== String(id); });
+  logEvent(table, id, 'record.archived', 'Archived: ' + (label || id));
   renderBrowse(); toast('Archived ✓');
 }
 
