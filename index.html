@@ -10862,12 +10862,33 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
    neighborhood is inferred from its address_area text, longest/most-specific centroid name wins
    when more than one appears (e.g. "Bird Streets" over a broader containing area). Group open/closed
    state rides the same openSections/toggleSec() mechanism as per-record sub-sections, prefixed
-   'leadgrp-' so the two never collide. */
+   'leadgrp-' so the two never collide.
+   Coordinate fallback (2026-08-15, per Nick -- entered a lead, couldn't find it in the grouped
+   view). Text matching alone left any lead typed as a bare street address (no neighborhood word
+   in the text) stuck in "Other" even once it's geocoded, because this function never consulted
+   coordinates -- unlike propPoint()/the buyer-matcher elsewhere in this file, which already fall
+   back to real lat/lng. Now it does the same: address text wins when it names a neighborhood
+   (unchanged, and still first -- an explicit "Bird Streets" beats a nearest-centroid guess), else
+   nearest centroid to the lead's own coords or its linked properties.lat/lng, capped at 5km (same
+   "near" radius areaProximity() already uses) so a lead outside farm territory stays "Other"
+   rather than getting force-matched to whatever centroid happens to be closest. */
 function leadNeighborhood(x) {
   var hits = centroidsIn(x.address_area);
-  if (!hits.length) return 'Other';
-  hits.sort(function (a, b) { return b.name.length - a.name.length; });
-  return hits[0].name;
+  if (hits.length) {
+    hits.sort(function (a, b) { return b.name.length - a.name.length; });
+    return hits[0].name;
+  }
+  var pp = propPoint(x);
+  if (pp && pp.name) return pp.name;
+  if (pp && isFinite(pp.lat) && isFinite(pp.lng)) {
+    var best = null, bestKm = Infinity;
+    centroidList().forEach(function (c) {
+      var km = haversineKm({ lat: pp.lat, lng: pp.lng }, c);
+      if (km < bestKm) { bestKm = km; best = c; }
+    });
+    if (best && bestKm <= 5) return best.name;
+  }
+  return 'Other';
 }
 function renderLeadsGrouped(rows, q, chip, dupBanner) {
   var groups = {};
