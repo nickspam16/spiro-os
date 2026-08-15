@@ -1960,16 +1960,16 @@ async function loadAll(manual) {
      a timed-out query resolves as an error and is simply skipped by okCount below. */
   var res = await Promise.all([
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
-    sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true),
-    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true),
+    sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
+    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
     /* beds/baths/sqft/lot_sqft are in FORM_SPECS.offmarket, so buildPayload writes all four on
        every save. They were NOT selected here, so the edit form rendered them blank and saving
        wrote blank back over whatever the database held. Fixed 2026-07-30 — see the conformance
        test in test/artifact.test.mjs, which now fails CI if any FORM_SPECS key is missing from
        its table's select. The one-line fix is not the fix; the test is. */
-    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,beds,baths,sqft,lot_sqft,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('offmarket').select('id,address_area,price,price_num,priority,source,beds,baths,sqft,lot_sqft,follow_up_date,converted,notes,list_agent_id,property_id,updated_at,extra').not('archived', 'is', true).not('converted', 'is', true).order('created_at', { ascending: false }),
     sb.from('transactions').select('*').not('archived', 'is', true),
-    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,connection,target_owner,target_reason,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true),
+    sb.from('prospects').select('id,address,type,priority,status,owner_name,owner_contact,connection,target_owner,target_reason,follow_up_date,notes,extra,property_id,owner_contact_id').not('archived', 'is', true).not('converted', 'is', true).order('created_at', { ascending: false }),
     sb.from('capture_inbox').select('id,text,status,routed_to,created_at').order('created_at', { ascending: false }).limit(5),
     sb.from('events').select('ts,entity_type,entity_id,event_type,actor,source,summary').order('ts', { ascending: false }).limit(120),
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
@@ -3255,7 +3255,7 @@ function renderCaptures() {
 /* Field tuple: [key, label, type, placeholder, helper]. Only the FIRST field of each
    spec is required — everything else is optional and says so in the UI. */
 var FORM_SPECS = {
-  offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
+  offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['buyer_links','Link buyers','buyerlinks',null,'Any of your buyers who might want this — check as many as fit. You can always add more later from the buyer’s card.'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
   buyers: [['name','Client name',null,'Kevin & Mike'],['contact','Email or phone',null,'kevin@gmail.com or 310-555-1212','Either or both — so you can reach them from here'],['budget_min','Budget — from',null,'2.5M','Type it any way — 2.5M, 2,500,000, 900k'],['budget_max','Budget — up to',null,'5M'],['areas','Neighborhoods',null,'Brentwood, Santa Monica'],['timeline','How soon',null,'ASAP · 3–6 months · just looking'],['must_haves','Must-haves',null,'pool, view, room for an office'],['notes','Notes','textarea','Anything worth remembering']],
   prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['connection','Your connection',null,'family friend, met at an open house, referred by an agent','How you already know this owner, if you do — flagged in the list so you never cold-approach someone you actually know.'],['target_owner','Farming for (optional)',null,'Penelope Cruz','Prospecting this one because of someone ELSE nearby — a listing angle off a connection you have, or a home you could sell them directly? Name them here. Groups with search and shows on the card, separate from this row’s own owner.'],['target_reason','Why this target (optional)',null,'adjacency listing angle, potential direct buyer for them'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
   listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
@@ -3329,6 +3329,7 @@ function buildPayload(table, vals, existing) {
   var p = {};
   spec.forEach(function (f) {
     if (f[2] === 'agentpicker') return; /* virtual field — resolved to list_agent_id after save */
+    if (f[2] === 'buyerlinks') return; /* virtual field — no such column; resolved via saveBuyerLinks() after save */
     var v = vals[f[0]] || '';
     p[f[0]] = DATE_KEYS[f[0]] && !v ? null : v;
   });
@@ -3375,6 +3376,23 @@ function fieldHtml(f, v, required) {
     h += '<datalist id="' + dlid + '">' + (DATA.agents || []).map(function (a) { return '<option value="' + esc(a.name || '') + '">' + esc(a.brokerage || '') + '</option>'; }).join('') + '</datalist>';
   }
   else if (f[2] === 'date') h += '<input type="date"' + idAttr + ' value="' + esc(v) + '">';
+  else if (f[2] === 'buyerlinks') {
+    /* Multi-select: any number of buyers can want the same lead at once, unlike agentpicker (one
+       agent). Checkboxes, not a multi-<select>, so it works the same with a mouse or a thumb.
+       Pre-checks whoever's already linked when editing (DATA.links = offmarket_potential_buyers);
+       nothing pre-checked on a brand-new lead. Saved by saveBuyerLinks() after the lead itself is
+       saved, since offmarket_potential_buyers needs a real offmarket_id first. */
+    var linkedNow = {};
+    if (editing && editing.row) (DATA.links || []).forEach(function (l) { if (String(l.offmarket_id) === String(editing.row.id)) linkedNow[String(l.buyer_id)] = 1; });
+    var buyerRows = (DATA.buyers || []).slice().sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); });
+    h += '<div id="buyerlinks-picker" style="max-height:180px;overflow-y:auto;border:1px solid var(--line);padding:8px;border-radius:2px;">'
+      + (buyerRows.length ? buyerRows.map(function (b) {
+          return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:14px;">'
+            + '<input type="checkbox" value="' + esc(String(b.id)) + '"' + (linkedNow[String(b.id)] ? ' checked' : '') + '> ' + esc(b.name || 'Buyer')
+            + '</label>';
+        }).join('') : '<div class="hint">No buyers yet — add one first if you want to link here.</div>')
+      + '</div>';
+  }
   else if (f[2] && f[2].length !== undefined && typeof f[2] !== 'string') {
     h += '<select' + idAttr + '>';
     ['' ].concat(f[2]).forEach(function (o) {
@@ -3543,6 +3561,7 @@ async function saveForm() {
     await contactClearEngage(promotedContactId, 'engage.promoted');
   }
   if (editing.table === 'offmarket') { await applyLeadAgent(editing.row ? editing.row.id : r.data[0].id, vals.list_agent, editing.row); } /* link the listing agent from the form */
+  if (editing.table === 'offmarket') { await saveBuyerLinks(editing.row ? editing.row.id : r.data[0].id); } /* multi-select buyer links from the form */
   if (editing.table === 'listings') { await maybeOpenEscrowOnPending(editing.row ? editing.row.id : r.data[0].id, vals.status, vals.address); } /* listing → Pending: offer to open the linked escrow */
   if (editing.table === 'offmarket' || editing.table === 'listings') {
     var geoAddr = editing.table === 'listings' ? vals.address : vals.address_area;
@@ -9774,6 +9793,27 @@ async function saveLink() {
   if (r.error) { err.textContent = r.error.message; return; }
   logEvent('buyers', bid, 'buyer.linked', (recLabel('buyers', bid) || 'Buyer') + ' ↔ ' + (recLabel(type, tid) || tid));
   linkTarget = null; closeForm(); await loadAll(false); toast('Linked ✓');
+}
+/* Multi-buyer counterpart to saveLink() above, for the 'buyerlinks' checkbox field on the lead
+   form (2026-08-15, per Nick -- "when adding a lead I should be able to link my buyers to it,
+   more than one at the same time"). Diffs the checked set against who's already linked (DATA.links
+   = offmarket_potential_buyers) rather than blindly inserting, so re-saving an edited lead adds
+   newly-checked buyers and drops newly-unchecked ones without duplicating or erroring on rows that
+   already exist. Same junction table and composite (offmarket_id, buyer_id) key saveLink() uses. */
+async function saveBuyerLinks(oid) {
+  var box = document.getElementById('buyerlinks-picker');
+  if (!box) return; /* silent-ok: this table's form has no buyer-links field to save */
+  var checked = {};
+  box.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { checked[cb.value] = 1; });
+  var already = {};
+  (DATA.links || []).forEach(function (l) { if (String(l.offmarket_id) === String(oid)) already[String(l.buyer_id)] = 1; });
+  var toAdd = Object.keys(checked).filter(function (bid) { return !already[bid]; });
+  var toRemove = Object.keys(already).filter(function (bid) { return !checked[bid]; });
+  if (toAdd.length) {
+    var r = await sb.from('offmarket_potential_buyers').insert(toAdd.map(function (bid) { return { offmarket_id: oid, buyer_id: bid }; })).select('buyer_id');
+    if (!r.error) toAdd.forEach(function (bid) { logEvent('buyers', bid, 'buyer.linked', (recLabel('buyers', bid) || 'Buyer') + ' ↔ ' + (recLabel('offmarket', oid) || 'lead')); });
+  }
+  if (toRemove.length) await Promise.all(toRemove.map(function (bid) { return sb.from('offmarket_potential_buyers').delete().eq('offmarket_id', oid).eq('buyer_id', bid); }));
 }
 async function unlinkBuyer(bid, type, tid, matchId, via) {
   var r;
