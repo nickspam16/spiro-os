@@ -558,7 +558,7 @@
          prospecting shortlist" (Tier A + sort by tenure) without re-running the one-off stats doc. -->
     <div class="card" id="architect-registry-card" style="display:none;">
       <h2>Architect Registry</h2>
-      <div class="hint" style="margin:-6px 0 10px;">~300 known addresses tied to 55 LA-area architects — search by architect and/or area. Tier A = standing, undesignated, real prospecting target · B = standing but landmarked/famous (content only) · C = demolished/lost · Flag = status unconfirmed, re-verify before use. Sale history is from a one-time public-records check (2026-08-02), not live MLS data.</div>
+      <div class="hint" style="margin:-6px 0 10px;">~300 known addresses tied to 55 LA-area architects — search by architect and/or area. Tier A = standing, undesignated, real prospecting target · B = standing but landmarked/famous (content only) · C = demolished/lost · Flag = status unconfirmed, re-verify before use. Sale history is from a one-time public-records check (2026-08-02), not live MLS data. Tier B rows are the natural fit for the Instagram drafts below — content-only, no prospecting angle needed. Drafting never posts anything; you copy the caption and post it yourself.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
         <input type="text" id="archreg-q-architect" placeholder="Architect (e.g. A Quincy Jones)" oninput="archRegSetFilter('architect',this.value)" style="flex:1;min-width:160px;">
         <input type="text" id="archreg-q-area" placeholder="Area / city (e.g. Brentwood)" oninput="archRegSetFilter('area',this.value)" style="flex:1;min-width:160px;">
@@ -573,6 +573,12 @@
           <option value="name">Sort: A–Z</option>
           <option value="tenure">Sort: longest tenure first</option>
           <option value="recent">Sort: most recent sale first</option>
+        </select>
+        <select id="archreg-q-ig" onchange="archRegSetFilter('ig',this.value)" style="min-width:130px;">
+          <option value="">IG: all</option>
+          <option value="queued">IG: queued</option>
+          <option value="posted">IG: posted</option>
+          <option value="skipped">IG: skipped</option>
         </select>
       </div>
       <div id="archreg-body"><div class="empty">Loading&hellip;</div></div>
@@ -710,7 +716,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.205.0';
+var APP_VERSION = 'v5.206.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -882,7 +888,7 @@ function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
    function, one matching function, used by both the search UI and the suggestion feature so they
    can never disagree about what "matches an address" means. */
 function menuShowArchitectRegistry() { openPanel('architect-registry-card'); renderArchitectRegistry(); }
-var ARCH_REG_FILTER = { architect: '', area: '', tier: '', sort: 'name' };
+var ARCH_REG_FILTER = { architect: '', area: '', tier: '', sort: 'name', ig: '' };
 function archRegSetFilter(field, val) { ARCH_REG_FILTER[field] = val; renderArchitectRegistry(); }
 var ARCH_TIER_LABEL = { A: 'Prospect', B: 'Content only', C: 'Lost', Flag: 'Unconfirmed' };
 var ARCH_TIER_COLOR = { A: 'var(--green)', B: 'var(--muted)', C: '#b3382c', Flag: '#b3382c' };
@@ -911,6 +917,7 @@ function renderArchitectRegistry() {
   var qA = ARCH_REG_FILTER.architect.trim().toLowerCase();
   var qArea = ARCH_REG_FILTER.area.trim().toLowerCase();
   var qTier = ARCH_REG_FILTER.tier;
+  var qIg = ARCH_REG_FILTER.ig;
   var sortMode = ARCH_REG_FILTER.sort || 'name';
   var byName = function (a, b) { return (a.architect || '').localeCompare(b.architect || '') || (a.address || '').localeCompare(b.address || ''); };
   var sortFn = byName;
@@ -933,9 +940,10 @@ function renderArchitectRegistry() {
     if (qA && (r.architect || '').toLowerCase().indexOf(qA) === -1) return false;
     if (qArea && (r.neighborhood || '').toLowerCase().indexOf(qArea) === -1 && (r.city || '').toLowerCase().indexOf(qArea) === -1) return false;
     if (qTier && r.prospecting_tier !== qTier) return false;
+    if (qIg && (r.ig_status || 'idle') !== qIg) return false;
     return true;
   }).sort(sortFn);
-  if (!qA && !qArea && !qTier) { body.innerHTML = '<div class="hint">Type an architect name and/or area above to search ' + rows.length + ' addresses across ' + (function () { var s = {}; rows.forEach(function (r) { s[r.architect] = 1; }); return Object.keys(s).length; })() + ' architects.</div>'; return; }
+  if (!qA && !qArea && !qTier && !qIg) { body.innerHTML = '<div class="hint">Type an architect name and/or area above to search ' + rows.length + ' addresses across ' + (function () { var s = {}; rows.forEach(function (r) { s[r.architect] = 1; }); return Object.keys(s).length; })() + ' architects.</div>'; return; }
   if (!filtered.length) { body.innerHTML = '<div class="empty">No matches. Try a shorter architect name or area — this is exact-substring search, not fuzzy.</div>'; return; }
   body.innerHTML = '<div class="hint" style="margin-bottom:6px;">' + filtered.length + ' match' + (filtered.length === 1 ? '' : 'es') + '</div>' + filtered.slice(0, 150).map(function (r) {
     var existing = archExistingCrmMatches(r);
@@ -952,8 +960,104 @@ function renderArchitectRegistry() {
       + (r.notes ? '<div class="t2">' + esc(r.notes) + '</div>' : '')
       + (r.status ? '<div class="t2">' + esc(r.status) + '</div>' : '')
       + crmLine
+      + archIgRowHtml(r)
       + '</div></div>';
   }).join('') + (filtered.length > 150 ? '<div class="hint" style="margin-top:6px;">Showing first 150 of ' + filtered.length + ' — narrow your search for the rest.</div>' : '');
+}
+/* ===== Architect Registry -> Instagram pipeline (2026-08-15, per Nick's overnight mandate).
+   QUEUE/PREP TOOL ONLY -- this never posts anything itself. It drafts a caption from this row's
+   property facts plus architect_ig_content (backfilled from the "Architect Image & IG Catalog"
+   research doc), lets Nick edit and copy it, and tracks idle -> queued -> posted so he has one
+   place to see what's ready. Actually posting to Instagram stays a manual, Nick-does-it-himself
+   action from his own phone -- same "button-triggered, human sends it" rule as every outbound
+   channel in this app (email, share links, pricing-preview invites). "Mark Posted" only ever
+   fires from Nick clicking it after he has actually posted; nothing here can post for him. */
+var ARCH_IG_OPEN = {};   /* regId -> true while its draft box is expanded */
+var ARCH_IG_DRAFT = {};  /* regId -> current (possibly unsaved) draft text */
+var ARCH_IG_STATUS_LABEL = { queued: 'Queued for IG', posted: 'Posted to IG', skipped: 'Skipped' };
+function archIgContentFor(architectName) {
+  var name = String(architectName || '').trim().toLowerCase();
+  if (!name) return null;
+  return (DATA.architect_ig_content || []).filter(function (c) { return String(c.architect || '').trim().toLowerCase() === name; })[0] || null;
+}
+function buildArchIgCaption(r) {
+  var ig = archIgContentFor(r.architect);
+  var loc = [r.neighborhood, r.city].filter(Boolean).join(', ');
+  var head = (r.architect || '') + (ig && ig.years ? ' (' + ig.years + ')' : '') + (r.address ? ' — ' + r.address : '') + (loc ? ', ' + loc : '');
+  var bits = [head];
+  if (ig && (ig.ig_hook || ig.one_liner)) bits.push(ig.ig_hook || ig.one_liner);
+  if (r.landmark_status) bits.push(r.landmark_status);
+  if (r.year_built) bits.push('Built ' + r.year_built);
+  bits.push('#LosAngelesRealEstate #ArchitectureLA');
+  return bits.filter(Boolean).join('\n\n');
+}
+function archIgRowHtml(r) {
+  var regId = String(r.id);
+  var status = r.ig_status || 'idle';
+  var ig = archIgContentFor(r.architect);
+  var statusPill = status !== 'idle'
+    ? '<span style="font-size:11px;font-weight:700;color:' + (status === 'posted' ? 'var(--green)' : status === 'skipped' ? 'var(--muted)' : '#b3382c') + ';border:1px solid currentColor;border-radius:4px;padding:1px 5px;margin-left:6px;">' + esc(ARCH_IG_STATUS_LABEL[status] || status) + '</span>'
+    : '';
+  var toggleLabel = ARCH_IG_OPEN[regId] ? 'Hide IG draft' : (status === 'idle' ? '📸 Draft IG post' : '📸 Edit IG draft');
+  var h = '<div style="margin-top:6px;">' + statusPill
+    + '<button class="qbtn" style="margin-left:' + (statusPill ? '6px' : '0') + ';" onclick="event.stopPropagation();archIgToggle(\'' + escJs(regId) + '\')">' + toggleLabel + '</button></div>';
+  if (ARCH_IG_OPEN[regId]) {
+    if (ARCH_IG_DRAFT[regId] == null) ARCH_IG_DRAFT[regId] = r.ig_caption || buildArchIgCaption(r);
+    var noImgHint = (!ig || !ig.image_url) ? '<div class="hint" style="margin-top:4px;">No stock photo on file for ' + esc(r.architect || 'this architect') + ' — use your own listing/property photos for this post.</div>' : '';
+    var licHint = (ig && ig.needs_license_check === 'YES') ? '<div class="hint" style="margin-top:2px;color:#b3382c;">Reference photo credit is unconfirmed — verify the license before using that image publicly (' + esc(ig.credit_note || '') + ').</div>' : '';
+    h += '<div style="margin-top:6px;" onclick="event.stopPropagation();">'
+      + '<textarea id="archig-txt-' + esc(regId) + '" rows="6" style="width:100%;box-sizing:border-box;font:inherit;" oninput="archIgDraftChange(\'' + escJs(regId) + '\',this.value)">' + esc(ARCH_IG_DRAFT[regId]) + '</textarea>'
+      + noImgHint + licHint
+      + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">'
+      + '<button class="qbtn" onclick="archIgCopy(\'' + escJs(regId) + '\')">Copy</button>'
+      + '<button class="qbtn done" onclick="archIgSaveDraft(\'' + escJs(regId) + '\')">Save & Queue</button>'
+      + (status !== 'posted' ? '<button class="qbtn done" onclick="archIgMarkPosted(\'' + escJs(regId) + '\')">Mark Posted</button>' : '')
+      + (status !== 'idle' ? '<button class="qbtn" onclick="archIgReset(\'' + escJs(regId) + '\')">Reset to idle</button>' : '')
+      + '</div></div>';
+  }
+  return h;
+}
+function archIgToggle(regId) {
+  regId = String(regId);
+  ARCH_IG_OPEN[regId] = !ARCH_IG_OPEN[regId];
+  if (!ARCH_IG_OPEN[regId]) delete ARCH_IG_DRAFT[regId]; /* discard an unsaved edit on close -- Save & Queue is what persists it */
+  renderArchitectRegistry();
+}
+function archIgDraftChange(regId, val) { ARCH_IG_DRAFT[String(regId)] = val; }
+function archIgCopy(regId) {
+  var t = document.getElementById('archig-txt-' + regId); if (!t) return;
+  t.select();
+  try { document.execCommand('copy'); toast('Caption copied ✓ — paste it into Instagram yourself when ready'); } catch (e) { if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { toast('Caption copied ✓'); }); }
+}
+async function archIgSaveDraft(regId) {
+  var text = ARCH_IG_DRAFT[String(regId)] || '';
+  var r = await sb.from('architect_registry').update({ ig_status: 'queued', ig_caption: text, ig_queued_at: nowStamp() }).eq('id', regId).select('id,ig_status,ig_caption,ig_queued_at');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  var saved = r.data[0];
+  (DATA.architect_registry || []).forEach(function (x) { if (String(x.id) === String(regId)) { x.ig_status = saved.ig_status; x.ig_caption = saved.ig_caption; x.ig_queued_at = saved.ig_queued_at; } });
+  logEvent('architect_registry', regId, 'archig.queued', 'Queued an Instagram post draft');
+  toast('Queued ✓ — copy the caption and post it yourself from Instagram when ready');
+  renderArchitectRegistry();
+}
+async function archIgMarkPosted(regId) {
+  var r = await sb.from('architect_registry').update({ ig_status: 'posted', ig_posted_at: nowStamp() }).eq('id', regId).select('id,ig_status,ig_posted_at');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not update — try again'); return; }
+  var saved = r.data[0];
+  (DATA.architect_registry || []).forEach(function (x) { if (String(x.id) === String(regId)) { x.ig_status = saved.ig_status; x.ig_posted_at = saved.ig_posted_at; } });
+  logEvent('architect_registry', regId, 'archig.posted', 'Marked as posted to Instagram');
+  toast('Marked posted ✓');
+  ARCH_IG_OPEN[String(regId)] = false;
+  delete ARCH_IG_DRAFT[String(regId)];
+  renderArchitectRegistry();
+}
+async function archIgReset(regId) {
+  var r = await sb.from('architect_registry').update({ ig_status: 'idle' }).eq('id', regId).select('id,ig_status');
+  if (r.error || !r.data || !r.data[0]) { toast('Could not update — try again'); return; }
+  (DATA.architect_registry || []).forEach(function (x) { if (String(x.id) === String(regId)) x.ig_status = 'idle'; });
+  ARCH_IG_OPEN[String(regId)] = false;
+  delete ARCH_IG_DRAFT[String(regId)];
+  renderArchitectRegistry();
+  toast('Reset to idle');
 }
 /* "Add to Prospects" from a registry row (2026-08-02, per Nick — registry was read-only, no way to
    act on a Tier A address he wants to work). Opens the normal New Prospect form pre-filled from the
@@ -1641,9 +1745,6 @@ function withTimeout(promise, ms, timeoutValue) {
    Reporting "couldn't save" is a specific kind of lie — it invites the user to save again, and
    on an insert path that second attempt is how you get two rows. The honest message is that we
    do not know, followed immediately by a refetch that finds out. */
-function isTimeout(r) {
-  return !!(r && r.error && String(r.error.message || '') === 'timeout');
-}
 async function reportUnconfirmedWrite() {
   toast('Couldn’t confirm — checking the server');
   await loadAll(false);
@@ -2047,9 +2148,15 @@ async function loadAll(manual) {
        load in full every time, same as tc_task_templates. The sale/tenure columns come from a
        one-time public-records backfill (prompt_registry.architect-registry-v1, v3) — not live data,
        refreshed by re-running that research, not by anything in this app. */
-    sb.from('architect_registry').select('id,architect,address,neighborhood,city,status,year_built,landmark_status,notes,prospecting_tier,norm_address,last_sale_date,last_sale_date_text,last_sale_price,sale_count,current_owner_tenure_years,sales_data_status')
+    sb.from('architect_registry').select('id,architect,address,neighborhood,city,status,year_built,landmark_status,notes,prospecting_tier,norm_address,last_sale_date,last_sale_date_text,last_sale_price,sale_count,current_owner_tenure_years,sales_data_status,ig_status,ig_caption,ig_queued_at,ig_posted_at'),
+    /* Architect IG pipeline (2026-08-15): architect-level bio/hook/image content, backfilled from
+       the "Architect Image & IG Catalog" research doc. Small table (55 rows), safe to load in full
+       every time same as tc_task_templates. Joined client-side to architect_registry by architect
+       name (archIgContentFor()) to build a suggested caption -- this table itself never posts
+       anything, it's just the content bank the caption draft is built from. */
+    sb.from('architect_ig_content').select('id,architect,years,photo_subject,image_url,credit_note,source_url,needs_license_check,one_liner,ig_hook,content_status')
   ].map(function (p) { return withTimeout(p, 15000, { error: { message: 'timeout' }, data: null }); }));
-  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties', 'architect_registry'];
+  var names = ['followups', 'buyers', 'listings', 'offmarket', 'transactions', 'prospects', 'captures', 'events', 'memories', 'graveyard', 'links', 'matches', 'transaction_deadlines', 'esign_envelopes', 'showings', 'open_houses', 'area_centroids', 'app_config', 'agents', 'agent_deals', 'contacts', 'properties', 'agent_leads', 'property_photos', 'listing_agents', 'share_links', 'share_link_views', 'area_aliases', 'calendar_suggestions', 'prospects_archived', 'offmarket_archived', 'transaction_tasks', 'tc_task_templates', 'transaction_commission_items', 'tc_template_feedback', 'market_solds', 'transaction_documents', 'tc_document_templates', 'transaction_parties', 'architect_registry', 'architect_ig_content'];
   /* A newer load has been issued while this one was in flight. Its results are the fresher
      truth, so this response is dropped entirely rather than partially applied — writing even
      some of these arrays would leave DATA a mix of two different points in time. */
@@ -3513,66 +3620,75 @@ function submitForm() { if (memTarget) saveMemory(); else if (linkTarget) saveLi
 
 async function saveForm() {
   if (!editing) return;
+  /* Bug fix (2026-08-15): this function awaits mid-save (activity re-read, insert/update, several
+     follow-up writes). The global `editing` can be nulled out from under it by closeForm() if the
+     user double-taps Save-then-close or navigates away while a save is still in flight — every
+     `editing.row`/`editing.table` read below used to go through that mutable global, so a save that
+     outlived a form-close crashed with "null is not an object (evaluating 'editing.row')" (seen in
+     client_errors 2026-08-03, saveForm, mobile Safari). Fix: snapshot the form state into a local
+     `ed` once, up front, and use that local for the rest of the function so a concurrent closeForm()
+     can no longer pull the record out from under an in-flight save. */
+  var ed = editing;
   var vals = {};
-  FORM_SPECS[editing.table].forEach(function (f) {
+  FORM_SPECS[ed.table].forEach(function (f) {
     var el = document.getElementById('f_' + f[0]);
     vals[f[0]] = el ? el.value.trim() : '';
   });
-  var b = buildPayload(editing.table, vals, editing.row);
+  var b = buildPayload(ed.table, vals, ed.row);
   var err = document.getElementById('form-err');
-  if (b.error) { showFormErr(b.error, FORM_SPECS[editing.table][0][0]); return; }
+  if (b.error) { showFormErr(b.error, FORM_SPECS[ed.table][0][0]); return; }
   /* Gentle duplicate guard: warn once, save on the second tap. Runs the SAME common-language matcher
      capture uses (address-variant for leads, identity for people) so a hand-typed lead can't twin an
      existing one the way "527 7th street, Santa Monica, 90402" vs "527 7th street, santa monica" did. */
-  if (!editing.row && !editing.dupOk) {
-    var dup = findDupe(editing.table, vals[FORM_SPECS[editing.table][0][0]]);
-    if (!dup && (editing.table === 'offmarket' || editing.table === 'buyers' || editing.table === 'agents')) {
-      var mx = captureMatchExisting({ table: editing.table, payload: b.payload });
+  if (!ed.row && !ed.dupOk) {
+    var dup = findDupe(ed.table, vals[FORM_SPECS[ed.table][0][0]]);
+    if (!dup && (ed.table === 'offmarket' || ed.table === 'buyers' || ed.table === 'agents')) {
+      var mx = captureMatchExisting({ table: ed.table, payload: b.payload });
       if (mx) dup = mx.label;
     }
     if (dup) {
-      editing.dupOk = true;
+      ed.dupOk = true;
       showFormErr('"' + dup + '" appears to be recorded already. Save again if this is truly a different one.',
-                  FORM_SPECS[editing.table][0][0]);
+                  FORM_SPECS[ed.table][0][0]);
       return;
     }
   }
   var r;
-  if (editing.row && editing.table !== 'followups') {
+  if (ed.row && ed.table !== 'followups') {
     /* re-read activity so concurrent appends (AI logs, sweep) are not clobbered by our stale snapshot */
-    var fresh = await sb.from(editing.table).select('activity').eq('id', editing.row.id).single();
+    var fresh = await sb.from(ed.table).select('activity').eq('id', ed.row.id).single();
     if (!fresh.error && fresh.data) {
       var live = fresh.data.activity || [];
       live.push({ id: uid(), ts: b.payload.updated_at, text: 'Edited on phone' });
       b.payload.activity = live;
     }
   }
-  if (editing.row) r = await sb.from(editing.table).update(b.payload).eq('id', editing.row.id).select('id');
-  else r = await sb.from(editing.table).insert(b.payload).select('id');
+  if (ed.row) r = await sb.from(ed.table).update(b.payload).eq('id', ed.row.id).select('id');
+  else r = await sb.from(ed.table).insert(b.payload).select('id');
   if (r.error || !r.data || !r.data.length) { showFormErr(humanSaveError(r.error && r.error.message)); return; }
-  if (!editing.row) await linkSpines(editing.table, r.data[0].id, vals); /* self-link new record to its person + parcel */
+  if (!ed.row) await linkSpines(ed.table, r.data[0].id, vals); /* self-link new record to its person + parcel */
   /* Engage promote (2026-07-23): a new Buyer/Prospect that started life as "promote from Engage"
      auto-clears that contact's Engage tag, so they don't sit tagged AND show up as a real pipeline
      record at the same time — per Nick's scoping call. Only fires for the exact new-record save
      the promote button triggered (PROMOTING_ENGAGE_ID is cleared here either way). */
-  if (!editing.row && PROMOTING_ENGAGE_ID && (editing.table === 'buyers' || editing.table === 'prospects')) {
+  if (!ed.row && PROMOTING_ENGAGE_ID && (ed.table === 'buyers' || ed.table === 'prospects')) {
     var promotedContactId = PROMOTING_ENGAGE_ID;
     PROMOTING_ENGAGE_ID = null;
     await contactClearEngage(promotedContactId, 'engage.promoted');
   }
-  if (editing.table === 'offmarket') { await applyLeadAgent(editing.row ? editing.row.id : r.data[0].id, vals.list_agent, editing.row); } /* link the listing agent from the form */
-  if (editing.table === 'offmarket') { await saveBuyerLinks(editing.row ? editing.row.id : r.data[0].id); } /* multi-select buyer links from the form */
-  if (editing.table === 'listings') { await maybeOpenEscrowOnPending(editing.row ? editing.row.id : r.data[0].id, vals.status, vals.address); } /* listing → Pending: offer to open the linked escrow */
-  if (editing.table === 'offmarket' || editing.table === 'listings') {
-    var geoAddr = editing.table === 'listings' ? vals.address : vals.address_area;
-    geocodeRecordInBackground(editing.table, editing.row ? editing.row.id : r.data[0].id, geoAddr);
+  if (ed.table === 'offmarket') { await applyLeadAgent(ed.row ? ed.row.id : r.data[0].id, vals.list_agent, ed.row); } /* link the listing agent from the form */
+  if (ed.table === 'offmarket') { await saveBuyerLinks(ed.row ? ed.row.id : r.data[0].id); } /* multi-select buyer links from the form */
+  if (ed.table === 'listings') { await maybeOpenEscrowOnPending(ed.row ? ed.row.id : r.data[0].id, vals.status, vals.address); } /* listing → Pending: offer to open the linked escrow */
+  if (ed.table === 'offmarket' || ed.table === 'listings') {
+    var geoAddr = ed.table === 'listings' ? vals.address : vals.address_area;
+    geocodeRecordInBackground(ed.table, ed.row ? ed.row.id : r.data[0].id, geoAddr);
   }
-  var saved = (editing.row ? 'Updated ' : 'Added ') + TITLES[editing.table];
-  var firstKey = FORM_SPECS[editing.table][0][0];
-  logEvent(editing.table, editing.row ? editing.row.id : b.payload.id,
-    editing.row ? 'record.updated' : 'record.created',
+  var saved = (ed.row ? 'Updated ' : 'Added ') + TITLES[ed.table];
+  var firstKey = FORM_SPECS[ed.table][0][0];
+  logEvent(ed.table, ed.row ? ed.row.id : b.payload.id,
+    ed.row ? 'record.updated' : 'record.created',
     saved + ': ' + (vals[firstKey] || ''));
-  closeForm();
+  if (editing === ed) closeForm(); /* only close if the user hasn't already closed/reopened a different form */
   await loadAll(false);
   toast(saved + ' ✓');
 }
@@ -4509,8 +4625,17 @@ function propertyPhotosSection(propertyId) {
   /* 2026-07-23: the "Add photos" trigger moved up to topActionsHtml, right next to Edit — Nick
      flagged this card as too crowded, and having an upload button buried mid-card while ANOTHER
      one lived at the very top made it worse. This section is now gallery-display only; if there's
-     nothing uploaded yet it renders nothing at all (no dead "no photos" placeholder mid-card). */
-  if (!n) return '';
+     nothing uploaded yet it renders nothing at all (no dead "no photos" placeholder mid-card).
+     2026-08-15 FIX: that "renders nothing" included the #pgal-<id> container itself, not just its
+     visible label/button. pickPropertyPhotos()/renderPropertyGallery() target that container by id
+     right after an upload completes, to drop the new thumbnails in without a full card re-render.
+     For a record's FIRST-EVER photo (n was 0 at the time the card drew), the container had never
+     existed in the DOM — the upload succeeded (row written, toast shown) but had nowhere to render,
+     so the photos were only visible after fully closing and reopening the card. (Reported by Nick:
+     added 7 photos to the "2961 Angus" lead, saw none of them — confirmed via the DB that all 7
+     rows existed correctly; this was a display bug, not data loss.) Fix: always emit the container,
+     just empty/unlabeled at n=0, so there's always somewhere for the first upload to land. */
+  if (!n) return '<div id="' + gid + '"></div>';
   return '<div class="flabel" style="margin-top:12px;">Photos (' + n + ')</div>'
     + '<div onclick="event.stopPropagation();">'
     + '<div id="' + gid + '" style="margin-top:8px;"><button class="qbtn" onclick="event.stopPropagation();renderPropertyGallery(\'' + propertyId + '\',\'' + gid + '\')">Show ' + n + ' photo' + (n > 1 ? 's' : '') + '</button></div>'
@@ -5563,7 +5688,7 @@ function tcEscrowGlanceLine(sid) {
     .sort(function (a, b) { return String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')); });
   var gatedOpen = open.filter(function (t) { return t.severity === 'gated'; });
   var next = gatedOpen[0] || open[0];
-  return pct + '% TC tasks' + (next ? ' · next: ' + next.label : '');
+  return pct + '% checklist done' + (next ? ' · next: ' + next.label : '');
 }
 function tcTasksHtml(tx) {
   var sid = String(tx.id);
@@ -7339,8 +7464,8 @@ function cmaResultHtml(set, members) {
   var conf = set.confidence || 'insufficient';
   var confPill = conf === 'medium' ? 'pill ok' : conf === 'low' ? 'pill warn' : 'pill';
   var h = '<div class="flabel" style="margin-top:8px;">CMA result <span class="' + confPill + '">' + esc(conf) + ' confidence</span></div>';
-  h += '<div class="t1" style="font-size:18px;">' + fmtMoney(set.value_point) + '</div>';
-  h += '<div class="hint">Range ' + fmtMoney(set.value_low) + '&ndash;' + fmtMoney(set.value_high) + ' &middot; ' + set.comp_count + ' comps &middot; $' + Math.round(set.ppsf_median) + '/sqft median</div>';
+  h += '<div class="t1" style="font-size:18px;">' + money(set.value_point) + '</div>';
+  h += '<div class="hint">Range ' + money(set.value_low) + '&ndash;' + money(set.value_high) + ' &middot; ' + set.comp_count + ' comps &middot; $' + Math.round(set.ppsf_median) + '/sqft median</div>';
   var geoPct = set.params && set.params.geo_coverage_pct;
   h += '<div class="hint" style="margin-top:4px;">From the 2026-08-01 90-day MLS snapshot &mdash; no sale dates in this data, so this is directional, not live, regardless of distance shown below. Verify against current activity before quoting a seller.'
     + (geoPct != null ? ' Real position available for ' + geoPct + '% of these comps.' : '') + '</div>';
@@ -8149,6 +8274,46 @@ function portalTogglePick(id) { PORTAL_PICK[id] = !PORTAL_PICK[id]; renderPortal
 function portalToggleListings() { PORTAL_LISTINGS_OPEN = !PORTAL_LISTINGS_OPEN; renderPortal(); }
 function portalBuyer(id) { var L = (PORTAL_OVERVIEW && PORTAL_OVERVIEW.buyers) || []; for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; }
 function portalListing(id) { var L = (PORTAL_OVERVIEW && PORTAL_OVERVIEW.listings) || []; for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; }
+/* 2026-08-15: closes the buyer-card -> portal-cart gap. Before this, linking a lead to a buyer
+   (offmarket_potential_buyers) and sharing that lead on the portal (listing_access) were two
+   unrelated systems -- nothing on the buyer's card knew whether the linked lead had even synced
+   to the portal yet, let alone whether it was already in that buyer's cart. portalListingForCrm
+   matches on source_ref ("crm:<offmarket_id>" / "crmlisting:<listings_id>", the same convention
+   bridge-sync and the morning sweep already use), which the portal-bridge edge function now
+   returns from portal_overview. */
+function portalBuyerForCrm(bid) { var L = (PORTAL_OVERVIEW && PORTAL_OVERVIEW.buyers) || []; for (var i = 0; i < L.length; i++) if (String(L[i].crm_buyer_id) === String(bid)) return L[i]; return null; }
+function portalListingForCrm(type, id) {
+  if (type !== 'offmarket' && type !== 'listings') return null;
+  var ref = (type === 'offmarket' ? 'crm:' : 'crmlisting:') + id;
+  var L = (PORTAL_OVERVIEW && PORTAL_OVERVIEW.listings) || [];
+  for (var i = 0; i < L.length; i++) if (L[i].source_ref === ref) return L[i];
+  return null;
+}
+/* Label reflects exactly what one tap will do — never a generic "Push to cart" that hides
+   whether it's about to publish something live. */
+function portalPushLabel(bid, type, id) {
+  if (type !== 'offmarket' && type !== 'listings') return null;
+  if (!PORTAL_OVERVIEW) return null; /* overview hasn't loaded yet — say nothing rather than guess */
+  var pb = portalBuyerForCrm(bid);
+  if (!pb) return 'Give portal access first';
+  var pl = portalListingForCrm(type, id);
+  if (!pl) return 'Not synced to portal yet';
+  if (pl.status !== 'published') return 'Publish + add to cart';
+  var already = (pb.shared_listings || []).some(function (s) { return String(s.id) === String(pl.id); });
+  return already ? null : 'Push to portal cart';
+}
+async function pushLeadToCart(bid, type, id) {
+  var buyerName = recLabel('buyers', bid) || 'this buyer';
+  var pb = portalBuyerForCrm(bid);
+  if (!pb) { toast('No portal account for ' + buyerName + ' yet'); giveBuyerAccess(bid); return; }
+  var pl = portalListingForCrm(type, id);
+  if (!pl) { toast('Not on the portal yet — the daily sweep syncs new leads each morning'); return; }
+  if (pl.status !== 'published') {
+    if (!confirm('Publish this on the portal and add it to ' + buyerName + '’s cart?')) return;
+    await setListingStatus(pl.id, 'published');
+  }
+  await shareListing(pb.id, pl.id);
+}
 async function portalWrite(payload) {
   var s = await sb.auth.getSession();
   var tok = s.data && s.data.session && s.data.session.access_token;
@@ -8534,11 +8699,13 @@ function linkChip(bid, l) {
   var labelSpan = (l.type === 'listings_live')
     ? '<span>' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>'
     : '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(' + "'" + l.type + "','" + l.id + "'" + ')">' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>';
+  var pushLbl = portalPushLabel(bid, l.type, l.id);
+  var pushBtn = pushLbl ? '<button class="qbtn" onclick="event.stopPropagation();pushLeadToCart(' + "'" + bid + "','" + l.type + "','" + l.id + "'" + ')">' + esc(pushLbl) + '</button>' : '';
   return '<div class="qi"><div class="txt"><div class="t1">'
     + labelSpan
     + ' <span style="cursor:pointer;color:#b3382c;" onclick="event.stopPropagation();unlinkBuyer(' + "'" + bid + "','" + l.type + "','" + l.id + "','" + (l.matchId || '') + "','" + l.via + "'" + ')">&#10005;</span></div>'
     + sendStatusLine(l.sent_at, l.response, l.response_at, l.response_notes) + '</div>'
-    + '<div class="acts">' + sendActionsHtml(l.via, l.type, l.id, bid, l.matchId, l.sent_at, l.response) + '</div></div>';
+    + '<div class="acts">' + sendActionsHtml(l.via, l.type, l.id, bid, l.matchId, l.sent_at, l.response) + pushBtn + '</div></div>';
 }
 /* Tap a link chip → jump to that record in Records, expanded and scrolled into view. */
 function jumpToRecord(t, id) {
@@ -9437,7 +9604,6 @@ async function applyLeadAgent(oid, name, existingRow) {
   logEvent('offmarket', oid, 'lead.list_agent', 'Linked list agent ' + name + ' (from lead form)');
   flagAgentContactIfMissing(aid);
 }
-function linkSourceAsAgent(oid) { var o = recOf('offmarket', oid); if (o) createAndLinkAgent(oid, String(o.source || '').trim()); }
 function linkSuggestedAgent(oid) { var o = recOf('offmarket', oid); if (!o) return; var name = (o.extra && o.extra.suggested_list_agent) || o.source || ''; createAndLinkAgent(oid, String(name).trim()); }
 /* When an agent is on file but has no email/phone, mark them internally so a future MLS-sourcing
    pass can fill it in. extra.needs_contact is the machine-readable flag; the card shows the human
@@ -9633,22 +9799,6 @@ function rankAgentsForBuyerNeed(buyer) {
     out.push({ agent: a, score: score, reasons: reasons, cautions: cautions });
   });
   return out.sort(function (x, y) { return y.score - x.score; });
-}
-/* Aggregate ranking for a multi-property share list: sums each property's score for an agent so
-   an agent who's a strong fit across several selected items rises above one who only fits one. */
-function rankAgentsForList(ids) {
-  var scores = {};
-  (ids || []).forEach(function (id) {
-    var o = recOf('offmarket', id); if (!o) return;
-    rankAgentsForListing(o).forEach(function (r) {
-      var aid = String(r.agent.id);
-      if (!scores[aid]) scores[aid] = { agent: r.agent, score: 0, reasons: [], cautions: [] };
-      scores[aid].score += r.score;
-      r.reasons.forEach(function (x) { if (scores[aid].reasons.indexOf(x) < 0) scores[aid].reasons.push(x); });
-      r.cautions.forEach(function (x) { if (scores[aid].cautions.indexOf(x) < 0) scores[aid].cautions.push(x); });
-    });
-  });
-  return Object.keys(scores).map(function (k) { return scores[k]; }).sort(function (x, y) { return y.score - x.score; });
 }
 /* ===== Chunk C (overnight): pricing-preview workflow on a listing. Pick suggested agents ->
    draft a copyable invite Nick SENDS himself (never auto-send, button-triggered-email rule) ->
@@ -9907,23 +10057,35 @@ var AREA_WORD_SUFFIX = '(?![a-z0-9])(?!\\s+(?:blvd|boulevard|ave|avenue|st|stree
    centroid each should resolve to, so free-text input auto-sorts into the fixed area list instead
    of silently matching nothing. Same whole-word rule applies so an alias can't match inside a
    street name either. Direct name matches and alias matches are merged/de-duped by canonical name. */
-function centroidsIn(text) {
-  var t = String(text || '').toLowerCase(); if (!t) return [];
+/* PERF (2026-08-15, hot-path audit): centroidsIn() used to rebuild centroidList() and
+   re-compile every centroid/alias into a fresh RegExp on EVERY call, and it's called once per
+   record for EVERY listing/prospect/offmarket/transaction on every render() (convergenceSignals
+   runs unconditionally, unlike the visibility-gated cards). With ~50-100 centroids/aliases and
+   hundreds of records that's tens of thousands of RegExp compiles per render. Cached below,
+   keyed on the DATA.area_centroids/area_aliases array identity — loadAll() always replaces
+   those arrays wholesale (never mutates in place), so an identity check is a correct and cheap
+   invalidation signal. Matching behavior is unchanged; only the compile step is memoized. */
+var _centroidReCache = null, _centroidReCacheC = null, _centroidReCacheA = null;
+function centroidRegexIndex() {
+  if (_centroidReCache && _centroidReCacheC === DATA.area_centroids && _centroidReCacheA === DATA.area_aliases) return _centroidReCache;
   var list = centroidList();
   var byName = {}; list.forEach(function (c) { byName[c.name.toLowerCase()] = c; });
+  var nameRe = list.map(function (c) {
+    return { c: c, re: new RegExp('(?:^|[^a-z0-9])' + reEsc(c.name.toLowerCase()) + AREA_WORD_SUFFIX, 'i') };
+  });
+  var aliasRe = (DATA.area_aliases || []).filter(function (a) { return a.alias && a.canonical_name; }).map(function (a) {
+    return { c: byName[a.canonical_name.toLowerCase()], re: new RegExp('(?:^|[^a-z0-9])' + reEsc(a.alias.toLowerCase()) + AREA_WORD_SUFFIX, 'i') };
+  }).filter(function (x) { return x.c; });
+  _centroidReCache = { nameRe: nameRe, aliasRe: aliasRe };
+  _centroidReCacheC = DATA.area_centroids; _centroidReCacheA = DATA.area_aliases;
+  return _centroidReCache;
+}
+function centroidsIn(text) {
+  var t = String(text || '').toLowerCase(); if (!t) return [];
+  var idx = centroidRegexIndex();
   var hits = {};
-  list.forEach(function (c) {
-    var re = new RegExp('(?:^|[^a-z0-9])' + reEsc(c.name.toLowerCase()) + AREA_WORD_SUFFIX, 'i');
-    if (re.test(t)) hits[c.name] = c;
-  });
-  (DATA.area_aliases || []).forEach(function (a) {
-    if (!a.alias || !a.canonical_name) return;
-    var re = new RegExp('(?:^|[^a-z0-9])' + reEsc(a.alias.toLowerCase()) + AREA_WORD_SUFFIX, 'i');
-    if (re.test(t)) {
-      var c = byName[a.canonical_name.toLowerCase()];
-      if (c) hits[c.name] = c;
-    }
-  });
+  idx.nameRe.forEach(function (x) { if (x.re.test(t)) hits[x.c.name] = x.c; });
+  idx.aliasRe.forEach(function (x) { if (x.re.test(t)) hits[x.c.name] = x.c; });
   return Object.keys(hits).map(function (k) { return hits[k]; });
 }
 /* A property's point: true coords if present (future MLS), else the linked properties.lat/lng spine
@@ -10215,7 +10377,6 @@ async function submitHotsheetPaste() {
     if (out) out.innerHTML = '<div class="hint" style="margin-top:6px;color:#b3382c;">' + esc(String(e && e.message || e)) + '</div>';
   }
 }
-function fmtMoney(n) { return n == null ? '' : '$' + Number(n).toLocaleString('en-US'); }
 /* Market review queue (2026-07-24) — replaces the old read-only marketHtml(). Needs-review events
    (review_status='pending') group together up top so Nick can parse the day's new events in one
    pass; dismissed/flagged ones collapse into a lighter "Already reviewed" section below, kept
@@ -10228,7 +10389,7 @@ function marketEventFlaggedIds(e) {
   return e.flagged_buyer_id ? [e.flagged_buyer_id] : [];
 }
 function marketEventLine(e) {
-  var facts = [e.neighborhood, fmtDate(e.event_date), fmtMoney(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ');
+  var facts = [e.neighborhood, fmtDate(e.event_date), money(e.sold_price || e.list_price), e.days_on_market != null ? e.days_on_market + ' DOM' : ''].filter(Boolean).join(' · ');
   var actions = '', pending = e.review_status === 'pending';
   if (pending) {
     actions = '<button class="qbtn" onclick="event.stopPropagation();dismissMarketEvent(\'' + escJs(e.id) + '\')">&times; Not interesting</button>'
@@ -10584,7 +10745,7 @@ function marketTrackingHtml() {
   h += tracked.map(function (e) {
     var t = marketEventTracking(e);
     var reasonLabels = (t.reasons || []).map(function (key) { var m = MARKET_TRACK_REASONS.filter(function (r) { return r[0] === key; })[0]; return m ? m[1] : key; });
-    var facts = [e.neighborhood, fmtMoney(e.sold_price || e.list_price), fmtDate(e.event_date)].filter(Boolean).join(' · ');
+    var facts = [e.neighborhood, money(e.sold_price || e.list_price), fmtDate(e.event_date)].filter(Boolean).join(' · ');
     return '<div class="qi"><div class="txt"><div class="t1">' + esc((e.address || e.neighborhood || '')) + '</div>'
       + '<div class="t2">' + esc(facts) + (reasonLabels.length ? ' — ' + esc(reasonLabels.join(', ')) : '') + (t.note ? '<br>' + esc(t.note) : '') + '</div>'
       + '<div style="margin-top:6px;">'
@@ -10663,12 +10824,12 @@ function renderMarketReview() {
     snapKeys.forEach(function (k) {
       var s = latest[k];
       h += '<div class="qi"><div class="txt"><div class="t1">' + esc(k) + '</div><div class="t2">'
-        + esc([s.active_count != null ? s.active_count + ' active' : '', s.median_list_price ? 'median ' + fmtMoney(s.median_list_price) : '', s.months_of_inventory != null ? s.months_of_inventory + ' mo. inventory' : ''].filter(Boolean).join(' · ')) + '</div></div></div>';
+        + esc([s.active_count != null ? s.active_count + ' active' : '', s.median_list_price ? 'median ' + money(s.median_list_price) : '', s.months_of_inventory != null ? s.months_of_inventory + ' mo. inventory' : ''].filter(Boolean).join(' · ')) + '</div></div></div>';
     });
   }
   if (MARKET.config.length) {
     h += '<div class="bucket" style="margin-top:16px;">Watching</div><div class="hint" style="line-height:1.7;">'
-      + MARKET.config.map(function (c) { return esc(c.neighborhood) + ' (alerts from ' + fmtMoney(c.luxury_floor) + ')'; }).join(' · ') + '</div>';
+      + MARKET.config.map(function (c) { return esc(c.neighborhood) + ' (alerts from ' + money(c.luxury_floor) + ')'; }).join(' · ') + '</div>';
   }
   body.innerHTML = h;
 }
@@ -11354,7 +11515,26 @@ function prospectSetSeg(s) { prospectSeg = s; renderBrowse(); }
 function prospectToggleFilter(k) { prospectFilters[k] = !prospectFilters[k]; renderBrowse(); }
 
 /* ---------- Buildable / UnderBuilt — LA-scoped estimate. INFORMATIONAL only; verify with the City. ---------- */
-function recOf(table, id) { var r = null; (DATA[table] || []).forEach(function (z) { if (String(z.id) === String(id)) r = z; }); return r; }
+/* PERF (2026-08-15, hot-path audit): recOf() was a linear forEach scan of the whole table on
+   every call (~143 call sites, several inside per-record loops that run on every render — e.g.
+   reactivationSignals()). Cached as a table -> Map(id -> record) index below, rebuilt when
+   DATA[table]'s array reference OR length changes (loadAll always replaces the array wholesale;
+   the handful of call sites that push a new row in place, e.g. DATA.followups.push(...), grow
+   the array's length without changing its reference, which the length check catches — no
+   observed call site ever splices/shifts, so reference-or-length is a safe invalidation signal).
+   Same last-match-wins semantics as the original forEach (Map.set overwrites on duplicate ids). */
+var _recOfCache = {};
+function recOf(table, id) {
+  var arr = DATA[table] || [];
+  var c = _recOfCache[table];
+  if (!c || c.src !== arr || c.len !== arr.length) {
+    var m = new Map();
+    for (var i = 0; i < arr.length; i++) { var z = arr[i]; if (z && z.id != null) m.set(String(z.id), z); }
+    c = { src: arr, len: arr.length, map: m };
+    _recOfCache[table] = c;
+  }
+  return c.map.get(String(id)) || null;
+}
 /* Base residential floor-area ratios for common LA City zones, from the current LAMC (sourced 2026-07,
    citations in the roadmap). SINGLE-FAMILY values are high-confidence and flat (off-hillside). MULTIFAMILY
    FAR (R3/R4/R5/RD/RAS) is NOT actually set by the base zone — it's set by the Height-District suffix
@@ -11917,11 +12097,15 @@ function engageDraft(id) {
     + '<textarea id="engage-txt-' + esc(id) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
     + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();engageCopy(\'' + escJs(id) + '\')">Copy</button></div></div>';
 }
-function engageCopy(id) {
-  var t = document.getElementById('engage-txt-' + id); if (!t) return;
+/* DEDUP (2026-08-15, code-quality pass): engageCopy/reengageCopy were byte-identical except for
+   the DOM-id prefix. Merged into one helper; both names kept as thin wrappers since they're
+   referenced from inline onclick= HTML built elsewhere in this file. */
+function copyDraftText(prefix, id) {
+  var t = document.getElementById(prefix + id); if (!t) return;
   t.select();
   try { document.execCommand('copy'); toast('Copied ✓'); } catch (e) { if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { toast('Copied ✓'); }); }
 }
+function engageCopy(id) { copyDraftText('engage-txt-', id); }
 /* Set a follow-up reminder for someone on Engage — lands in Today's Focus like any other manual
    to-do (record_type/record_id point back at this contact so it's traceable, same shape the rest
    of the app already uses for followups tied to a specific record). */
@@ -12029,11 +12213,7 @@ function reengageDraft(id) {
     + '<textarea id="reengage-txt-' + esc(id) + '" style="width:100%;min-height:150px;box-sizing:border-box;">' + esc(body) + '</textarea>'
     + '<div style="margin-top:6px;"><button class="qbtn done" onclick="event.stopPropagation();reengageCopy(\'' + escJs(id) + '\')">Copy</button></div></div>';
 }
-function reengageCopy(id) {
-  var t = document.getElementById('reengage-txt-' + id); if (!t) return;
-  t.select();
-  try { document.execCommand('copy'); toast('Copied ✓'); } catch (e) { if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { toast('Copied ✓'); }); }
-}
+function reengageCopy(id) { copyDraftText('reengage-txt-', id); }
 /* ===== People — the Contact spine made visible. One person = one identity across every role
    (buyer, seller, prospect owner, escrow client, agent) plus the documents you've signed together.
    Pure client-side view over DATA.contacts joined to each table's contact FK. No jargon surfaces. ===== */
@@ -12988,7 +13168,12 @@ function renderBrowse() {
   function rowFor(x) {
     var nm = '', side = '', sub = '', det = '', hot = false;
     if (rowTable === 'buyers') {
-      nm = (buyerIsVip(x) ? '★ ' : '') + x.name; side = (x.budget_min ? money(x.budget_min) : '') + (x.budget_max ? ' – ' + money(x.budget_max) : '');
+      /* UX (2026-08-15, card audit): dropped the '★ ' name prefix -- buyerVipBtn() already renders
+         a ★/☆ VIP button in this same collapsed row (.r1, via the 'actions' param below), so VIP
+         status was shown twice in two different encodings. The button is the single source of truth.
+         Budget: build with filter+join instead of string concatenation -- the old version rendered
+         a bare " – $650,000" (stray leading dash) whenever only budget_max was set. */
+      nm = x.name; side = [x.budget_min, x.budget_max].map(function (v) { return v ? money(v) : ''; }).filter(Boolean).join(' – ');
       sub = [x.areas, x.timeline].filter(Boolean).join(' · ');
       det = [x.contact ? 'Contact: ' + x.contact : '', x.must_haves ? 'Must-haves: ' + x.must_haves : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'offmarket') {
@@ -13012,8 +13197,14 @@ function renderBrowse() {
          task progress meant opening each one. Only on the live Escrows segment -- past sales
          don't need this front-and-center. */
       var tcGlance = (propSeg === 'escrow') ? tcEscrowGlanceLine(x.id) : '';
-      sub = [x.status, x.client_name, nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : ''), tcGlance].filter(Boolean).join(' · ');
-      det = [x.contingency_date ? 'Contingency: ' + fmtDate(x.contingency_date) : '', x.notes || ''].filter(Boolean).join(NL2);
+      /* UX (2026-08-15, card audit): the actual next-due date (nextDl, already reconciled against
+         transaction_deadlines) used to be third in the subtitle behind status/client, and a second,
+         sometimes-disagreeing raw x.contingency_date was separately printed below in det -- two
+         "contingency" dates could appear on the same card. Deadline now leads the subtitle (the
+         single fact Nick needs fastest on a scan); the redundant contingency_date line is dropped
+         from det since nextDl already supersedes it. */
+      sub = [nextDl ? nextDl.kind + ' ' + fmtDate(nextDl.due) : (x.closing_date ? 'closes ' + fmtDate(x.closing_date) : ''), x.status, x.client_name, tcGlance].filter(Boolean).join(' · ');
+      det = x.notes || '';
       /* A doc anchor has no status, client, price or dates BY DEFINITION, so the generic subtitle
          above resolves to an empty string and the row renders as a bare address with nothing to
          tell one from another (the same nameless-row problem the Market tab had). Substitute the
