@@ -359,6 +359,7 @@
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowReviewQueue()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Review queue <span id="more-menu-rq-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowMatchTriage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Match Triage <span id="more-menu-triage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowLearning()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">What Spiro&rsquo;s learned</a>
             <a href="javascript:void(0)" onclick="menuShowArchitectRegistry()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Architect Registry <span id="more-menu-archreg-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
@@ -530,6 +531,25 @@
       <h2>Review queue</h2>
       <div class="hint" style="margin:-6px 0 10px;">Suggested matches, grouped by client &mdash; strongest first. Open a client to act; nothing here changes anything.</div>
       <div id="rq-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
+    <!-- Match Triage (2026-09-04): the Review queue above was deliberately read-only ("dismissing
+         is Nick's judgment, made from the client's card") -- correct for a handful of suggestions,
+         but the suggested-match backlog reached 431 (selftest's own healthy threshold is 400,
+         currently failing) with nowhere to act on more than one at a time. This is an ADDITIVE
+         second surface, not a replacement: Review queue stays exactly as it was for a considered,
+         per-client look; this one is for clearing volume fast when many suggestions share the same
+         answer (a buyer who already bought, a stale area, a lead that's gone pending elsewhere).
+         Every action here calls the exact same fn_dismiss_match / matches.update / fn_mark_match_shown
+         paths the per-buyer card already uses -- same dismiss-reason chips too, so bulk dismissals
+         still teach the matcher instead of reintroducing the reasonless-dismissal problem Phase C
+         fixed. Built entirely from DATA.matches (already loaded on boot) -- no new table, no new
+         edge function, nothing server-side changed. -->
+    <div class="card" id="match-triage-card" style="display:none;">
+      <h2>Match Triage</h2>
+      <div class="hint" style="margin:-6px 0 10px;">Every suggested match in one list, oldest/strongest first. Select several and act on them together, or use the row actions one at a time -- same dismiss/confirm/shown as everywhere else in the app.</div>
+      <div id="mt-bulkbar" style="display:none;position:sticky;top:0;background:var(--panel);z-index:5;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:8px;"></div>
+      <div id="mt-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <!-- What Spiro's learned (2026-07-31): the verdict loop, made visible. Penalties are derived
@@ -716,7 +736,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.214.0';
+var APP_VERSION = 'v5.215.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -836,7 +856,7 @@ function closePanel() {
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
        home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'learning-card', 'form-card', 'architect-registry-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'learning-card', 'form-card', 'architect-registry-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -879,6 +899,7 @@ function menuShowBrief() {
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
 function menuShowReviewQueue() { openPanel('review-queue-card'); renderReviewQueue(); }
+function menuShowMatchTriage() { openPanel('match-triage-card'); renderMatchTriage(); }
 function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
 /* Architect Registry (2026-08-01) -- see the architect-registry-card comment above for the full
    rationale. Two independent text filters (architect / area) + a tier dropdown, all client-side
@@ -1219,6 +1240,92 @@ async function renderReviewQueue() {
     jumpToRecord('buyers', bid);
   });
 })();
+/* Match Triage (2026-09-04) -- see the big comment on #match-triage-card in the markup for why
+   this exists alongside the read-only Review queue. Built entirely from DATA.matches (loaded on
+   boot, see the sb.from('matches').select(...) call above) -- no new fetch, no new table. Capped
+   to MT_LIMIT visible rows with a "show more" button rather than rendering the whole backlog's
+   DOM at once (431 rows of buttons is real weight on a phone); MT_SEL tracks selection across
+   "show more" clicks by match id, not by position, so it survives re-renders correctly. */
+var MT_SEL = {};
+var MT_LIMIT = 80;
+var MT_DISMISS_UI = false;
+function mtToggle(id, checked) { if (checked) MT_SEL[id] = true; else delete MT_SEL[id]; renderMatchTriage(); }
+function mtSelectVisible(ids) { ids.forEach(function (id) { MT_SEL[id] = true; }); renderMatchTriage(); }
+function mtClearSel() { MT_SEL = {}; MT_DISMISS_UI = false; renderMatchTriage(); }
+function mtShowMore() { MT_LIMIT += 80; renderMatchTriage(); }
+function mtToggleDismissUI() { MT_DISMISS_UI = !MT_DISMISS_UI; renderMatchTriage(); }
+/* Bulk apply -- mirrors confirmMatch/markShown/sendDismiss exactly (same RPCs, same event log
+   shape) but does ONE loadAll(false) at the end instead of one per item, so selecting 30 matches
+   doesn't trigger 30 sequential full data reloads. Reason chips reuse DISMISS_CHIPS so a bulk
+   dismiss still teaches the matcher, same as a single one -- not a shortcut around Phase C. */
+async function mtBulkApply(action, reason) {
+  var ids = Object.keys(MT_SEL).filter(function (id) { return MT_SEL[id]; });
+  if (!ids.length) { toast('Nothing selected'); return; }
+  var okN = 0, failN = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i], m = null;
+    DATA.matches.forEach(function (x) { if (String(x.id) === String(id)) m = x; });
+    if (!m) { failN++; continue; }
+    var r;
+    if (action === 'confirm') {
+      if (m.target_type === 'offmarket') {
+        var j = await sb.from('offmarket_potential_buyers').insert({ offmarket_id: m.target_id, buyer_id: m.buyer_id }).select('buyer_id');
+        if (j.error && String(j.error.code) !== '23505') { failN++; continue; }
+      }
+      r = await sb.from('matches').update({ status: 'confirmed', updated_at: nowStamp() }).eq('id', id).select('id');
+      if (!r.error) logEvent('buyers', m.buyer_id, 'match.confirmed', 'Match confirmed (bulk): ' + (recLabel('buyers', String(m.buyer_id)) || '') + ' ↔ ' + (recLabel(m.target_type, m.target_id) || ''));
+    } else if (action === 'shown') {
+      r = await sb.rpc('fn_mark_match_shown', { p_match_id: id, p_days: 7 });
+    } else if (action === 'dismiss') {
+      r = await sb.rpc('fn_dismiss_match', { p_match_id: id, p_reason: reason || null });
+    }
+    if (r && r.error) failN++; else okN++;
+  }
+  MT_SEL = {}; MT_DISMISS_UI = false;
+  toast(okN + ' updated' + (failN ? ', ' + failN + ' failed' : ''));
+  await loadAll(false);
+}
+function renderMatchTriage() {
+  var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
+  if (!body || !bar) return;
+  var rows = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
+  var now = Date.now();
+  rows.forEach(function (m) { m._age = m.created_at ? Math.floor((now - new Date(m.created_at).getTime()) / 86400000) : null; });
+  rows.sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || ((b._age || 0) - (a._age || 0)); });
+  if (!rows.length) { bar.style.display = 'none'; body.innerHTML = '<div class="empty">No suggested matches waiting.</div>'; return; }
+  var visible = rows.slice(0, MT_LIMIT);
+  var selN = Object.keys(MT_SEL).length;
+  bar.style.display = '';
+  bar.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<span class="hint" style="margin:0;">' + rows.length + ' suggested &middot; ' + selN + ' selected</span>'
+    + '<button class="qbtn" onclick=\'mtSelectVisible(' + JSON.stringify(visible.map(function (m) { return String(m.id); })) + ')\'>Select all shown</button>'
+    + (selN ? '<button class="qbtn" onclick="mtClearSel()">Clear</button>'
+      + '<button class="qbtn done" onclick="mtBulkApply(\'confirm\')">Confirm selected</button>'
+      + '<button class="qbtn" onclick="mtBulkApply(\'shown\')">Mark shown</button>'
+      + '<button class="qbtn" onclick="mtToggleDismissUI()">Dismiss selected</button>' : '')
+    + '</div>'
+    + (selN && MT_DISMISS_UI ? '<div style="margin-top:6px;">' + DISMISS_CHIPS.map(function (c) {
+        return '<button class="qbtn" style="margin:0 4px 4px 0;" onclick="mtBulkApply(\'dismiss\',\'' + c[0] + '\')">' + esc(c[1]) + '</button>';
+      }).join('') + '<button class="qbtn" style="opacity:.7;" onclick="mtBulkApply(\'dismiss\',null)">Just dismiss</button></div>' : '');
+  body.innerHTML = visible.map(function (m) {
+    var id = String(m.id);
+    var buyerLabel = recLabel('buyers', m.buyer_id) || 'Unknown buyer';
+    var targetLabel = m.target_address || recLabel(m.target_type, m.target_id) || m.target_ref || '';
+    var checked = MT_SEL[id] ? ' checked' : '';
+    return '<div class="qi" style="align-items:flex-start;">'
+      + '<input type="checkbox" style="margin-top:4px;" onchange="mtToggle(\'' + escJs(id) + '\', this.checked)"' + checked + '>'
+      + '<div class="txt" style="margin-left:8px;">'
+      + '<div class="t1"><a href="javascript:void(0)" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + escJs(String(m.buyer_id)) + '\')" style="color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);">' + esc(buyerLabel) + '</a> &middot; ' + esc(targetLabel) + (m.score != null ? ' &middot; fit ' + m.score + '/10' : '') + (m._age != null ? ' &middot; ' + m._age + 'd' : '') + '</div>'
+      + (m.rationale ? '<div class="t2">Why: ' + esc(m.rationale) + '</div>' : '')
+      + '</div>'
+      + '<button class="qbtn" title="Already shown" onclick="event.stopPropagation();markShown(\'' + escJs(id) + '\')">&#128065;</button>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(\'' + escJs(id) + '\')">&#10003;</button>'
+      + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(\'' + escJs(id) + '\')">&#10005;</button>'
+      + '<div id="dismiss-' + esc(id) + '" style="flex-basis:100%;"></div>'
+      + '</div>';
+  }).join('');
+  if (rows.length > visible.length) body.innerHTML += '<button class="qbtn" style="margin-top:8px;" onclick="mtShowMore()">Show ' + Math.min(80, rows.length - visible.length) + ' more (' + (rows.length - visible.length) + ' remaining)</button>';
+}
 function menuShowCalendarSuggestions() { openPanel('calendar-suggestions-card'); renderCalendarSuggestionsCard(); }
 /* Calendar suggestions review (2026-07-24) — one row per candidate showing pulled from Nick's
    iCloud calendar (calendar_suggestions table, filled by the caldav-showing-sync edge function on
@@ -2076,7 +2183,7 @@ async function loadAll(manual) {
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
     sb.from('followups').select('id,action_text,record_label,updated_at').eq('status', 'archived').order('updated_at', { ascending: false }).limit(50),
     sb.from('offmarket_potential_buyers').select('offmarket_id,buyer_id,sent_at,response,response_notes,response_at'),
-    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source').neq('status', 'dismissed'),
+    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at').neq('status', 'dismissed'),
     sb.from('transaction_deadlines').select('*'),
     sb.from('esign_envelopes').select('*'),
     sb.from('showings').select('*'),
@@ -2274,6 +2381,10 @@ function render() {
   if (farmCard && farmCard.style.display !== 'none') safeRender('farming', renderFarming);
   var moreRqN = document.getElementById('more-menu-rq-n');
   if (moreRqN) { var rqOpen = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; }).length; moreRqN.textContent = rqOpen ? String(rqOpen) : ''; }
+  var moreTriageN = document.getElementById('more-menu-triage-n');
+  if (moreTriageN) moreTriageN.textContent = rqOpen ? String(rqOpen) : '';
+  var mtCard = document.getElementById('match-triage-card');
+  if (mtCard && mtCard.style.display !== 'none') safeRender('matchtriage', renderMatchTriage);
   var moreCalSugN = document.getElementById('more-menu-calsug-n');
   if (moreCalSugN) { var pendingSug = (DATA.calendar_suggestions || []).filter(function (s) { return s.status === 'pending' || (s.status === 'confirmed' && s.flag); }); moreCalSugN.textContent = pendingSug.length ? String(pendingSug.length) : ''; }
   var calSugCard = document.getElementById('calendar-suggestions-card');
@@ -12319,18 +12430,27 @@ async function fpUrlToDataURL(url) {
   } catch (e) { return null; }
 }
 
+/* Cap at 12, not the "capture" flow's 4 (that 4 is specific to the MLS-screenshot-scroll use case,
+   unrelated). 12 covers a normal single-family's major rooms; Claude's vision API allows well over
+   that per request (100+ on 200k-context models) before stricter per-image size rules kick in at
+   >20 images, and each photo here is already resized to 1400px so cost per photo is small either
+   way -- researched before picking this number rather than guessing at a "safe-sounding" cap. */
+var FP_MAX_PHOTOS = 12;
 async function fpSuggestFromPhotos() {
   if (!FP || !FP.propertyId) return;
   var btn = document.getElementById('fp-suggest-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Reading photos…'; }
   var urls = await propertyPhotoUrls(FP.propertyId);
-  var picks = urls.slice(0, 4);
+  var picks = urls.slice(0, FP_MAX_PHOTOS);
   if (!picks.length) { if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; } toast('No photos to read'); return; }
-  var imgs = [];
-  for (var i = 0; i < picks.length; i++) { var d = await fpUrlToDataURL(picks[i].url); if (d) imgs.push(d); }
+  /* Fetch + compress in parallel, not a sequential loop -- with up to 12 photos a one-at-a-time
+     loop would noticeably add up; each fpUrlToDataURL call is independent so there's no reason to
+     serialize them. */
+  var imgs = (await Promise.all(picks.map(function (p) { return fpUrlToDataURL(p.url); }))).filter(Boolean);
   if (!imgs.length) { if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; } toast('Could not read those photos — try again'); return; }
+  if (btn) btn.textContent = 'Reading ' + imgs.length + ' photo' + (imgs.length > 1 ? 's' : '') + '…';
   var x = recOf(FP.table, FP.id);
   var facts = x ? floorPlanFactsFor(x) : {};
-  var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'floorplan', text: JSON.stringify(facts), images: imgs } }), 30000, { error: { message: 'timed out — check your connection' } });
+  var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'floorplan', text: JSON.stringify(facts), images: imgs } }), 45000, { error: { message: 'timed out — check your connection' } });
   if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; }
   if (r.error || !r.data || r.data.error) { toast((r.data && r.data.error) || (r.error && r.error.message) || 'Could not generate a layout'); return; }
   var rooms = (r.data.rooms || []).map(function (rr) { return { id: uid(), label: rr.label || 'Room', x: fpSnap(rr.x), y: fpSnap(rr.y), w: fpSnap(rr.w), h: fpSnap(rr.h) }; });
