@@ -716,7 +716,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.206.0';
+var APP_VERSION = 'v5.213.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -3246,16 +3246,28 @@ function swipeCompleteFu(id) {
     });
   });
 }
-/* Delegated touch listener on #queue -- same pattern as bindMarketSwipe()/bindArchiveSwipe().
-   Only .fu-swipe rows (kind 'fu') engage; deadline/auto rows pass through untouched. */
-(function bindQueueSwipe() {
-  var body = document.getElementById('queue');
+/* Shared delegated swipe-gesture engine (2026-08-16 dedup). bindQueueSwipe/bindMarketSwipe/
+   bindArchiveSwipe were three copies of the identical touchstart/touchmove/touchend state machine
+   (direction-lock after an 8px commit, 70px threshold, transition reset, touchcancel handling) --
+   flagged in the 2026-08-15 audit, deliberately not fixed then since the three differ in which rows
+   engage, how the drag renders, and what a committed swipe does, and those needed unifying
+   carefully rather than blindly. Behavior verified identical against all three original call sites:
+   opts.containerId/rowClass pick the delegated container + row class; opts.canEngage (optional)
+   gates which rows respond (only bindMarketSwipe had this, for pending-only rows); opts.onDrag(row,
+   dx) renders the live drag (color/direction differ per caller); opts.onCommit(row, dx) fires once,
+   only when abs(dx) has crossed SWIPE_THRESH -- callers that only ever clamp dx to one sign (the
+   archive case) naturally only ever commit in that direction, same as the original dx<=-THRESH
+   gate. */
+var SWIPE_THRESH = 70;
+function bindSwipeGesture(opts) {
+  var body = document.getElementById(opts.containerId);
   if (!body) return;
-  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null;
-  function findRow(el) { while (el && el !== body) { if (el.classList && el.classList.contains('fu-swipe')) return el; el = el.parentNode; } return null; }
+  var startX = 0, startY = 0, dragging = false, horiz = false, row = null;
+  function findRow(el) { while (el && el !== body) { if (el.classList && el.classList.contains(opts.rowClass)) return el; el = el.parentNode; } return null; }
   function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
   body.addEventListener('touchstart', function (e) {
-    var r = findRow(e.target); if (!r) return;
+    var r = findRow(e.target);
+    if (!r || (opts.canEngage && !opts.canEngage(r))) return;
     var t = e.touches[0];
     startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r;
     row.style.transition = 'none';
@@ -3270,20 +3282,33 @@ function swipeCompleteFu(id) {
       horiz = true;
     }
     e.preventDefault();
-    row.style.transform = 'translateX(' + dx + 'px)';
-    row.style.backgroundColor = dx !== 0 ? 'rgba(70,130,80,.14)' : '';
+    opts.onDrag(row, dx);
   }, { passive: false });
   function finish() {
     if (!dragging || !row) { dragging = false; return; }
     dragging = false;
     var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
-    var r = row, rid = r.getAttribute('data-id'); row = null;
+    var r = row; row = null;
     reset(r);
-    if (Math.abs(dx) >= THRESH && rid) swipeCompleteFu(rid);
+    if (Math.abs(dx) >= SWIPE_THRESH) opts.onCommit(r, dx);
   }
   body.addEventListener('touchend', finish, { passive: true });
   body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
-})();
+}
+/* Delegated touch listener on #queue -- same pattern as bindMarketSwipe()/bindArchiveSwipe().
+   Only .fu-swipe rows (kind 'fu') engage; deadline/auto rows pass through untouched. */
+bindSwipeGesture({
+  containerId: 'queue',
+  rowClass: 'fu-swipe',
+  onDrag: function (row, dx) {
+    row.style.transform = 'translateX(' + dx + 'px)';
+    row.style.backgroundColor = dx !== 0 ? 'rgba(70,130,80,.14)' : '';
+  },
+  onCommit: function (row) {
+    var rid = row.getAttribute('data-id');
+    if (rid) swipeCompleteFu(rid);
+  }
+});
 async function fuSnooze(btn, days) {
   var id = btn.getAttribute('data-id');
   var f = null;
@@ -6520,11 +6545,11 @@ function recordExtras(table, id) {
     h += agentContactFlagHtml(sid) + agentDealsHtml(sid);
     more += agentSuggestHtml(sid) + agentSignalsHtml(sid) + agentAreasHtml(sid) + agentLeadsHtml(sid) + agentSharesHtml(sid) + agentIgFeaturesHtml(sid);
   }
-  if (table === 'transactions') { h += escrowExtras(sid) + pressMentionsHtml('transactions', sid) + transactionChainHtml(sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal; chain tag added 2026-07-24 so closed off-book deals (e.g. Cromwell) can still surface as style/architect neighbors */
+  if (table === 'transactions') { h += escrowExtras(sid) + pressMentionsHtml('transactions', sid) + transactionChainHtml(sid) + permitLedgerPanel('transactions', sid); more += dealVendorsHtml(sid); } /* #6: vendors on the deal; chain tag added 2026-07-24 so closed off-book deals (e.g. Cromwell) can still surface as style/architect neighbors; Permit Ledger added 2026-08-18 (due diligence during escrow) */
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + cmaHtml(sid) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + permitLedgerPanel('listings', sid) + underbuiltPermitCalloutHtml('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + cmaHtml(sid) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
@@ -6567,7 +6592,7 @@ function recordExtras(table, id) {
         }
       }
       h += '<div id="letter-' + esc(sid) + '"></div>';
-      h += buildablePanel('prospects', sid);
+      h += buildablePanel('prospects', sid) + permitLedgerPanel('prospects', sid) + underbuiltPermitCalloutHtml('prospects', sid);
       if (px.extra && px.extra.gps_lat) {
         h += '<div class="hint" style="margin-top:8px;"><a href="https://www.google.com/maps?q=' + px.extra.gps_lat + ',' + px.extra.gps_lng + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">View where you snapped it &#8599;</a></div>';
       }
@@ -10763,46 +10788,20 @@ function marketTrackingHtml() {
    delegation on the parent survives that. Only .mkt-swipe rows (pending review_status) engage.
    Direction locks to horizontal only after the drag clearly commits one way or the other, so a
    vertical scroll through the list is never hijacked as an accidental swipe. */
-(function bindMarketSwipe() {
-  var body = document.getElementById('market-body');
-  if (!body) return;
-  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null, id = null;
-  function findRow(el) {
-    while (el && el !== body) { if (el.classList && el.classList.contains('mkt-swipe')) return el; el = el.parentNode; }
-    return null;
-  }
-  function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
-  body.addEventListener('touchstart', function (e) {
-    var r = findRow(e.target); if (!r || r.getAttribute('data-pending') !== '1') return;
-    var t = e.touches[0];
-    startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r; id = r.getAttribute('data-id');
-    row.style.transition = 'none';
-  }, { passive: true });
-  body.addEventListener('touchmove', function (e) {
-    /* silent-ok: a touchmove outside an active row-drag is ordinary scrolling, not a fault */
-    if (!dragging || !row) return;
-    var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
-    if (!horiz) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (Math.abs(dx) <= Math.abs(dy)) { dragging = false; row.style.transition = ''; row = null; return; } /* vertical scroll intent — let it through untouched */
-      horiz = true;
-    }
-    e.preventDefault();
+bindSwipeGesture({
+  containerId: 'market-body',
+  rowClass: 'mkt-swipe',
+  canEngage: function (r) { return r.getAttribute('data-pending') === '1'; },
+  onDrag: function (row, dx) {
     row.style.transform = 'translateX(' + dx + 'px)';
     row.style.backgroundColor = dx > 0 ? 'rgba(70,130,80,.14)' : dx < 0 ? 'rgba(170,70,60,.14)' : '';
-  }, { passive: false });
-  function finish() {
-    if (!dragging || !row) { dragging = false; return; }
-    dragging = false;
-    var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
-    var r = row, rid = id; row = null; id = null;
-    reset(r);
-    if (dx >= THRESH) openFlagMarketEvent(rid);
-    else if (dx <= -THRESH) dismissMarketEvent(rid);
+  },
+  onCommit: function (row, dx) {
+    var rid = row.getAttribute('data-id');
+    if (dx >= SWIPE_THRESH) openFlagMarketEvent(rid);
+    else if (dx <= -SWIPE_THRESH) dismissMarketEvent(rid);
   }
-  body.addEventListener('touchend', finish, { passive: true });
-  body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
-})();
+});
 function renderMarketReview() {
   var body = document.getElementById('market-body'); if (!body) return;
   var events = MARKET.events || [];
@@ -11542,6 +11541,39 @@ function recOf(table, id) {
    lever is DENSITY (min lot area per unit), below — that's what drives the "could hold ~N units" number.
    R1 is 0.45 (LA cut it from 0.50 in 2017, Ord. 184802). Hillside/overlays reduce all of these — gated below. */
 var LA_RFA = { R1: 0.45, R1V: 0.45, R1F: 0.45, R1R: 0.45, R1H: 0.45, RS: 0.45, RE: 0.40, RA: 0.25, RE9: 0.40, RE11: 0.40, RE15: 0.35, RE20: 0.35, RE40: 0.35, R2: 0.45, RD: 3.0, RAS3: 3.0, RAS4: 3.0, R3: 3.0, R4: 3.0, R5: 3.0, C1: 1.5, C2: 1.5, C4: 1.5 };
+/* R1V/R1F/R1R lot-size-tiered FAR (LAMC 12.08 C.5.(b)/(c)/(d), Ord. 184,802, Eff. 3/17/17) —
+   (2026-08-19) source-verified against the LAMC text itself (not reconstructed from memory), found
+   while reviewing a live deal's permit report. Before this, R1V2/R1F3/R1R1/etc. all silently fell
+   through to the flat 0.45 LA_RFA['R1V'|'R1F'|'R1R'] entry above (rfaFor's prefix-match: "R1V2"
+   starts with "R1V") — wrong for most of them, since these three tables scale from .65 down to .30
+   by variant number AND lot-size tier, not a flat citywide number. Confirmed against 12506 Appleton
+   Way (R1V2, 5,755 sf lot): table says 5,755 x .55 = 3,165 sf, exactly matching the architect's own
+   as-built RFA calc in that deal's permit history — the flat-.45 fallback would have said 2,590 sf,
+   575 sf (18%) short.
+   All three variation letters (V=variable-mass, F=front-mass, R=rear-mass) share the IDENTICAL ratio
+   numbers per LAMC — only the massing/height/setback standards differ between them (front vs. rear
+   envelope shape), not the maximum floor area — so one shared tier table drives all three.
+   R1H (hillside variant) is explicitly NOT covered here — LAMC 12.08 C.5.(e) defers R1H to a
+   separate hillside RFA table (12.21 C.10-2b) this app hasn't source-verified, so R1H stays on the
+   existing hillside 0.7 rough-proxy path, already flagged low-confidence rather than guessed at. */
+var R1_VARIANT_TIERS = [
+  { max: 6000, ratios: [.65, .55, .45, .40] },
+  { max: 7000, ratios: [.63, .53, .43, .38] },
+  { max: 8000, ratios: [.61, .51, .41, .36] },
+  { max: 9000, ratios: [.59, .49, .39, .34] },
+  { max: 10000, ratios: [.57, .47, .37, .32] },
+  { max: Infinity, ratios: [.55, .45, .35, .30] },
+];
+// base like "R1V2" / "R1F3" / "R1R1" -> the tiered ratio, or null if not one of these three variant
+// zones (or lot size unknown) — null means "fall through to the flat table", never "0 buildable".
+function r1VariantRatio(base, lotSqft) {
+  var m = /^R1([VFR])([1-4])$/.exec(String(base || ''));
+  if (!m || !(Number(lotSqft) > 0)) return null;
+  var n = parseInt(m[2], 10);
+  var tier = null;
+  for (var i = 0; i < R1_VARIANT_TIERS.length; i++) { if (Number(lotSqft) <= R1_VARIANT_TIERS[i].max) { tier = R1_VARIANT_TIERS[i]; break; } }
+  return tier ? tier.ratios[n - 1] : null;
+}
 /* Height-District -> multifamily FAR (LAMC 12.21.1). The LA zoning string carries this as a suffix
    ("(Q)R3-1VL" = Height District 1). For R3/R4/R5/RD/RAS this, NOT the base zone, sets FAR. */
 var HD_FAR = { 1: 3.0, 2: 6.0, 3: 10.0, 4: 13.0 };
@@ -11559,11 +11591,13 @@ function parseZone(zone) {
   if (parts[1]) { var m = parts[1].match(/^(\d+)/); if (m) hd = parseInt(m[1], 10); }
   return { base: base, hd: hd };
 }
-function rfaFor(zone) {
+function rfaFor(zone, lotSqft) {
   var pz = parseZone(zone), base = pz.base;
   if (!base) return 0.45;
   // Multifamily FAR is set by the Height District, not the base zone.
   if (/^(R[345]|RD|RAS)/.test(base) && pz.hd && HD_FAR[pz.hd]) return HD_FAR[pz.hd];
+  var variant = r1VariantRatio(base, lotSqft);
+  if (variant != null) return variant;
   if (LA_RFA[base] != null) return LA_RFA[base];
   var keys = Object.keys(LA_RFA).sort(function (a, b) { return b.length - a.length; });
   for (var i = 0; i < keys.length; i++) { if (base.indexOf(keys[i]) === 0) return LA_RFA[keys[i]]; }
@@ -11623,13 +11657,19 @@ function computeBuildable(inp) {
       hpoz: null, specific_plan: null, coastal: false, use_category: inp.use_category || null,
       allowed_category: null, pct: 0, computed_at: new Date().toISOString() };
   }
-  /* Prefer SCAG's published allowable FAR when we have it (mostly commercial/mixed parcels); the code-based
-     heuristic is the fallback everywhere else. ratio_source tells the user which drove the number. */
+  /* Prefer SCAG's published allowable FAR when we have it (mostly commercial/mixed parcels); next,
+     the source-verified LAMC 12.08 R1V/R1F/R1R lot-size-tiered table (r1VariantRatio, above) when
+     the zone is one of those three variants; the flat citywide LA_RFA table is the last-resort
+     fallback everywhere else. ratio_source tells the caller (and now the panel/report — see
+     buildableSummary/printBuildable) which of the three actually drove the number, so "estimate"
+     stops silently looking as confident as a code-verified table. */
   var ov = inp.overlays || {};                            // auto-detected context from parcel_overlays
   var hillside = !!(inp.hillside || ov.hillside);         // manual checkbox OR auto-detected hillside area
   var farMax = Number(inp.far_max) || 0;
-  var ratioSource = farMax > 0 ? 'record' : 'estimate';
-  var ratio = farMax > 0 ? farMax : rfaFor(inp.zone);
+  var zoneBase = parseZone(inp.zone).base;
+  var r1Variant = r1VariantRatio(zoneBase, lot);
+  var ratioSource = farMax > 0 ? 'record' : (r1Variant != null ? 'lamc_table' : 'estimate');
+  var ratio = farMax > 0 ? farMax : (r1Variant != null ? r1Variant : rfaFor(inp.zone, lot));
   if (hillside) ratio = ratio * 0.7;                      // rough Baseline Hillside proxy — flagged low-confidence below
   var maxSqft = Math.round(lot * ratio);
   var untapped = Math.max(0, maxSqft - existing);
@@ -11646,10 +11686,36 @@ function computeBuildable(inp) {
   var potentialUnits = (perUnit > 0 && lot > 0) ? Math.floor(lot / perUnit) : 0;
   /* Hillside honesty: flat FAR badly over-states hillside parcels (much of the luxury farm). Keep a rough
      number but mark it low-confidence and needing slope review, so we never hand back false precision.
-     HPOZ / specific plan / coastal are carried as informational context (they affect approvals, not FAR). */
-  var confidence = hillside ? 'low' : 'high';
-  var underbuilt = (lot > 0 && existing > 0 && (pct >= 0.30 || untapped >= 1000)) || upzone;   // FAR gap OR zoned-above-use
-  return { lot_sqft: lot, existing_sqft: existing, zone: (inp.zone || '').toUpperCase(), hillside: hillside, adu_included: !!inp.adu, ratio: ratio, ratio_source: ratioSource, max_sqft: maxSqft, untapped_sqft: untapped, adu_sqft: adu, additional_sqft: untapped + adu, underbuilt: underbuilt, upzone: upzone, potential_units: potentialUnits, min_lot_per_unit: perUnit || null, confidence: confidence, needs_review: hillside, hpoz: ov.hpoz || null, specific_plan: ov.specific_plan || null, coastal: !!ov.coastal, use_category: useCat || null, allowed_category: allowCat || null, pct: Math.round(pct * 100), computed_at: new Date().toISOString() };
+     HPOZ / specific plan / coastal are carried as informational context (they affect approvals, not FAR).
+     Confidence (2026-08-19, corrected): used to be a flat 'high' for every non-hillside parcel, which
+     overstated the flat-.45-fallback case — that path can miss zone-specific tables (like R1V/R1F/R1R
+     used to, before r1VariantRatio existed) just as easily as a new one it doesn't cover yet. 'high' is
+     now earned only by a real record (SCAG far_max) or a source-verified table match (lamc_table);
+     the citywide-default fallback is 'medium' so it stops looking as certain as those two. */
+  var confidence = hillside ? 'low' : (ratioSource === 'estimate' ? 'medium' : 'high');
+  var underbuiltRaw = (lot > 0 && existing > 0 && (pct >= 0.30 || untapped >= 1000)) || upzone;   // FAR gap OR zoned-above-use
+  /* MILLS ACT / HOA-COVENANT BLIND SPOT (2026-08-18, "zoom out" review). Same category of error as
+     the unit guard above: computeBuildable() only ever checked zoning against lot/existing sqft.
+     Two real-world restrictions sit BELOW zoning and can make an "underbuilt" number fictional even
+     when the FAR math is correct:
+       - Mills Act contract: a recorded agreement trading a property-tax reduction for a binding
+         commitment to preserve the structure. Redeveloping or substantially adding to a Mills Act
+         property can breach the contract and trigger tax recapture — "underbuilt" here is not a
+         buying opportunity, it's a legal complication.
+       - HOA / CC&R covenant: some enclaves (Trousdale, Bel Air, Beverly Park and similar) carry
+         private deed restrictions that cap size or massing tighter than LAMC zoning allows. No
+         public GIS layer publishes these, so there is nothing to auto-detect — this has to be a
+         manual flag Nick sets when he knows or suspects one applies (see buildableForm).
+     Detection is manual-only by necessity (no data source exists to check automatically), but once
+     flagged the raw FAR numbers still compute and display — only the underbuilt CLAIM is suppressed,
+     same asymmetry as the unit guard: a missed flag costs a caveat that should have shown; a false
+     "underbuilt" told to a client on a covenant-restricted lot is a credibility problem. */
+  var restrictReasons = [];
+  if (inp.mills_act) restrictReasons.push('Mills Act contract on file — redevelopment can breach the contract and trigger property-tax recapture');
+  if (inp.hoa_restricted) restrictReasons.push('HOA/CC&R covenant flagged' + (inp.hoa_note ? ' — ' + inp.hoa_note : ' — may cap size below zoning'));
+  var restricted = restrictReasons.length > 0;
+  var underbuilt = restricted ? false : underbuiltRaw;
+  return { lot_sqft: lot, existing_sqft: existing, zone: (inp.zone || '').toUpperCase(), hillside: hillside, adu_included: !!inp.adu, ratio: ratio, ratio_source: ratioSource, max_sqft: maxSqft, untapped_sqft: untapped, adu_sqft: adu, additional_sqft: untapped + adu, underbuilt: underbuilt, upzone: upzone, potential_units: potentialUnits, min_lot_per_unit: perUnit || null, confidence: confidence, needs_review: hillside, hpoz: ov.hpoz || null, specific_plan: ov.specific_plan || null, coastal: !!ov.coastal, use_category: useCat || null, allowed_category: allowCat || null, pct: Math.round(pct * 100), mills_act: !!inp.mills_act, hoa_restricted: !!inp.hoa_restricted, hoa_note: inp.hoa_note || null, restricted: restricted, restricted_reasons: restrictReasons, computed_at: new Date().toISOString() };
 }
 /* Human phrase for an upzone opportunity. */
 function upzoneNote(b) {
@@ -11678,6 +11744,11 @@ function buildableSummary(b) {
   if (n(b.adu_sqft)) head += ' + up to ' + fmt(b.adu_sqft) + ' sq ft ADU';
   if (n(b.potential_units) >= 2) head += ' · lot could hold ~' + n(b.potential_units) + ' units';
   var sub = 'Lot ' + fmt(b.lot_sqft) + ' sq ft · zone ' + (b.zone || '?') + ' → allows ~' + fmt(b.max_sqft) + ' sq ft · existing ~' + fmt(b.existing_sqft) + ' sq ft' + (b.hillside ? ' · hillside (verify slope — estimate is rough here)' : '');
+  // Only the citywide-default fallback gets called out — a real record (SCAG) or a source-verified
+  // LAMC table match (R1V/R1F/R1R) earns silence, same as base R1's flat .45 always has (that one IS
+  // the code-correct number, not a guess). See computeBuildable's ratio_source/confidence comments.
+  if (!b.hillside && b.ratio_source === 'estimate') sub += ' · FAR is a citywide default, not a zone-specific table — verify with the City';
+  if (b.restricted && b.restricted_reasons && b.restricted_reasons.length) sub += ' · ' + b.restricted_reasons.join(' · ');
   var ctx = [];
   if (b.hpoz) ctx.push('Historic district (' + b.hpoz + ')');
   if (b.coastal) ctx.push('Coastal zone');
@@ -11712,6 +11783,7 @@ function buildablePanel(table, id) {
 }
 var BUILDABLE_LOOKUP_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/buildable_lookup';
 var PARCEL_OVERLAYS_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/parcel_overlays';
+var PERMIT_HISTORY_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/permit_history';
 var BLD_LOOKUP = {};   // id -> last address-lookup result (transient; carries far_max + use/allowed category into the estimate)
 /* SECURITY (2026-07-23): these lookups spend a real Google Maps API call server-side, so they must be
    auth-gated — a shared secret in this file wouldn't work (this file is fully public), so they're gated
@@ -11815,6 +11887,12 @@ function buildableForm(table, id) {
     + '<input type="text" id="bld-zone-' + esc(id) + '" placeholder="Zone (e.g. R1)" value="' + esc(b.zone || '') + '" list="la-zones" style="width:48%;margin:0 2% 6px 0;">'
     + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-hill-' + esc(id) + '"' + (b.hillside ? ' checked' : '') + '> Hillside</label>'
     + '<label class="hint" style="display:block;margin-bottom:6px;"><input type="checkbox" id="bld-adu-' + esc(id) + '"' + (b.adu_included === false ? '' : ' checked') + '> Include ADU potential</label>'
+    /* Mills Act / HOA-covenant flags (2026-08-18) — manual only, see computeBuildable's comment for
+       why: no public GIS layer publishes either restriction, so this has to be a human call. Suppresses
+       the underbuilt claim without hiding the raw FAR numbers (see restricted/restricted_reasons). */
+    + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-mills-' + esc(id) + '"' + (b.mills_act ? ' checked' : '') + '> Mills Act contract</label>'
+    + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-hoa-' + esc(id) + '" onchange="document.getElementById(\'bld-hoanote-' + esc(id) + '\').style.display=this.checked?\'block\':\'none\'"' + (b.hoa_restricted ? ' checked' : '') + '> HOA/covenant restricted</label>'
+    + '<input type="text" id="bld-hoanote-' + esc(id) + '" placeholder="Covenant note (optional)" value="' + esc(b.hoa_note || '') + '" style="width:100%;margin:0 0 6px;display:' + (b.hoa_restricted ? 'block' : 'none') + ';">'
     + '<datalist id="la-zones"><option value="R1"></option><option value="RE"></option><option value="RA"></option><option value="RS"></option><option value="R2"></option><option value="R3"></option></datalist>'
     + '<button class="qbtn done" onclick="event.stopPropagation();runBuildable(' + q + ')">Estimate</button> '
     + '<button class="qbtn" onclick="event.stopPropagation();bldCancel(' + "'" + esc(id) + "'" + ')">Cancel</button>'
@@ -11829,6 +11907,9 @@ async function runBuildable(table, id) {
     zone: (document.getElementById('bld-zone-' + id) || {}).value,
     hillside: (document.getElementById('bld-hill-' + id) || {}).checked,
     adu: (document.getElementById('bld-adu-' + id) || {}).checked,
+    mills_act: (document.getElementById('bld-mills-' + id) || {}).checked,
+    hoa_restricted: (document.getElementById('bld-hoa-' + id) || {}).checked,
+    hoa_note: (document.getElementById('bld-hoanote-' + id) || {}).value,
     far_max: look.far_max,               // SCAG allowable FAR when published (sharpens commercial/mixed)
     use_category: look.use_category,     // Assessor use tier (for the arbitrage flag)
     allowed_category: look.allowed_category,
@@ -11850,8 +11931,13 @@ async function runBuildable(table, id) {
 function printBuildable(table, id) {
   var x = recOf(table, id); if (!x || !x.extra || !x.extra.buildable) { toast('Estimate it first'); return; }
   var b = x.extra.buildable, s = buildableSummary(b), addr = esc(x.address || 'This property');
-  var rows = [['Lot size', b.lot_sqft.toLocaleString() + ' sq ft'], ['Zoning', b.zone || '—'], ['Allowable floor area (est.)', '~' + b.max_sqft.toLocaleString() + ' sq ft'], ['Existing home', '~' + b.existing_sqft.toLocaleString() + ' sq ft'], ['Untapped potential', '~' + b.untapped_sqft.toLocaleString() + ' sq ft'], ['ADU potential', b.adu_sqft ? 'up to ' + b.adu_sqft.toLocaleString() + ' sq ft' : 'not included']];
-  if (b.upzone) rows.splice(2, 0, ['Zoning note', upzoneNote(b)]);
+  var farBasis = b.ratio_source === 'record' ? 'SCAG regional record'
+    : b.ratio_source === 'lamc_table' ? 'LAMC 12.08 C.5 — ' + (b.zone || '') + ' @ ' + Number(b.lot_sqft || 0).toLocaleString() + ' sf lot'
+    : b.ratio_source === 'estimate' ? 'citywide default (no zone-specific table matched) — verify with the City'
+    : '—';
+  var rows = [['Lot size', b.lot_sqft.toLocaleString() + ' sq ft'], ['Zoning', b.zone || '—'], ['FAR basis', farBasis], ['Allowable floor area (est.)', '~' + b.max_sqft.toLocaleString() + ' sq ft'], ['Existing home', '~' + b.existing_sqft.toLocaleString() + ' sq ft'], ['Untapped potential', '~' + b.untapped_sqft.toLocaleString() + ' sq ft'], ['ADU potential', b.adu_sqft ? 'up to ' + b.adu_sqft.toLocaleString() + ' sq ft' : 'not included']];
+  if (b.upzone) rows.splice(3, 0, ['Zoning note', upzoneNote(b)]);
+  if (b.restricted && b.restricted_reasons && b.restricted_reasons.length) rows.push(['Restrictions', b.restricted_reasons.join('; ')]);
   /* SECURITY (2026-07-27): these cells carry values from the buildable_lookup edge fn (LA County /
      SCAG GIS) -- external data this app does not control, notably b.zone. The HTML below is opened
      via URL.createObjectURL, and a blob: document INHERITS THIS ORIGIN, so unescaped markup here
@@ -11872,6 +11958,185 @@ function printBuildable(table, id) {
     + '<p class="note">Nick Spiro · Carolwood Estates · DRE# 02148302 · 310.866.2485 · NickSpiro@me.com</p></div></body></html>';
   try { var url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); var w = window.open(url, '_blank'); if (!w) { var a = document.createElement('a'); a.href = url; a.download = 'buildable-report.html'; document.body.appendChild(a); a.click(); a.remove(); toast('Report downloaded'); } else toast('Opened report to print'); logEvent(table, id, 'buildable.report', 'Printed buildable report: ' + (x.address || '')); }
   catch (e) { toast('Could not open report'); }
+}
+
+/* ---------- Permit Ledger (2026-08-18): LADBS public permit history, pulled live + free via the
+   permit_history edge fn (same public PERMIT_FC_PRO ArcGIS FeatureServer LADBS's own "Permit &
+   Inspection Report" reads from). Origin: Nick's third-party permit researcher spends ~1.5 of his
+   ~2.5 billed hours per property pulling exactly this (public permit history + a ZIMAS-style parcel
+   profile) at $525/property. This automates that half for free; the other half of his work (RFA/
+   floor-area code math against an actual proposed addition, plot-plan ADU siting) needs the
+   architect's plan set as input and stays manual/Claude-assisted — a data pull can't replace that
+   judgment. Panel mirrors the Buildable panel's shape/placement (listings, prospects, transactions);
+   report mirrors printBuildable's masthead/typography so both feel like one estate-office system. */
+function permitLedgerPanel(table, id) {
+  var x = recOf(table, id); if (!x) return '';
+  var addr = String(x.address || x.address_area || '').trim();
+  if (!addr) return '';
+  var pl = x.extra && x.extra.permit_ledger, q = "'" + esc(table) + "','" + esc(String(id)) + "'";
+  var h = '<div class="flabel" style="margin-top:12px;">Permit Ledger <span class="hint" style="font-weight:400;text-transform:none;">&mdash; LADBS public permit history</span></div>';
+  /* SCOPE DISCLAIMER (2026-08-18, "state Permit Ledger's scope explicitly"). This pulls only from
+     LADBS's PERMIT_FC_PRO service — City of LA proper. Buildable's zoning coverage is wider
+     (Santa Monica, Culver City, Malibu, LA County unincorporated, via ZONING_SOURCES), so a
+     property that resolves fine in Buildable can still come back with zero permits here for a
+     reason that has nothing to do with the property: it's simply outside LADBS's jurisdiction.
+     Said once, up front, so an empty result never reads as "no permit history" when it may just
+     mean "wrong city." */
+  h += '<div class="hint" style="margin-bottom:4px;">City of LA (LADBS) only — Beverly Hills, Santa Monica, Culver City, Malibu, and unincorporated LA County are not covered; an empty result there means wrong jurisdiction, not a clean record.</div>';
+  if (!pl) {
+    h += '<button class="qbtn" id="pl-af-' + esc(id) + '" onclick="event.stopPropagation();permitLedgerAutoFill(' + q + ')">Pull permit history</button>';
+    return h;
+  }
+  if (pl.error) {
+    h += '<div class="t2">' + esc(pl.error) + '</div><button class="qbtn" id="pl-af-' + esc(id) + '" onclick="event.stopPropagation();permitLedgerAutoFill(' + q + ')">Try again</button>';
+    return h;
+  }
+  var n = pl.permit_count || 0;
+  h += '<div class="t2">' + n + ' permit' + (n === 1 ? '' : 's') + ' on record'
+    + (isFinite(Number(pl.total_valuation)) && Number(pl.total_valuation) > 0 ? ' &middot; $' + Math.round(Number(pl.total_valuation)).toLocaleString() + ' total valuation' : '')
+    + (pl.pulled_at ? ' &middot; pulled ' + esc(new Date(pl.pulled_at).toLocaleDateString()) : '') + '</div>';
+  if (n && pl.match_method === 'address_fallback') h += '<div class="hint">Matched by address text — the location-based lookup came back empty for this one</div>';
+  if (n) {
+    var rows = (pl.permits || []).slice(0, 8).map(function (p) {
+      return '<tr><td>' + esc(p.filed || '—') + '</td><td>' + esc(p.type || '—') + (p.subtype ? ' <span class="hint">(' + esc(p.subtype) + ')</span>' : '') + '</td><td>' + esc(p.status || '—')
+        + (isFinite(Number(p.valuation)) && Number(p.valuation) > 0 ? ' <span class="hint">&middot; $' + Math.round(Number(p.valuation)).toLocaleString() + '</span>' : '') + '</td></tr>';
+    }).join('');
+    h += '<table style="width:100%;margin-top:6px;font-size:13px;border-collapse:collapse;"><tbody>' + rows + '</tbody></table>';
+    if (n > 8) h += '<div class="hint">+ ' + (n - 8) + ' more — see full report</div>';
+  }
+  h += '<div style="margin-top:6px;"><button class="qbtn" id="pl-af-' + esc(id) + '" onclick="event.stopPropagation();permitLedgerAutoFill(' + q + ')">Refresh</button> '
+    + (n ? '<button class="qbtn done" onclick="event.stopPropagation();printPermitLedger(' + q + ')">Print report</button>' : '') + '</div>';
+  return h;
+}
+async function permitLedgerAutoFill(table, id) {
+  var x = recOf(table, id); if (!x) return;
+  var addr = String(x.address || x.address_area || '').trim();
+  if (!addr) { toast('This record has no address to look up'); return; }
+  var btn = document.getElementById('pl-af-' + id); if (btn) { btn.disabled = true; btn.textContent = 'Pulling…'; }
+  var res = null;
+  try {
+    var tok = await authTok(); if (!tok) { toast('Sign in first'); if (btn) { btn.disabled = false; btn.textContent = 'Pull permit history'; } return; }
+    /* Reuse the buildable_lookup geocode (BLD_LOOKUP) when it already ran for this record, so pulling
+       both panels on the same property only spends one Google Maps geocode, not two. Address text is
+       always included too (even alongside cached lat/lng) so the edge fn's address-format fallback
+       has something to search on if the spatial lookup comes back empty — added 2026-08-18 after
+       12506 Appleton Way's permit never surfaced spatially; see permit_history fn comments. */
+    var look = BLD_LOOKUP[id];
+    var body = (look && isFinite(look.lat) && isFinite(look.lng)) ? { lat: look.lat, lng: look.lng, address: addr } : { address: addr };
+    var r = await withTimeout(fetch(PERMIT_HISTORY_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(body) }), 20000, { ok: false });
+    res = r.ok ? await r.json() : null;
+    if (!res) res = { error: 'Lookup failed — try again' };
+  } catch (e) { res = { error: 'Lookup failed — try again' }; reportError('permitLedger.lookup', e); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Pull permit history'; }
+  if (res.error && !('permit_count' in res)) { toast(res.error); return; }
+  res.pulled_at = new Date().toISOString();
+  x.extra = x.extra || {}; x.extra.permit_ledger = res;
+  var sv = await sb.from(table).update({ extra: x.extra }).eq('id', id).select('id');
+  if (sv.error) { toast('Could not save — try again'); return; }
+  logEvent(table, id, 'permit_ledger.pulled', (x.address || '') + ' — ' + (res.permit_count || 0) + ' permit(s) found');
+  toast(res.permit_count ? res.permit_count + ' permit(s) found' : 'No permits found in LADBS public records');
+  render();
+}
+function printPermitLedger(table, id) {
+  var x = recOf(table, id); if (!x || !x.extra || !x.extra.permit_ledger) { toast('Pull permit history first'); return; }
+  var pl = x.extra.permit_ledger, addr = esc(x.address || x.address_area || 'This property'), b = x.extra.buildable || null;
+  /* SECURITY: same rule as printBuildable — every field below (permit rows, zone) is external data
+     from a third-party GIS service, opened as a blob: doc that inherits this app's origin, so it MUST
+     be esc()'d; only Math-coerced numbers are left bare (a non-numeric value there just prints "—"/NaN,
+     never executes). */
+  var profileRows = '';
+  if (b) {
+    profileRows = '<tr><td>Zoning</td><td style="text-align:right;">' + esc(b.zone || '—') + '</td></tr>'
+      + '<tr><td>Lot size</td><td style="text-align:right;">' + (b.lot_sqft ? Number(b.lot_sqft).toLocaleString() + ' sq ft' : '—') + '</td></tr>'
+      + '<tr><td>Existing home</td><td style="text-align:right;">' + (b.existing_sqft ? '~' + Number(b.existing_sqft).toLocaleString() + ' sq ft' : '—') + '</td></tr>';
+  }
+  var permRows = (pl.permits || []).map(function (p) {
+    var sqft = (p.sqft_change !== null && p.sqft_change !== undefined && isFinite(Number(p.sqft_change)) && Number(p.sqft_change) !== 0)
+      ? (Number(p.sqft_change) > 0 ? '+' : '') + Math.round(Number(p.sqft_change)).toLocaleString() + ' sf' : '—';
+    var val = (isFinite(Number(p.valuation)) && Number(p.valuation) > 0) ? '$' + Math.round(Number(p.valuation)).toLocaleString() : '—';
+    var statusCell = esc(p.status || '—') + (p.status_date ? '<br><span class="note2">' + esc(p.status_date) + '</span>' : '')
+      + (p.cofo_date ? '<br><span class="note2">CofO ' + esc(p.cofo_date) + '</span>' : '');
+    return '<tr><td>' + esc(p.filed || '—') + '</td><td>' + esc(p.permit_number || '—') + '</td>'
+      + '<td>' + esc(p.type || '—') + (p.subtype ? '<br><span class="note2">' + esc(p.subtype) + '</span>' : '') + '</td>'
+      + '<td>' + statusCell + '</td>'
+      + '<td style="text-align:right;">' + val + '</td>'
+      + '<td style="text-align:right;">' + sqft + '</td></tr>';
+  }).join('');
+  var totalsLine = '';
+  if ((isFinite(Number(pl.total_valuation)) && Number(pl.total_valuation) > 0) || (isFinite(Number(pl.total_fees_paid)) && Number(pl.total_fees_paid) > 0)) {
+    var parts = [];
+    if (isFinite(Number(pl.total_valuation)) && Number(pl.total_valuation) > 0) parts.push('Total permitted valuation on record: $' + Math.round(Number(pl.total_valuation)).toLocaleString());
+    if (isFinite(Number(pl.total_fees_paid)) && Number(pl.total_fees_paid) > 0) parts.push('total City fees paid: $' + Math.round(Number(pl.total_fees_paid)).toLocaleString());
+    totalsLine = '<div class="note2" style="margin-top:4px;">' + esc(parts.join(' · ')) + '</div>';
+  }
+  var html = '<!doctype html><html><head><meta charset="utf-8"><title>Permit Ledger — ' + addr + '</title>'
+    + '<style>@page{margin:1in}body{font-family:Baskerville,Georgia,serif;color:#26281F;margin:0}'
+    + '.mast{border-bottom:2px solid #2C3B2D;padding-bottom:8px;margin-bottom:18px}.mast .k{letter-spacing:.16em;text-transform:uppercase;font-size:11px;color:#8A8273}.mast h1{margin:2px 0 0;font-size:22px}'
+    + 'h2{font-size:13px;margin:18px 0 6px;letter-spacing:.12em;text-transform:uppercase;color:#2C3B2D}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:6px 4px;border-bottom:1px solid #D9D4C8;vertical-align:top}.note2{font-size:10px;color:#8A8273}'
+    + '.note{font-size:11px;color:#8A8273;margin-top:20px;line-height:1.5}.bar{position:sticky;top:0;background:#1E2C1E;color:#F3EDDE;padding:10px 14px;font-family:-apple-system,Helvetica,sans-serif;font-size:13px}.bar button{margin-left:12px}@media print{.bar{display:none}}</style></head><body>'
+    + '<div class="bar">Permit Ledger for ' + addr + ' — press Print (or Cmd/Ctrl+P).<button onclick="window.print()">Print</button></div>'
+    + '<div style="padding:0 4px"><div class="mast"><div class="k">Spiro · Carolwood Estates</div><h1>Permit Ledger</h1></div>'
+    + '<div class="k" style="letter-spacing:.14em;text-transform:uppercase;font-size:11px;color:#8A8273">Property</div><div style="font-size:16px;margin-bottom:6px">' + addr + '</div>'
+    + (profileRows ? '<h2>Parcel Profile</h2><table>' + profileRows + '</table>' : '')
+    + '<h2>Permit History (' + (Number(pl.permit_count) || 0) + ')</h2>' + totalsLine
+    + (permRows ? '<table><thead><tr><td class="note2">Filed</td><td class="note2">Permit #</td><td class="note2">Type</td><td class="note2">Status</td><td class="note2" style="text-align:right;">Valuation</td><td class="note2" style="text-align:right;">Sq Ft &Delta;</td></tr></thead><tbody>' + permRows + '</tbody></table>' : '<p class="note2">No permits found in LADBS&rsquo;s public records for this address.</p>')
+    + (pl.match_method === 'address_fallback' ? '<div class="note2" style="margin-top:4px;">Matched by address text, not location — the parcel-location lookup returned nothing for this address and a text match against LADBS&rsquo;s own record was used instead.</div>' : '')
+    + '<p class="note">Scope: City of Los Angeles (LADBS) building permits only. Beverly Hills, Santa Monica, Culver City, Malibu, and unincorporated LA County are separate permitting authorities not covered by this report &mdash; a blank permit history for a property outside LA City proper reflects jurisdiction, not necessarily a clean record.</p>'
+    + '<p class="note">Permit history pulled live from LADBS&rsquo;s public permit records (PCIS via the City&rsquo;s PERMIT_FC_PRO service). Zoning/parcel figures, where shown, are estimates from public GIS data. Neither is a substitute for an official City of Los Angeles Department of Building &amp; Safety records request, a title report, or review by a licensed architect before a purchase, sale, or permit-submission decision.</p>'
+    + '<p class="note">Nick Spiro · Carolwood Estates · DRE# 02148302 · 310.866.2485 · NickSpiro@me.com</p></div></body></html>';
+  try { var url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); var w = window.open(url, '_blank'); if (!w) { var a = document.createElement('a'); a.href = url; a.download = 'permit-ledger.html'; document.body.appendChild(a); a.click(); a.remove(); toast('Report downloaded'); } else toast('Opened report to print'); logEvent(table, id, 'permit_ledger.report', 'Printed permit ledger: ' + (x.address || '')); }
+  catch (e) { toast('Could not open report'); }
+}
+
+/* ===== Underbuilt + stalled-permit callout (2026-08-18, per Nick — "should there be a chain
+   created between the underbuilt and permit ledger") ===== Answer settled with Nick: NOT a chain in
+   the chainMatches() sense — that engine links DIFFERENT records by a shared identity tag
+   (architect/style/building), and underbuilt + permit history are both facts about ONE record, so
+   there's no second record to match against; treating "also underbuilt" as a chainable tag would
+   just be a filtered list wearing a chain's clothes. What IS real: an underbuilt lot (real zoning
+   headroom unused) AND a permit on file for expansion work that never shows as finished is a
+   materially stronger prospecting hook than either fact alone — "there's room to build, and someone
+   already tried and didn't finish." This surfaces only that specific combination; a clean permit
+   history on an underbuilt lot stays silent (no noise on the common case).
+   Deliberately does NOT feed Permit Ledger's sqft_change (AREA_ZC) back into Buildable's
+   existing_sqft — that's a per-permit delta, not a reliable running total, and using it to adjust
+   the estimate would trade an honest number for a falsely precise one. */
+function stalledExpansionPermits(permits) {
+  var EXPIRED_RE = /expire|cancel|void|withdraw/i;
+  var out = [];
+  (permits || []).forEach(function (p) {
+    var text = [p.type, p.subtype, p.category].filter(Boolean).join(' ').toUpperCase();
+    var looksExpansion = /ADD|NEW|ALTER|REMODEL/.test(text) || (isFinite(Number(p.sqft_change)) && Number(p.sqft_change) > 0);
+    if (!looksExpansion) return;
+    var explicitlyDead = EXPIRED_RE.test(p.status || '');
+    var noFinal = !p.finalized && !p.cofo_date;
+    if (!explicitlyDead && !noFinal) return;   // finaled/CofO'd — a completed addition, not a stalled one
+    var ageYears = null, base = p.filed || p.issued;
+    if (base) { var d = new Date(base); if (!isNaN(d.getTime())) ageYears = (Date.now() - d.getTime()) / 31557600000; }
+    // Without an explicit expired/cancelled status, require real age before calling it "stalled" —
+    // a permit issued 4 months ago with no CofO yet is just a normal construction timeline, not a gap.
+    if (!explicitlyDead && (ageYears === null || ageYears < 1.5)) return;
+    out.push({ permit: p, reason: explicitlyDead ? 'status' : 'no_final', age_years: ageYears });
+  });
+  return out;
+}
+function underbuiltPermitCalloutHtml(table, id) {
+  var x = recOf(table, id); if (!x) return '';
+  var e = x.extra || {}, b = e.buildable, pl = e.permit_ledger;
+  if (!b || !b.underbuilt || !pl || !pl.permits || !pl.permits.length) return '';
+  var stalled = stalledExpansionPermits(pl.permits);
+  if (!stalled.length) return '';
+  var lines = stalled.slice(0, 3).map(function (s) {
+    var p = s.permit, when = p.filed || p.issued || '—';
+    var age = (s.age_years != null) ? ' (' + Math.floor(s.age_years) + '+ yr' + (Math.floor(s.age_years) === 1 ? '' : 's') + ' ago)' : '';
+    var sqft = (isFinite(Number(p.sqft_change)) && Number(p.sqft_change) > 0) ? ' · +' + Math.round(Number(p.sqft_change)).toLocaleString() + ' sf proposed' : '';
+    var why = s.reason === 'status' ? esc(p.status || 'expired/cancelled') : 'no finalization or CofO on record';
+    return '<div class="t2">' + esc(p.type || 'Permit') + (p.subtype ? ' (' + esc(p.subtype) + ')' : '') + ' — filed ' + esc(when) + age + sqft + ' · ' + why + '</div>';
+  }).join('');
+  return '<div class="qi deadline" style="margin-top:12px;"><div class="txt"><div class="t1">Underbuilt, with a stalled addition on record</div>'
+    + '<div class="t2">' + Math.round(Number(b.untapped_sqft) || 0).toLocaleString() + ' sq ft of unused zoning headroom, and ' + stalled.length
+    + ' permit' + (stalled.length === 1 ? '' : 's') + ' for expansion work that ' + (stalled.length === 1 ? "doesn't" : "don't") + ' show as finished:</div>'
+    + lines + '</div></div>';
 }
 
 /* ---------- Mail-first outreach letter drafts (seller leads). DRAFT ONLY — nothing sends. ---------- */
@@ -12665,6 +12930,32 @@ function recordCapacity(c, cap) {
   caps.push(cap); c.extra.capacities = caps;
   sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', c.id);
 }
+/* PARSE A FREE-TEXT CONTACT FIELD (2026-08-18, "who to call" fix). buyers.contact,
+   prospects.owner_contact, and listings.seller_contact are all single free-text fields that can
+   hold an email, a phone number, or both ("310-892-7999 / hale_ron@sbcglobal.net") — there was no
+   parser, so ensureContact()'s email/phone params were structurally never fed by either real call
+   site (linkSpines, the transactions-closed-deal path) and every auto-created contact silently
+   dropped the data. Confirmed live: 220 contacts, 0 with a phone, while prospects.owner_contact
+   alone (skip-traced, already paid for) held ~124 real phone numbers. Backfilled the existing gap
+   via a migration this same session; this function is the forward-looking half.
+   DNC SAFETY: several owner_contact strings are multi-number free text explicitly flagged
+   "[DNC] Mobile ..., Landline ... — all flagged DNC, mail only". Any string containing "dnc" or
+   "do not call" is treated as phone-less here, full stop — no partial extraction, ever. A missed
+   phone number costs a manual lookup; a wrongly-dialed DNC number is a compliance problem. */
+function parseContactString(s) {
+  s = String(s || '');
+  var out = { email: null, phone: null };
+  var em = s.match(/([\w.+-]+@[\w-]+\.[\w.-]+)/);
+  if (em) out.email = em[1].toLowerCase();
+  if (!/dnc|do not call/i.test(s)) {
+    var pm = s.match(/(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})/);
+    if (pm) {
+      var digits = pm[1].replace(/[^0-9]/g, '');
+      if (digits.length === 10) out.phone = '(' + digits.slice(0, 3) + ') ' + digits.slice(3, 6) + '-' + digits.slice(6);
+    }
+  }
+  return out;
+}
 /* Resolve a name to a canonical contact id. Seeks by exact name_key first, then by IDENTITY
    (capacity/title-insensitive) so a trustee/individually variant folds onto the same person
    instead of minting a duplicate. Never clobbers an existing contact. */
@@ -12680,6 +12971,16 @@ async function ensureContact(name, email, phone) {
   });
   if (hit) {
     var cap = capacityOf(name); if (cap) recordCapacity(hit, cap);
+    /* Opportunistic heal (2026-08-18): a contact created name-only by one record can still pick up
+       phone/email from a LATER record for the same person, same idempotent-healing spirit as
+       reconcileSpines below. Never overwrites a value already on file. */
+    var healPatch = {};
+    if (email && !hit.email) healPatch.email = email;
+    if (phone && !hit.phone) healPatch.phone = phone;
+    if (Object.keys(healPatch).length) {
+      sb.from('contacts').update(healPatch).eq('id', hit.id);
+      Object.assign(hit, healPatch);
+    }
     return resolveMerged(hit.id);   /* follow any merge chain to the surviving primary */
   }
   var disp = cleanName(name);
@@ -12698,6 +12999,11 @@ async function ensureContact(name, email, phone) {
 /* Per-table maps: which FK carries the contact, which field names the person, which field is the address. */
 var SPINE_CFK = { buyers: 'contact_id', listings: 'seller_contact_id', prospects: 'owner_contact_id', transactions: 'client_contact_id' };
 var SPINE_CNAME = { buyers: 'name', listings: 'seller_name', prospects: 'owner_name', transactions: 'client_name' };
+/* Free-text field (may hold email, phone, or both) alongside SPINE_CNAME's name — feeds
+   parseContactString() so ensureContact() stops dropping phone/email on every auto-created
+   contact (2026-08-18). transactions has no such field (only client_contact_id), so it's absent
+   here and ensureContact is called name-only there, same as before. */
+var SPINE_CCONTACT = { buyers: 'contact', listings: 'seller_contact', prospects: 'owner_contact' };
 var SPINE_PADDR = { listings: 'address', offmarket: 'address_area', prospects: 'address', transactions: 'address' };
 /* A street portion only anchors a property if it actually carries a house number — this is what
    keeps "Los Angeles, 90004 (address withheld)" and other area-only leads from minting junk parcels. */
@@ -12707,7 +13013,15 @@ async function linkSpines(table, id, rec) {
   try {
     var patch = {};
     var cfk = SPINE_CFK[table];
-    if (cfk && !rec[cfk]) { var nm = rec[SPINE_CNAME[table]]; if (nm && contactKey(nm).length >= 2) { var cid = await ensureContact(nm); if (cid) patch[cfk] = cid; } }
+    if (cfk && !rec[cfk]) {
+      var nm = rec[SPINE_CNAME[table]];
+      if (nm && contactKey(nm).length >= 2) {
+        var ccf = SPINE_CCONTACT[table];
+        var parsed = ccf ? parseContactString(rec[ccf]) : { email: null, phone: null };
+        var cid = await ensureContact(nm, parsed.email, parsed.phone);
+        if (cid) patch[cfk] = cid;
+      }
+    }
     var paf = SPINE_PADDR[table];
     if (paf && !rec.property_id) { var ad = rec[paf]; if (ad && hasStreetNumber(ad)) { var pid = await ensureProperty(ad); if (pid) patch.property_id = pid; } }
     if (Object.keys(patch).length) { await sb.from(table).update(patch).eq('id', id); }
@@ -12962,46 +13276,21 @@ function swipeArchive(table, id, label) {
    rowTable is 'prospects' or 'offmarket', per Nick's scoping decision — buyers/listings/agents/
    transactions rows are untouched). Left-swipe-only commits (iOS convention for destructive
    actions); a right-swipe just snaps back with no effect. */
-(function bindArchiveSwipe() {
-  var body = document.getElementById('browse');
-  if (!body) return;
-  var THRESH = 70, startX = 0, startY = 0, dragging = false, horiz = false, row = null;
-  function findRow(el) { while (el && el !== body) { if (el.classList && el.classList.contains('arch-swipe')) return el; el = el.parentNode; } return null; }
-  function reset(r) { if (r) { r.style.transition = 'transform .18s ease, background-color .18s ease'; r.style.transform = ''; r.style.backgroundColor = ''; } }
-  body.addEventListener('touchstart', function (e) {
-    var r = findRow(e.target); if (!r) return;
-    var t = e.touches[0];
-    startX = t.clientX; startY = t.clientY; dragging = true; horiz = false; row = r;
-    row.style.transition = 'none';
-  }, { passive: true });
-  body.addEventListener('touchmove', function (e) {
-    /* silent-ok: a touchmove outside an active row-drag is ordinary scrolling, not a fault */
-    if (!dragging || !row) return;
-    var t = e.touches[0], dx = t.clientX - startX, dy = t.clientY - startY;
-    if (!horiz) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (Math.abs(dx) <= Math.abs(dy)) { dragging = false; row.style.transition = ''; row = null; return; }
-      horiz = true;
-    }
-    e.preventDefault();
+bindSwipeGesture({
+  containerId: 'browse',
+  rowClass: 'arch-swipe',
+  onDrag: function (row, dx) {
     row.style.transform = 'translateX(' + Math.min(dx, 0) + 'px)'; /* left-only visual: right-drag pins at 0 */
     row.style.backgroundColor = dx < 0 ? 'rgba(170,70,60,.14)' : '';
-  }, { passive: false });
-  function finish() {
-    if (!dragging || !row) { dragging = false; return; }
-    dragging = false;
-    var m = /translateX\(([-\d.]+)px\)/.exec(row.style.transform), dx = m ? parseFloat(m[1]) : 0;
-    var r = row, rid = r.getAttribute('data-rid'), tbl = r.getAttribute('data-atable'); row = null;
-    reset(r);
-    if (dx <= -THRESH && tbl) {
-      var rec = (DATA[tbl] || []).filter(function (x) { return String(x.id) === String(rid); })[0];
-      var label = rec ? (rec.address || rec.address_area || rec.owner_name || '') : '';
-      swipeArchive(tbl, rid, label);
-    }
+  },
+  onCommit: function (row) {
+    var rid = row.getAttribute('data-rid'), tbl = row.getAttribute('data-atable');
+    if (!tbl) return;
+    var rec = (DATA[tbl] || []).filter(function (x) { return String(x.id) === String(rid); })[0];
+    var label = rec ? (rec.address || rec.address_area || rec.owner_name || '') : '';
+    swipeArchive(tbl, rid, label);
   }
-  body.addEventListener('touchend', finish, { passive: true });
-  body.addEventListener('touchcancel', function () { reset(row); row = null; dragging = false; }, { passive: true });
-})();
+});
 
 /* ---------- Archived view (2026-07-24) -- the safety net + the periodic-compression sweep ----------
    Restorable, browsable list of everything archived (by swipe or by the older archiveDuplicate
