@@ -716,7 +716,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.213.0';
+var APP_VERSION = 'v5.214.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -6549,7 +6549,7 @@ function recordExtras(table, id) {
   if (table === 'offmarket' || table === 'listings') h += portalStatusHtml(table, sid) + portalPhotosHtml(table, sid);
   if (table === 'listings') {
     var selfTx = (DATA.transactions || []).filter(function (t) { return String(t.source_listing_id) === String(sid); })[0];
-    h += buildablePanel('listings', sid) + permitLedgerPanel('listings', sid) + underbuiltPermitCalloutHtml('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + cmaHtml(sid) + pressMentionsHtml('listings', sid);
+    h += buildablePanel('listings', sid) + permitLedgerPanel('listings', sid) + floorPlanPanel('listings', sid) + underbuiltPermitCalloutHtml('listings', sid) + listingOpenHouseHtml(sid) + listingShowingsHtml(sid) + listingPrepChecklistHtml(sid) + listingChainHtml(sid) + compsHtml(recOf('listings', sid), selfTx ? selfTx.id : null) + cmaHtml(sid) + pressMentionsHtml('listings', sid);
     more += listingMarketingUrlHtml(sid);
   }
   if (table === 'offmarket' || table === 'listings' || table === 'prospects' || table === 'transactions') h += propertyHistoryHtml(table, sid);
@@ -6592,7 +6592,7 @@ function recordExtras(table, id) {
         }
       }
       h += '<div id="letter-' + esc(sid) + '"></div>';
-      h += buildablePanel('prospects', sid) + permitLedgerPanel('prospects', sid) + underbuiltPermitCalloutHtml('prospects', sid);
+      h += buildablePanel('prospects', sid) + permitLedgerPanel('prospects', sid) + floorPlanPanel('prospects', sid) + underbuiltPermitCalloutHtml('prospects', sid);
       if (px.extra && px.extra.gps_lat) {
         h += '<div class="hint" style="margin-top:8px;"><a href="https://www.google.com/maps?q=' + px.extra.gps_lat + ',' + px.extra.gps_lng + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">View where you snapped it &#8599;</a></div>';
       }
@@ -12086,6 +12086,299 @@ function printPermitLedger(table, id) {
     + '<p class="note">Nick Spiro · Carolwood Estates · DRE# 02148302 · 310.866.2485 · NickSpiro@me.com</p></div></body></html>';
   try { var url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); var w = window.open(url, '_blank'); if (!w) { var a = document.createElement('a'); a.href = url; a.download = 'permit-ledger.html'; document.body.appendChild(a); a.click(); a.remove(); toast('Report downloaded'); } else toast('Opened report to print'); logEvent(table, id, 'permit_ledger.report', 'Printed permit ledger: ' + (x.address || '')); }
   catch (e) { toast('Could not open report'); }
+}
+
+/* ===== Floor Plan (2026-09-04): AI-seeded, hand-editable room layout per property. ===============
+   Origin: Nick wants (1) a floor-plan graphic to use as a listing photo, (2) something to plan
+   renovations against, (3) a richer browsing aid for buyers. Researched build-vs-buy first: every
+   tool that produces MEASURED floor plans (CubiCasa, Matterport, Polycam, iGUIDE) requires an
+   on-site LiDAR scan or walkthrough video captured AT the property -- none of them generate real
+   dimensions from static photos taken after the fact. Confirmed with Nick: v1 works from photos
+   only and is explicitly labeled "approximate" everywhere it's shown; a measured-scan path (e.g.
+   CubiCasa) is a possible future addition, not built here. Editor style confirmed with Nick:
+   simple snap-to-grid rectangular rooms (drag to move, one corner handle to resize), not freeform
+   wall-drawing -- fastest to learn, covers most homes.
+   Data lives in the record's own extra.floor_plan (same convention as extra.buildable/extra.
+   permit_ledger -- no new table, mirrors how those two "arms" already attach to listings/prospects).
+   Shape: { rooms:[{id,label,x,y,w,h}] (0-1000 grid, top-left origin), accuracy:'approximate',
+   source:'manual'|'ai_seed', floor_note, updated_at }. AI seeding calls the "ask" edge fn's new
+   floorplan mode (v19) with up to 4 already-uploaded property photos, reusing the existing
+   imgToDataURL() compression pipeline (fetch each signed URL to a Blob, then run it through the
+   same resize/compress used for camera-captured images so payload size stays bounded the same way
+   "capture" already does). Panel/placement mirrors buildablePanel + permitLedgerPanel exactly
+   (listings + prospects only, per that same precedent -- not offmarket/transactions in v1). */
+var FP_GRID = 25; /* snap unit on the 0-1000 room grid */
+var FP = null; /* { table, id, propertyId, rooms, source, floorNote, selectedId, drag } while the editor is open */
+
+function fpSnap(n) { return Math.round(Math.max(0, Math.min(1000, n)) / FP_GRID) * FP_GRID; }
+
+function floorPlanFactsFor(x) {
+  var facts = {};
+  if (x.address || x.address_area) facts.address = x.address || x.address_area;
+  if (x.beds) facts.beds = x.beds;
+  if (x.baths) facts.baths = x.baths;
+  var sqft = x.sqft || (x.extra && x.extra.buildable && x.extra.buildable.existing_sqft);
+  if (sqft) facts.sqft = sqft;
+  return facts;
+}
+
+function floorPlanPanel(table, id) {
+  var x = recOf(table, id); if (!x) return '';
+  var fp = x.extra && x.extra.floor_plan;
+  var q = "'" + esc(table) + "','" + esc(String(id)) + "'";
+  var h = '<div class="flabel" style="margin-top:12px;">Floor Plan <span class="hint" style="font-weight:400;text-transform:none;">&mdash; seeded from photos, yours to edit</span></div>';
+  if (!fp || !fp.rooms || !fp.rooms.length) {
+    h += '<button class="qbtn" onclick="event.stopPropagation();openFloorPlanEditor(' + q + ')">Build floor plan</button>';
+    return h;
+  }
+  var n = fp.rooms.length;
+  h += '<div class="t2">' + n + ' room' + (n === 1 ? '' : 's') + ' &middot; ' + (fp.accuracy === 'measured' ? 'measured' : 'approximate (from photos)')
+    + (fp.updated_at ? ' &middot; updated ' + esc(new Date(fp.updated_at).toLocaleDateString()) : '') + '</div>';
+  h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();openFloorPlanEditor(' + q + ')">Edit</button> '
+    + '<button class="qbtn done" onclick="event.stopPropagation();printFloorPlan(' + q + ')">Print / export</button></div>';
+  return h;
+}
+
+async function openFloorPlanEditor(table, id) {
+  var x = recOf(table, id); if (!x) return;
+  var fp = (x.extra && x.extra.floor_plan) || {};
+  FP = {
+    table: table, id: id, propertyId: x.property_id || null,
+    rooms: (fp.rooms || []).map(function (r) { return { id: r.id || uid(), label: r.label || 'Room', x: r.x || 0, y: r.y || 0, w: r.w || 200, h: r.h || 150 }; }),
+    source: fp.source || 'manual', floorNote: fp.floor_note || '', selectedId: null, drag: null,
+  };
+  var back = document.createElement('div'); back.id = 'fp-overlay';
+  back.style.cssText = 'position:fixed;inset:0;background:rgba(20,18,12,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  back.innerHTML = '<div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);max-width:760px;width:100%;max-height:92vh;overflow:auto;padding:18px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+    + '<div class="flabel" style="margin:0;">Floor Plan &mdash; ' + esc(x.address || x.address_area || '') + '</div>'
+    + '<button class="qbtn" onclick="fpClose()">Close</button></div>'
+    + '<div class="hint" style="margin-bottom:10px;">Approximate only, not a measured survey. Drag a room to move it, drag its bottom-right corner to resize, double-tap to rename.</div>'
+    + '<div id="fp-photos" style="margin-bottom:8px;"></div>'
+    + '<div id="fp-canvas-wrap" style="border:1px solid var(--line);background:var(--paper);touch-action:none;"></div>'
+    + '<div id="fp-sel-tools" style="margin-top:8px;"></div>'
+    + '<div id="fp-note" class="hint" style="margin-top:6px;"></div>'
+    + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">'
+    + '<button class="qbtn" onclick="fpAddRoom()">+ Add room</button>'
+    + '<button class="qbtn" id="fp-suggest-btn" onclick="fpSuggestFromPhotos()">Suggest layout from photos</button>'
+    + '<button class="qbtn done" onclick="fpSave()">Save</button>'
+    + '</div></div>';
+  document.body.appendChild(back);
+  fpRender();
+  if (FP.propertyId) {
+    var urls = await propertyPhotoUrls(FP.propertyId);
+    var ph = document.getElementById('fp-photos');
+    if (ph) {
+      if (!urls.length) { ph.innerHTML = '<div class="hint">No photos on file for this property yet &mdash; add some first, or build the plan by hand below.</div>'; var sb2 = document.getElementById('fp-suggest-btn'); if (sb2) sb2.disabled = true; }
+      else ph.innerHTML = urls.slice(0, 8).map(function (u) { return '<img src="' + u.url + '" style="width:64px;height:48px;object-fit:cover;border:1px solid var(--line);border-radius:2px;margin:0 6px 6px 0;">'; }).join('');
+    }
+  } else {
+    var sb3 = document.getElementById('fp-suggest-btn'); if (sb3) { sb3.disabled = true; sb3.title = 'Link a property record first'; }
+  }
+}
+
+function fpClose() {
+  var el = document.getElementById('fp-overlay'); if (el) el.remove();
+  FP = null;
+}
+
+function fpSvgPoint(svg, evt) {
+  var pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+  var ctm = svg.getScreenCTM(); if (!ctm) return { x: 0, y: 0 };
+  var p = pt.matrixTransform(ctm.inverse());
+  return { x: p.x, y: p.y };
+}
+
+function fpRender() {
+  if (!FP) return;
+  var wrap = document.getElementById('fp-canvas-wrap'); if (!wrap) return;
+  var noteEl = document.getElementById('fp-note');
+  if (noteEl) noteEl.textContent = FP.floorNote ? ('AI note: ' + FP.floorNote) : '';
+  var body = FP.rooms.map(function (r) {
+    var sel = r.id === FP.selectedId;
+    return '<g data-room="' + esc(r.id) + '">'
+      + '<rect x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" fill="' + (sel ? 'rgba(44,59,45,.18)' : 'rgba(44,59,45,.08)') + '" stroke="#2C3B2D" stroke-width="' + (sel ? 3 : 1.5) + '" data-handle="move" style="cursor:move;"></rect>'
+      + '<text x="' + (r.x + 8) + '" y="' + (r.y + 20) + '" font-size="22" font-family="Baskerville,Georgia,serif" fill="#26281F" style="pointer-events:none;">' + esc(r.label) + '</text>'
+      + (sel ? '<rect x="' + (r.x + r.w - 22) + '" y="' + (r.y + r.h - 22) + '" width="22" height="22" fill="#2C3B2D" data-handle="resize" style="cursor:nwse-resize;"></rect>'
+             + '<circle cx="' + (r.x + r.w - 10) + '" cy="' + (r.y + 10) + '" r="11" fill="#8A2E2E" data-handle="delete" style="cursor:pointer;"></circle>'
+             + '<text x="' + (r.x + r.w - 10) + '" y="' + (r.y + 14) + '" font-size="14" fill="#fff" text-anchor="middle" style="pointer-events:none;">&#10005;</text>' : '')
+      + '</g>';
+  }).join('');
+  wrap.innerHTML = '<svg id="fp-svg" viewBox="0 0 1000 1000" style="width:100%;display:block;aspect-ratio:1/1;">' + body + '</svg>';
+  var svg = document.getElementById('fp-svg');
+  if (!svg) return;
+  svg.addEventListener('pointerdown', fpPointerDown);
+  svg.addEventListener('pointermove', fpPointerMove);
+  svg.addEventListener('pointerup', fpPointerUp);
+  svg.addEventListener('pointercancel', fpPointerUp);
+  svg.addEventListener('dblclick', fpDblClick);
+  fpRenderSelTools();
+}
+
+/* Rename/delete as an explicit toolbar (not just the tiny on-canvas handle + double-tap) so this
+   works reliably on a phone, where a precise double-tap or an 11px circle is easy to miss. The
+   input uses onchange (fires on blur/Enter), not oninput, so retyping the label doesn't fight the
+   re-render on every keystroke. */
+function fpRenameSelected(val) {
+  if (!FP || !FP.selectedId) return;
+  var room = FP.rooms.filter(function (r) { return r.id === FP.selectedId; })[0]; if (!room) return;
+  var name = String(val || '').trim();
+  if (name) room.label = name.slice(0, 40);
+  fpRender();
+}
+function fpDeleteSelected() { if (FP && FP.selectedId) fpDelete(FP.selectedId); }
+function fpRenderSelTools() {
+  var el = document.getElementById('fp-sel-tools'); if (!el) return;
+  if (!FP.selectedId) { el.innerHTML = '<div class="hint">Tap a room to select it, then rename or delete it here.</div>'; return; }
+  var room = FP.rooms.filter(function (r) { return r.id === FP.selectedId; })[0];
+  if (!room) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    + '<input type="text" value="' + esc(room.label) + '" onchange="fpRenameSelected(this.value)" style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2);color:var(--ink);">'
+    + '<button class="qbtn" onclick="fpDeleteSelected()">Delete room</button></div>';
+}
+
+function fpRoomEl(evt) {
+  var g = evt.target.closest ? evt.target.closest('g[data-room]') : null;
+  if (!g) return null;
+  var rid = g.getAttribute('data-room');
+  var room = FP.rooms.filter(function (r) { return r.id === rid; })[0];
+  return room ? { room: room, handle: (evt.target.getAttribute && evt.target.getAttribute('data-handle')) || 'move' } : null;
+}
+
+function fpPointerDown(evt) {
+  if (!FP) return;
+  var hit = fpRoomEl(evt);
+  if (!hit) { FP.selectedId = null; fpRender(); return; }
+  FP.selectedId = hit.room.id;
+  if (hit.handle === 'delete') { fpDelete(hit.room.id); return; }
+  var svg = document.getElementById('fp-svg'); if (!svg) return;
+  var p = fpSvgPoint(svg, evt);
+  FP.drag = { id: hit.room.id, mode: hit.handle === 'resize' ? 'resize' : 'move', startX: p.x, startY: p.y, orig: { x: hit.room.x, y: hit.room.y, w: hit.room.w, h: hit.room.h } };
+  try { svg.setPointerCapture(evt.pointerId); } catch (e) {}
+  fpRender();
+}
+
+function fpPointerMove(evt) {
+  if (!FP || !FP.drag) return;
+  var svg = document.getElementById('fp-svg'); if (!svg) return;
+  var p = fpSvgPoint(svg, evt);
+  var dx = p.x - FP.drag.startX, dy = p.y - FP.drag.startY;
+  var room = FP.rooms.filter(function (r) { return r.id === FP.drag.id; })[0]; if (!room) return;
+  if (FP.drag.mode === 'move') {
+    room.x = Math.max(0, Math.min(1000 - room.w, FP.drag.orig.x + dx));
+    room.y = Math.max(0, Math.min(1000 - room.h, FP.drag.orig.y + dy));
+  } else {
+    room.w = Math.max(40, Math.min(1000 - room.x, FP.drag.orig.w + dx));
+    room.h = Math.max(40, Math.min(1000 - room.y, FP.drag.orig.h + dy));
+  }
+  fpRenderLive();
+}
+
+function fpRenderLive() {
+  /* Cheap re-render during drag: only move the affected rect/handles, skip full innerHTML rebuild
+     to keep dragging smooth; a plain fpRender() on pointerup snaps everything to the grid. */
+  fpRender();
+}
+
+function fpPointerUp() {
+  if (!FP || !FP.drag) return;
+  var room = FP.rooms.filter(function (r) { return r.id === FP.drag.id; })[0];
+  if (room) { room.x = fpSnap(room.x); room.y = fpSnap(room.y); room.w = fpSnap(room.w); room.h = fpSnap(room.h); }
+  FP.drag = null;
+  fpRender();
+}
+
+function fpDblClick(evt) {
+  if (!FP) return;
+  var hit = fpRoomEl(evt); if (!hit || hit.handle === 'delete') return;
+  var name = window.prompt('Room name', hit.room.label);
+  if (name != null && name.trim()) { hit.room.label = name.trim().slice(0, 40); fpRender(); }
+}
+
+function fpAddRoom() {
+  if (!FP) return;
+  var n = FP.rooms.length;
+  var room = { id: uid(), label: 'New Room', x: fpSnap(50 + (n % 4) * 60), y: fpSnap(50 + (n % 4) * 60), w: 200, h: 150 };
+  FP.rooms.push(room); FP.selectedId = room.id; fpRender();
+}
+
+function fpDelete(rid) {
+  if (!FP) return;
+  FP.rooms = FP.rooms.filter(function (r) { return r.id !== rid; });
+  if (FP.selectedId === rid) FP.selectedId = null;
+  fpRender();
+}
+
+/* Fetches a signed photo URL to a Blob, then runs it through the same compress/resize pipeline
+   used for camera-captured images (imgToDataURL accepts any Blob, not just a File). */
+async function fpUrlToDataURL(url) {
+  try {
+    var resp = await fetch(url); if (!resp.ok) return null;
+    var blob = await resp.blob();
+    return await imgToDataURL(blob, 1400, 0.75);
+  } catch (e) { return null; }
+}
+
+async function fpSuggestFromPhotos() {
+  if (!FP || !FP.propertyId) return;
+  var btn = document.getElementById('fp-suggest-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Reading photos…'; }
+  var urls = await propertyPhotoUrls(FP.propertyId);
+  var picks = urls.slice(0, 4);
+  if (!picks.length) { if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; } toast('No photos to read'); return; }
+  var imgs = [];
+  for (var i = 0; i < picks.length; i++) { var d = await fpUrlToDataURL(picks[i].url); if (d) imgs.push(d); }
+  if (!imgs.length) { if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; } toast('Could not read those photos — try again'); return; }
+  var x = recOf(FP.table, FP.id);
+  var facts = x ? floorPlanFactsFor(x) : {};
+  var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'floorplan', text: JSON.stringify(facts), images: imgs } }), 30000, { error: { message: 'timed out — check your connection' } });
+  if (btn) { btn.disabled = false; btn.textContent = 'Suggest layout from photos'; }
+  if (r.error || !r.data || r.data.error) { toast((r.data && r.data.error) || (r.error && r.error.message) || 'Could not generate a layout'); return; }
+  var rooms = (r.data.rooms || []).map(function (rr) { return { id: uid(), label: rr.label || 'Room', x: fpSnap(rr.x), y: fpSnap(rr.y), w: fpSnap(rr.w), h: fpSnap(rr.h) }; });
+  if (!rooms.length) { toast('The photos did not give enough to suggest a layout — try building it by hand'); return; }
+  FP.rooms = rooms; FP.source = 'ai_seed'; FP.floorNote = r.data.floor_note || ''; FP.selectedId = null;
+  fpRender();
+  toast('Suggested ' + rooms.length + ' room(s) — drag to adjust, then Save');
+}
+
+async function fpSave() {
+  if (!FP) return;
+  var x = recOf(FP.table, FP.id); if (!x) { fpClose(); return; }
+  x.extra = x.extra || {};
+  x.extra.floor_plan = {
+    rooms: FP.rooms.map(function (r) { return { id: r.id, label: r.label, x: r.x, y: r.y, w: r.w, h: r.h }; }),
+    accuracy: 'approximate', source: FP.source, floor_note: FP.floorNote, updated_at: nowStamp(),
+  };
+  var sv = await sb.from(FP.table).update({ extra: x.extra }).eq('id', FP.id).select('id');
+  if (sv.error) { toast('Could not save — try again'); return; }
+  logEvent(FP.table, FP.id, 'floor_plan.saved', (x.address || x.address_area || '') + ' — ' + FP.rooms.length + ' room(s), ' + FP.source);
+  toast('Floor plan saved ✓');
+  fpClose();
+  render();
+}
+
+function printFloorPlan(table, id) {
+  var x = recOf(table, id); if (!x || !x.extra || !x.extra.floor_plan || !x.extra.floor_plan.rooms.length) { toast('Build a floor plan first'); return; }
+  var fp = x.extra.floor_plan, addr = esc(x.address || x.address_area || 'This property');
+  /* SECURITY: same rule as printBuildable/printPermitLedger — this opens as a blob: doc that
+     inherits this app's origin, so every value below must be esc()'d; only room x/y/w/h (already
+     coerced to numbers by fpSnap before save) are used bare in the SVG geometry. */
+  var rects = fp.rooms.map(function (r) {
+    var x1 = Number(r.x) || 0, y1 = Number(r.y) || 0, w1 = Number(r.w) || 0, h1 = Number(r.h) || 0;
+    return '<rect x="' + x1 + '" y="' + y1 + '" width="' + w1 + '" height="' + h1 + '" fill="none" stroke="#2C3B2D" stroke-width="2"></rect>'
+      + '<text x="' + (x1 + 10) + '" y="' + (y1 + 26) + '" font-size="24" font-family="Baskerville,Georgia,serif" fill="#26281F">' + esc(r.label || 'Room') + '</text>';
+  }).join('');
+  var html = '<!doctype html><html><head><meta charset="utf-8"><title>Floor Plan — ' + addr + '</title>'
+    + '<style>@page{margin:1in}body{font-family:Baskerville,Georgia,serif;color:#26281F;margin:0}'
+    + '.mast{border-bottom:2px solid #2C3B2D;padding-bottom:8px;margin-bottom:18px}.mast .k{letter-spacing:.16em;text-transform:uppercase;font-size:11px;color:#8A8273}.mast h1{margin:2px 0 0;font-size:22px}'
+    + '.note{font-size:11px;color:#8A8273;margin-top:16px;line-height:1.5}.bar{position:sticky;top:0;background:#1E2C1E;color:#F3EDDE;padding:10px 14px;font-family:-apple-system,Helvetica,sans-serif;font-size:13px}.bar button{margin-left:12px}@media print{.bar{display:none}}</style></head><body>'
+    + '<div class="bar">Floor plan for ' + addr + ' — press Print (or Cmd/Ctrl+P).<button onclick="window.print()">Print</button></div>'
+    + '<div style="padding:0 4px"><div class="mast"><div class="k">Spiro · Carolwood Estates</div><h1>Floor Plan</h1></div>'
+    + '<div class="k" style="letter-spacing:.14em;text-transform:uppercase;font-size:11px;color:#8A8273">Property</div><div style="font-size:16px;margin-bottom:10px">' + addr + '</div>'
+    + '<svg viewBox="0 0 1000 1000" style="width:100%;max-width:640px;display:block;">' + rects + '</svg>'
+    + '<p class="note">Approximate layout' + (fp.accuracy === 'measured' ? '' : ', generated from photos and not a measured survey') + ' — for illustrative purposes only. Verify actual dimensions before relying on this for construction, permitting, or renovation decisions.</p>'
+    + '<p class="note">Nick Spiro · Carolwood Estates · DRE# 02148302 · 310.866.2485 · NickSpiro@me.com</p></div></body></html>';
+  try { var url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); var w = window.open(url, '_blank'); if (!w) { var a = document.createElement('a'); a.href = url; a.download = 'floor-plan.html'; document.body.appendChild(a); a.click(); a.remove(); toast('Report downloaded'); } else toast('Opened floor plan to print'); logEvent(table, id, 'floor_plan.printed', 'Printed floor plan: ' + (x.address || x.address_area || '')); }
+  catch (e) { toast('Could not open floor plan'); }
 }
 
 /* ===== Underbuilt + stalled-permit callout (2026-08-18, per Nick — "should there be a chain
