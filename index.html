@@ -736,7 +736,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.215.0';
+var APP_VERSION = 'v5.216.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1254,6 +1254,91 @@ function mtSelectVisible(ids) { ids.forEach(function (id) { MT_SEL[id] = true; }
 function mtClearSel() { MT_SEL = {}; MT_DISMISS_UI = false; renderMatchTriage(); }
 function mtShowMore() { MT_LIMIT += 80; renderMatchTriage(); }
 function mtToggleDismissUI() { MT_DISMISS_UI = !MT_DISMISS_UI; renderMatchTriage(); }
+/* AI pre-flag pass (2026-09-05) -- Match Triage shipped manual-bulk-action only; this adds the AI
+   pre-recommendation layer the original design called for. Batches EVERY suggested match (not just
+   what's visible/selected -- the backlog is the whole point) to the ask edge fn's new "match_triage"
+   mode in chunks of 60, storing a confirm/dismiss/unsure verdict + one-line reason per match in
+   MT_AI. Purely advisory: nothing touches the DB until Nick reviews the AI-filtered list and taps
+   one of the "Apply AI ..." buttons, which write through the SAME RPCs as a manual bulk action. */
+var MT_AI = {};          // matchId (string) -> {action, reason, reason_code}
+var MT_AI_BUSY = false;
+var MT_AI_FILTER = null; // null | 'confirm' | 'dismiss' | 'unsure' -- narrows the visible list to one AI verdict
+function mtAiItem(m) {
+  var buyer = recOf('buyers', m.buyer_id) || {};
+  var target = recOf(m.target_type, m.target_id) || {};
+  var status = target.status || (m.target_type === 'offmarket' ? (target.converted ? 'converted' : 'available') : '');
+  var price = target.price_num || target.price || null;
+  return {
+    id: String(m.id),
+    buyer: buyer.name || '',
+    budget_min: buyer.budget_min_num || buyer.budget_min || null,
+    budget_max: buyer.budget_max_num || buyer.budget_max || null,
+    areas: buyer.areas || [],
+    target: m.target_address || target.address || target.address_area || m.target_ref || '',
+    target_type: m.target_type,
+    price: price,
+    status: status,
+    score: m.score,
+    rationale: m.rationale || '',
+    age_days: m._age != null ? m._age : (m.created_at ? Math.floor((Date.now() - new Date(m.created_at).getTime()) / 86400000) : null),
+  };
+}
+async function mtRunAiTriage() {
+  if (MT_AI_BUSY) return;
+  var rows = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
+  if (!rows.length) { toast('Nothing to triage'); return; }
+  MT_AI_BUSY = true; renderMatchTriage();
+  var chunks = [];
+  for (var i = 0; i < rows.length; i += 60) chunks.push(rows.slice(i, i + 60));
+  var got = 0, failedChunks = 0;
+  for (var c = 0; c < chunks.length; c++) {
+    var batch = chunks[c].map(mtAiItem);
+    var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'match_triage', text: JSON.stringify(batch) } }), 45000, { error: { message: 'timed out' } });
+    if (r.error || !r.data || !Array.isArray(r.data.recommendations)) { failedChunks++; continue; }
+    r.data.recommendations.forEach(function (rec) {
+      MT_AI[rec.id] = { action: rec.action, reason: rec.reason, reason_code: rec.reason_code };
+    });
+    got += r.data.recommendations.length;
+  }
+  MT_AI_BUSY = false;
+  toast(got + ' AI recommendation' + (got === 1 ? '' : 's') + (failedChunks ? ' — ' + failedChunks + ' batch' + (failedChunks === 1 ? '' : 'es') + ' failed' : ''));
+  renderMatchTriage();
+}
+function mtAiFilter(v) { MT_AI_FILTER = (MT_AI_FILTER === v ? null : v); renderMatchTriage(); }
+/* Bulk-apply every currently-suggested match the AI flagged with this verdict. Never offered for
+   "unsure" -- that verdict exists precisely so it's NOT auto-applied. Dismiss uses each match's OWN
+   AI reason_code (not one reason for the whole batch), so this can't just delegate to mtBulkApply's
+   single-reason signature -- it mirrors that loop directly instead, same RPCs, same event log. */
+async function mtApplyAi(action) {
+  var ids = Object.keys(MT_AI).filter(function (id) {
+    if (!MT_AI[id] || MT_AI[id].action !== action) return false;
+    var m = null; DATA.matches.forEach(function (x) { if (String(x.id) === id) m = x; });
+    return m && m.status === 'suggested';
+  });
+  if (!ids.length) { toast('No AI ' + action + ' suggestions'); return; }
+  if (!confirm('AI ' + (action === 'confirm' ? 'confirms' : 'dismisses') + ' ' + ids.length + ' match' + (ids.length === 1 ? '' : 'es') + '. Apply all?')) return;
+  var okN = 0, failN = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i], m = null;
+    DATA.matches.forEach(function (x) { if (String(x.id) === id) m = x; });
+    if (!m) { failN++; continue; }
+    var r;
+    if (action === 'confirm') {
+      if (m.target_type === 'offmarket') {
+        var jj = await sb.from('offmarket_potential_buyers').insert({ offmarket_id: m.target_id, buyer_id: m.buyer_id }).select('buyer_id');
+        if (jj.error && String(jj.error.code) !== '23505') { failN++; continue; }
+      }
+      r = await sb.from('matches').update({ status: 'confirmed', updated_at: nowStamp() }).eq('id', id).select('id');
+      if (!r.error) logEvent('buyers', m.buyer_id, 'match.confirmed', 'Match confirmed (AI bulk): ' + (recLabel('buyers', String(m.buyer_id)) || '') + ' ↔ ' + (recLabel(m.target_type, m.target_id) || ''));
+    } else if (action === 'dismiss') {
+      r = await sb.rpc('fn_dismiss_match', { p_match_id: id, p_reason: MT_AI[id].reason_code || null });
+    }
+    if (r && r.error) failN++; else { okN++; delete MT_AI[id]; }
+  }
+  MT_AI_FILTER = null;
+  toast(okN + ' updated' + (failN ? ', ' + failN + ' failed' : ''));
+  await loadAll(false);
+}
 /* Bulk apply -- mirrors confirmMatch/markShown/sendDismiss exactly (same RPCs, same event log
    shape) but does ONE loadAll(false) at the end instead of one per item, so selecting 30 matches
    doesn't trigger 30 sequential full data reloads. Reason chips reuse DISMISS_CHIPS so a bulk
@@ -1288,16 +1373,22 @@ async function mtBulkApply(action, reason) {
 function renderMatchTriage() {
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
   if (!body || !bar) return;
-  var rows = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
+  var allSuggested = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
   var now = Date.now();
-  rows.forEach(function (m) { m._age = m.created_at ? Math.floor((now - new Date(m.created_at).getTime()) / 86400000) : null; });
-  rows.sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || ((b._age || 0) - (a._age || 0)); });
-  if (!rows.length) { bar.style.display = 'none'; body.innerHTML = '<div class="empty">No suggested matches waiting.</div>'; return; }
+  allSuggested.forEach(function (m) { m._age = m.created_at ? Math.floor((now - new Date(m.created_at).getTime()) / 86400000) : null; });
+  allSuggested.sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || ((b._age || 0) - (a._age || 0)); });
+  if (!allSuggested.length) { bar.style.display = 'none'; body.innerHTML = '<div class="empty">No suggested matches waiting.</div>'; return; }
+  var aiConfirmN = 0, aiDismissN = 0, aiUnsureN = 0, aiDoneN = 0;
+  allSuggested.forEach(function (m) {
+    var a = MT_AI[String(m.id)]; if (!a) return; aiDoneN++;
+    if (a.action === 'confirm') aiConfirmN++; else if (a.action === 'dismiss') aiDismissN++; else aiUnsureN++;
+  });
+  var rows = MT_AI_FILTER ? allSuggested.filter(function (m) { var a = MT_AI[String(m.id)]; return a && a.action === MT_AI_FILTER; }) : allSuggested;
   var visible = rows.slice(0, MT_LIMIT);
   var selN = Object.keys(MT_SEL).length;
   bar.style.display = '';
   bar.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-    + '<span class="hint" style="margin:0;">' + rows.length + ' suggested &middot; ' + selN + ' selected</span>'
+    + '<span class="hint" style="margin:0;">' + allSuggested.length + ' suggested' + (MT_AI_FILTER ? ' &middot; ' + rows.length + ' shown (AI: ' + MT_AI_FILTER + ')' : '') + ' &middot; ' + selN + ' selected</span>'
     + '<button class="qbtn" onclick=\'mtSelectVisible(' + JSON.stringify(visible.map(function (m) { return String(m.id); })) + ')\'>Select all shown</button>'
     + (selN ? '<button class="qbtn" onclick="mtClearSel()">Clear</button>'
       + '<button class="qbtn done" onclick="mtBulkApply(\'confirm\')">Confirm selected</button>'
@@ -1306,17 +1397,29 @@ function renderMatchTriage() {
     + '</div>'
     + (selN && MT_DISMISS_UI ? '<div style="margin-top:6px;">' + DISMISS_CHIPS.map(function (c) {
         return '<button class="qbtn" style="margin:0 4px 4px 0;" onclick="mtBulkApply(\'dismiss\',\'' + c[0] + '\')">' + esc(c[1]) + '</button>';
-      }).join('') + '<button class="qbtn" style="opacity:.7;" onclick="mtBulkApply(\'dismiss\',null)">Just dismiss</button></div>' : '');
+      }).join('') + '<button class="qbtn" style="opacity:.7;" onclick="mtBulkApply(\'dismiss\',null)">Just dismiss</button></div>' : '')
+    + '<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="qbtn"' + (MT_AI_BUSY ? ' disabled' : '') + ' onclick="mtRunAiTriage()">' + (MT_AI_BUSY ? 'AI triaging…' : (aiDoneN ? 'Re-run AI pre-flag' : 'AI pre-flag')) + '</button>'
+    + (aiDoneN ? '<span class="hint" style="margin:0;">AI: ' + aiConfirmN + ' confirm &middot; ' + aiDismissN + ' dismiss &middot; ' + aiUnsureN + ' unsure</span>'
+      + '<button class="qbtn' + (MT_AI_FILTER === 'confirm' ? ' done' : '') + '" onclick="mtAiFilter(\'confirm\')">' + (MT_AI_FILTER === 'confirm' ? 'Showing AI confirm' : 'Show AI confirm') + '</button>'
+      + '<button class="qbtn' + (MT_AI_FILTER === 'dismiss' ? ' done' : '') + '" onclick="mtAiFilter(\'dismiss\')">' + (MT_AI_FILTER === 'dismiss' ? 'Showing AI dismiss' : 'Show AI dismiss') + '</button>'
+      + (aiConfirmN ? '<button class="qbtn done" onclick="mtApplyAi(\'confirm\')">Apply AI confirm (' + aiConfirmN + ')</button>' : '')
+      + (aiDismissN ? '<button class="qbtn" onclick="mtApplyAi(\'dismiss\')">Apply AI dismiss (' + aiDismissN + ')</button>' : '')
+      : '')
+    + '</div>';
   body.innerHTML = visible.map(function (m) {
     var id = String(m.id);
     var buyerLabel = recLabel('buyers', m.buyer_id) || 'Unknown buyer';
     var targetLabel = m.target_address || recLabel(m.target_type, m.target_id) || m.target_ref || '';
     var checked = MT_SEL[id] ? ' checked' : '';
+    var ai = MT_AI[id];
+    var aiColor = ai ? (ai.action === 'confirm' ? 'var(--ok,#2a8)' : ai.action === 'dismiss' ? 'var(--red,#b3382c)' : 'var(--muted)') : '';
     return '<div class="qi" style="align-items:flex-start;">'
       + '<input type="checkbox" style="margin-top:4px;" onchange="mtToggle(\'' + escJs(id) + '\', this.checked)"' + checked + '>'
       + '<div class="txt" style="margin-left:8px;">'
       + '<div class="t1"><a href="javascript:void(0)" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + escJs(String(m.buyer_id)) + '\')" style="color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);">' + esc(buyerLabel) + '</a> &middot; ' + esc(targetLabel) + (m.score != null ? ' &middot; fit ' + m.score + '/10' : '') + (m._age != null ? ' &middot; ' + m._age + 'd' : '') + '</div>'
       + (m.rationale ? '<div class="t2">Why: ' + esc(m.rationale) + '</div>' : '')
+      + (ai ? '<div class="t2" style="color:' + aiColor + ';">AI ' + esc(ai.action) + (ai.reason ? ': ' + esc(ai.reason) : '') + '</div>' : '')
       + '</div>'
       + '<button class="qbtn" title="Already shown" onclick="event.stopPropagation();markShown(\'' + escJs(id) + '\')">&#128065;</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(\'' + escJs(id) + '\')">&#10003;</button>'
@@ -8288,6 +8391,46 @@ function renderPortalMsg(msg) {
 var PORTAL_PICK = {};              /* buyerId -> picker open */
 var PORTAL_LISTINGS_OPEN = false;  /* Listings disclosure open */
 var portalWriteBusy = false;
+/* Portal listing triage (2026-09-05): the old Listings disclosure showed every status in one flat
+   list with a binary published/draft badge, so a review-stage listing silently read as "draft" and
+   had no bulk path -- one Publish click per row, same one-at-a-time problem Match Triage just
+   solved for matches. Same fix, same pattern: status tabs (Review/Published/Draft) so the 58
+   review-stage listings aren't buried among 97, a real "in review" badge, and checkboxes + bulk
+   Publish/Reject reusing setListingStatus/portalWrite exactly (no new backend action -- the
+   existing set_listing_status already accepts any current status, only the client never surfaced
+   that for anything but published<->draft). */
+var PORTAL_LISTING_TAB = 'review'; /* 'review' | 'published' | 'draft' */
+var PORTAL_LISTING_SEL = {};       /* listing id -> true, selected for bulk action */
+var portalListingBulkBusy = false;
+function portalListingTab(tab) { PORTAL_LISTING_TAB = tab; PORTAL_LISTING_SEL = {}; renderPortal(); }
+function portalListingToggle(id, checked) { if (checked) PORTAL_LISTING_SEL[id] = true; else delete PORTAL_LISTING_SEL[id]; renderPortal(); }
+function portalListingSelectVisible(ids) { ids.forEach(function (id) { PORTAL_LISTING_SEL[id] = true; }); renderPortal(); }
+function portalListingClearSel() { PORTAL_LISTING_SEL = {}; renderPortal(); }
+/* Bulk publish/reject -- mirrors setListingStatus's exact write (same portalWrite action, same
+   local-state patch) but does ONE fetchPortal at the end instead of one per item. */
+async function portalBulkSetStatus(status) {
+  if (portalListingBulkBusy) return;
+  var ids = Object.keys(PORTAL_LISTING_SEL).filter(function (id) { return PORTAL_LISTING_SEL[id]; });
+  if (!ids.length) { toast('Nothing selected'); return; }
+  if (status === 'published' && !confirm('Publish ' + ids.length + ' listing' + (ids.length === 1 ? '' : 's') + '? Each becomes visible to any buyer you share it with.')) return;
+  portalListingBulkBusy = true; toast('Updating ' + ids.length + '…');
+  var okN = 0, failN = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var res = await portalWrite({ action: 'set_listing_status', listing_id: ids[i], status: status });
+    if (res.ok) { var l = portalListing(ids[i]); if (l) l.status = status; okN++; } else failN++;
+  }
+  portalListingBulkBusy = false;
+  PORTAL_LISTING_SEL = {};
+  toast(okN + ' updated' + (failN ? ', ' + failN + ' failed' : ''));
+  if (okN) logEvent('system', null, 'portal.listing.bulk_' + status, okN + ' listing(s) set to ' + status + ' (bulk)');
+  renderPortal();
+  portalAt = 0; fetchPortal(false);
+}
+function portalListingBadge(l) {
+  if (l.status === 'published') return '<span class="pill ok">live</span>';
+  if (l.status === 'review') return '<span class="pill warn">in review</span>';
+  return '<span class="pill">draft</span>';
+}
 /* ---- One-buyer-identity reconciliation (convergence skeleton) ----
    A buyer should be ONE identity across the CRM tracker and the portal. This resolves each
    portal account to its tracker buyer by the stable key (crm_buyer_id first, email as fallback)
@@ -8388,22 +8531,42 @@ function portalPickPanel(b, listings) {
     '<div class="flabel" style="margin-top:10px;">Add a published listing &mdash; silent, no email</div>' + add + '</div>';
 }
 
-/* Listing management: publish / unpublish (silent — announcing is a separate explicit step). */
+/* Listing management: publish / unpublish (silent — announcing is a separate explicit step).
+   Tabbed by status (2026-09-05) so the review-stage backlog has its own lane instead of hiding
+   inside a flat list badged "draft"; bulk actions alongside the existing one-at-a-time button. */
 function portalListingsSection(listings) {
-  var live = listings.filter(function (l) { return l.status === 'published'; }).length;
-  var head = '<div class="qi" style="cursor:pointer;" onclick="portalToggleListings()"><div class="txt"><div class="t1">Listings <span class="hint" style="font-weight:400;">' + live + ' live · ' + listings.length + ' total</span></div></div><span style="opacity:.55;">' + (PORTAL_LISTINGS_OPEN ? '&#9662;' : '&#9656;') + '</span></div>';
+  var counts = { review: 0, published: 0, draft: 0 };
+  listings.forEach(function (l) { if (counts[l.status] != null) counts[l.status]++; });
+  var head = '<div class="qi" style="cursor:pointer;" onclick="portalToggleListings()"><div class="txt"><div class="t1">Listings <span class="hint" style="font-weight:400;">' + counts.published + ' live · ' + counts.review + ' in review · ' + listings.length + ' total</span></div></div><span style="opacity:.55;">' + (PORTAL_LISTINGS_OPEN ? '&#9662;' : '&#9656;') + '</span></div>';
   var wrap = '<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px;">';
   if (!PORTAL_LISTINGS_OPEN) return wrap + head + '</div>';
-  var body = listings.map(function (l) {
-    var isPub = l.status === 'published';
-    var aud = (l.audience || []).length;
-    var meta = (isPub ? 'live' : 'draft') + ' · ' + aud + ' buyer' + (aud === 1 ? '' : 's');
-    var btn = isPub
-      ? '<button class="qbtn" onclick="setListingStatus(' + "'" + esc(l.id) + "','draft'" + ')">Unpublish</button>'
-      : '<button class="qbtn done" onclick="setListingStatus(' + "'" + esc(l.id) + "','published'" + ')">Publish</button>';
-    return '<div class="qi"><div class="txt"><div class="t2">' + esc(l.title || l.area || 'Listing') + ' <span class="pill ' + (isPub ? 'ok' : 'warn') + '">' + meta + '</span></div></div>' + btn + '</div>';
+  var tabs = ['review', 'published', 'draft'].map(function (t) {
+    var active = PORTAL_LISTING_TAB === t;
+    var label = t.charAt(0).toUpperCase() + t.slice(1);
+    return '<button class="qbtn' + (active ? ' done' : '') + '" style="margin:0 4px 4px 0;" onclick="event.stopPropagation();portalListingTab(\'' + t + '\')">' + label + ' (' + counts[t] + ')</button>';
   }).join('');
-  return wrap + head + '<div class="portal-pick">' + body + '</div></div>';
+  var rows = listings.filter(function (l) { return l.status === PORTAL_LISTING_TAB; });
+  var selN = Object.keys(PORTAL_LISTING_SEL).length;
+  var bulkBar = rows.length ? ('<div style="margin:6px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="qbtn" style="margin:0;" onclick="event.stopPropagation();portalListingSelectVisible(' + esc(JSON.stringify(rows.map(function (l) { return String(l.id); }))) + ')">Select all shown (' + rows.length + ')</button>'
+    + (selN ? '<span class="hint" style="margin:0;">' + selN + ' selected</span>'
+      + '<button class="qbtn" style="margin:0;" onclick="event.stopPropagation();portalListingClearSel()">Clear</button>'
+      + (PORTAL_LISTING_TAB !== 'published' ? '<button class="qbtn done" style="margin:0;" onclick="event.stopPropagation();portalBulkSetStatus(\'published\')">Publish selected</button>' : '')
+      + (PORTAL_LISTING_TAB !== 'draft' ? '<button class="qbtn" style="margin:0;" onclick="event.stopPropagation();portalBulkSetStatus(\'draft\')">Reject to draft</button>' : '')
+      : '')
+    + '</div>') : '';
+  var body = rows.map(function (l) {
+    var id = String(l.id);
+    var aud = (l.audience || []).length;
+    var meta = portalListingBadge(l) + ' · ' + aud + ' buyer' + (aud === 1 ? '' : 's');
+    var checked = PORTAL_LISTING_SEL[id] ? ' checked' : '';
+    var btn = l.status === 'published'
+      ? '<button class="qbtn" onclick="event.stopPropagation();setListingStatus(' + "'" + esc(l.id) + "','draft'" + ')">Unpublish</button>'
+      : '<button class="qbtn done" onclick="event.stopPropagation();setListingStatus(' + "'" + esc(l.id) + "','published'" + ')">Publish</button>';
+    return '<div class="qi" style="align-items:flex-start;"><input type="checkbox" style="margin-top:4px;" onchange="portalListingToggle(\'' + escJs(id) + '\', this.checked)"' + checked + '>'
+      + '<div class="txt" style="margin-left:8px;"><div class="t2">' + esc(l.title || l.area || 'Listing') + ' ' + meta + '</div></div>' + btn + '</div>';
+  }).join('') || '<div class="empty">Nothing in ' + esc(PORTAL_LISTING_TAB) + '.</div>';
+  return wrap + head + '<div class="portal-pick">' + tabs + bulkBar + body + '</div></div>';
 }
 
 function portalTogglePick(id) { PORTAL_PICK[id] = !PORTAL_PICK[id]; renderPortal(); }
