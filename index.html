@@ -736,7 +736,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.216.0';
+var APP_VERSION = 'v5.217.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -10442,10 +10442,20 @@ function scoreMatch(buyer, prop) {
   if (mustHit) { score += 1; bits.push('has ' + mustHit); }
   if (score > 10) score = 10;
   if (score < 1) score = 1;
-  return { score: score, rationale: bits.join(' · ') || 'general fit' };
+  return { score: score, rationale: bits.join(' · ') || 'general fit', areaPts: ap.pts, mustHit: mustHit };
 }
+/* Outliers (2026-09-05, per Nick — "none of those are area matches"): the concentrated,
+   area-specific search (areaPts>0) is the primary pool and always wins the top slots. A
+   candidate with ZERO area relevance is still allowed through, but only if it fully satisfies
+   another one of the buyer's own explicit criteria (a stated must-have hit) — "within budget"
+   alone was too weak a bar with no geographic relevance at all, which is exactly how Sherman
+   Oaks and a 90019 listing got suggested to a Brentwood/Santa Monica buyer. No must-haves on
+   file means no outlier can qualify; that's intentional, not a bug — there's nothing else for
+   it to have fully satisfied. */
+function qualifiesAsOutlier(s) { return !!s.mustHit; }
 function buildProposals(table, sid, exclude, excludeAddr) {
-  /* Pure: ranks candidates, skips excluded pairs, returns ≤3 insert-ready rows.
+  /* Pure: ranks candidates, skips excluded pairs, returns insert-ready rows — up to 3 real
+     area matches plus up to 2 qualifying outliers (see qualifiesAsOutlier above).
      Payload shape is exactly {buyer_id,target_type,target_id,score,rationale,status} — defaults cover the rest.
      excludeAddr (buyers side only): addresses already matched/dismissed for this buyer under ANY row
      id — see the comment in proposeMatches for why id-only exclusion isn't sufficient on its own. */
@@ -10464,8 +10474,8 @@ function buildProposals(table, sid, exclude, excludeAddr) {
         var s = scoreMatch(buyer, p);
         /* _hasAddr is sort-only, stripped before insert below — an address-less property isn't
            actionable (nothing to show the buyer, nothing to drive to), so it shouldn't beat out an
-           addressed one for one of the 3 proposal slots just because its score happens to be higher. */
-        out.push({ buyer_id: sid, target_type: g[0], target_id: String(p.id), score: s.score, rationale: s.rationale, status: 'suggested', _hasAddr: !!addr });
+           addressed one for one of the proposal slots just because its score happens to be higher. */
+        out.push({ buyer_id: sid, target_type: g[0], target_id: String(p.id), score: s.score, rationale: s.rationale, status: 'suggested', _hasAddr: !!addr, _areaPts: s.areaPts, _outlierOk: qualifiesAsOutlier(s) });
       });
     });
   } else if (table === 'offmarket') {
@@ -10474,16 +10484,22 @@ function buildProposals(table, sid, exclude, excludeAddr) {
     (DATA.buyers || []).forEach(function (b) {
       if (exclude['buyers:' + String(b.id)]) return;
       var s = scoreMatch(b, prop);
-      out.push({ buyer_id: String(b.id), target_type: 'offmarket', target_id: sid, score: s.score, rationale: s.rationale, status: 'suggested' });
+      out.push({ buyer_id: String(b.id), target_type: 'offmarket', target_id: sid, score: s.score, rationale: s.rationale, status: 'suggested', _areaPts: s.areaPts, _outlierOk: qualifiesAsOutlier(s) });
     });
   }
   out = out.filter(function (x) { return x.score >= 5; }); /* only propose neutral-or-better fits */
-  out.sort(function (a, b) {
-    var ha = a._hasAddr !== false, hb = b._hasAddr !== false;
-    if (ha !== hb) return ha ? -1 : 1; /* addressed candidates first, regardless of score */
-    return b.score - a.score;
-  });
-  return out.slice(0, 3).map(function (x) { return { buyer_id: x.buyer_id, target_type: x.target_type, target_id: x.target_id, score: x.score, rationale: x.rationale, status: x.status }; });
+  var rank = function (list) {
+    return list.sort(function (a, b) {
+      var ha = a._hasAddr !== false, hb = b._hasAddr !== false;
+      if (ha !== hb) return ha ? -1 : 1; /* addressed candidates first, regardless of score */
+      return b.score - a.score;
+    });
+  };
+  var inArea = rank(out.filter(function (x) { return x._areaPts > 0; }));
+  var outliers = rank(out.filter(function (x) { return x._areaPts === 0 && x._outlierOk; }))
+    .map(function (x) { return Object.assign({}, x, { rationale: x.rationale + ' · outside stated area' }); });
+  return inArea.slice(0, 3).concat(outliers.slice(0, 2))
+    .map(function (x) { return { buyer_id: x.buyer_id, target_type: x.target_type, target_id: x.target_id, score: x.score, rationale: x.rationale, status: x.status }; });
 }
 var proposeBusy = false;
 async function proposeMatches(table, id) {
