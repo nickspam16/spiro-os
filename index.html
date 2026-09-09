@@ -839,7 +839,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.236.0';
+var APP_VERSION = 'v5.237.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8639,6 +8639,17 @@ function phPollStop() { if (PH_POLL) { clearTimeout(PH_POLL); PH_POLL = null; } 
    background where the platform can kill it. phDrive keeps calling render_next until the job has all
    its variants, updating the panel after each. Multiple queued jobs (Stage all) run one after another. */
 var PH_QUEUE = [];
+var PH_FRAME_MIN = 0.72;
+function phLoadImg(url) { return new Promise(function (res) { if (!url) return res(null); var im = new Image(); im.crossOrigin = 'anonymous'; im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = url; }); }
+function phGray(im, W, H) { var c = document.createElement('canvas'); c.width = W; c.height = H; var x = c.getContext('2d'); x.drawImage(im, 0, 0, W, H); var d = x.getImageData(0, 0, W, H).data, g = new Float32Array(W * H); for (var i = 0; i < W * H; i++) g[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; return g; }
+function phEdges(g, W, H) { var e = new Float32Array(W * H); for (var y = 1; y < H - 1; y++) for (var x = 1; x < W - 1; x++) { var i = y * W + x; e[i] = Math.abs(g[i + 1] - g[i - 1]) + Math.abs(g[i + W] - g[i - W]); } return e; }
+function phNcc(a, b, W, H, mask) { var n = 0, sa = 0, sb = 0, y, x, i; for (y = 0; y < H; y++) for (x = 0; x < W; x++) if (mask(x, y)) { i = y * W + x; sa += a[i]; sb += b[i]; n++; } if (!n) return 0; var ma = sa / n, mb = sb / n, num = 0, da = 0, db = 0; for (y = 0; y < H; y++) for (x = 0; x < W; x++) if (mask(x, y)) { i = y * W + x; var p = a[i] - ma, q = b[i] - mb; num += p * q; da += p * p; db += q * q; } return (da && db) ? num / Math.sqrt(da * db) : 0; }
+function phFlip(g, W, H) { var o = new Float32Array(W * H); for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) o[y * W + x] = g[y * W + (W - 1 - x)]; return o; }
+function phScore(ga, gb, W, H) { var ea = phEdges(ga, W, H), eb = phEdges(gb, W, H); var top = phNcc(ea, eb, W, H, function (x, y) { return y < H * 0.28; }); var sides = phNcc(ea, eb, W, H, function (x, y) { return x < W * 0.07 || x >= W * 0.93; }); var topG = phNcc(ga, gb, W, H, function (x, y) { return y < H * 0.28; }); return { score: 0.5 * top + 0.2 * sides + 0.3 * topG, top: top, sides: sides }; }
+async function phFrameScore(srcUrl, outUrl) {
+  try { var ims = await Promise.all([phLoadImg(srcUrl), phLoadImg(outUrl)]); if (!ims[0] || !ims[1]) return null; var W = 96, H = 64; var ga = phGray(ims[0], W, H), gb = phGray(ims[1], W, H); var d = phScore(ga, gb, W, H), f = phScore(phFlip(ga, W, H), gb, W, H); var mirrored = f.score > d.score + 0.08; return { score: Number((mirrored ? Math.min(d.score, 0.3) : d.score).toFixed(3)), mirrored: mirrored, mirror: Number(f.score.toFixed(3)) }; } catch (e) { return null; }
+}
+
 async function phPoll(jobId, tries) { phPollStop(); await phDrive(jobId); }
 async function phDrive(jobId) {
   phPollStop(); var jr = await photoCall({ action: 'job', job_id: jobId }); if (!jr.ok) { toast('Could not load job'); return; }
@@ -8650,6 +8661,19 @@ async function phDrive(jobId) {
     var r = await photoCall({ action: 'render_next', job_id: jobId }, 170000);
     if (!r.ok) { toast(r.error || 'Render call failed — tap the job to resume'); break; }
     PH_JOB = { job: r.job, urls: r.urls || {} }; renderPhotos();
+    /* Frame check (client, v5.237): the model sometimes re-angles or mirrors the room. Compare the new
+       variant's ceiling band + frame edges to the original; if it moved, tell the engine to reject and
+       re-render. Runs here because the browser already has both images and can downscale for free. */
+    var vs2 = r.job.variants || [];
+    if (vs2.length > have && vs2[vs2.length - 1] && vs2[vs2.length - 1].unchecked) {
+      var vi = vs2.length - 1; var fs = await phFrameScore(PH_JOB.urls[r.job.source_path] || PHOTO_URLS[r.job.source_path], PH_JOB.urls[vs2[vi].path]);
+      if (fs && (fs.score < PH_FRAME_MIN || fs.mirrored)) {
+        phStatus('v' + (vi + 1) + ' ' + (fs.mirrored ? 'came back mirrored' : 'moved the camera') + ' — rejected, re-rendering…');
+        var rr = await photoCall({ action: 'reject_variant', job_id: jobId, index: vi, score: fs.score, mirrored: fs.mirrored }, 60000);
+        if (rr.ok && rr.job) { PH_JOB = { job: rr.job, urls: rr.urls || {} }; renderPhotos(); }
+        continue;
+      }
+    }
     if (r.job.error && (r.job.variants || []).length === have) {
       if (/timeout|hung|did not answer|not enough time/i.test(r.job.error) && !PH_JOB._retried) { PH_JOB._retried = true; phStatus('Model timed out — retrying once (not charged)…'); continue; }
       toast(r.job.error); phStatus(''); break;
