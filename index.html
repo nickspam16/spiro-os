@@ -786,7 +786,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.226.0';
+var APP_VERSION = 'v5.227.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -11571,10 +11571,13 @@ function renderListingPage() {
   /* generate every block once, then deal into tabs */
   var tmp = document.createElement('div');
   tmp.innerHTML = topActionsHtml('listings', id) + recordExtras('listings', id);
-  var groups = { overview: [], buyers: [], property: [], marketing: [], documents: [] }, cur = 'overview', actions = [];
+  var groups = { overview: [], buyers: [], property: [], marketing: [], documents: [] }, cur = 'overview', actions = [], seenLabel = false;
   Array.prototype.slice.call(tmp.childNodes).forEach(function (n) {
-    if (n.nodeType === 1 && n.classList && n.classList.contains('flabel')) cur = listingTabFor(n.textContent);
-    else if (n.nodeType === 1 && !groups.overview.length && !groups.buyers.length && !groups.property.length && cur === 'overview' && /qbtn/.test(n.className || '') && actions.length < 6) { actions.push(n); return; }
+    if (n.nodeType === 1 && n.classList && n.classList.contains('flabel')) { cur = listingTabFor(n.textContent); seenLabel = true; groups[cur].push(n); return; }
+    /* the top action row (Edit / Add photos…) comes before the first section label: lift it into the header */
+    if (cur === 'overview' && !seenLabel && n.nodeType === 1 && n.querySelector && n.querySelector('button')) { Array.prototype.slice.call(n.querySelectorAll('button,label,input')).forEach(function (b) { actions.push(b); }); return; }
+    /* a hint that introduces the tag sections belongs with them */
+    if (n.nodeType === 1 && /Tag it once/i.test(n.textContent || '')) { groups.property.push(n); return; }
     groups[cur].push(n);
   });
   var counts = {}; Object.keys(groups).forEach(function (k) { counts[k] = groups[k].filter(function (n) { return n.nodeType === 1 && n.classList && n.classList.contains('flabel'); }).length; });
