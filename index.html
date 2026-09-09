@@ -269,6 +269,20 @@
    existed — iOS auto-zooming when a small-font input takes focus — is solved at the cause:
    inputs meet the 16px threshold on phones, so focus no longer zooms and pinch still works. */
 @media (max-width: 740px) { input, select, textarea { font-size: 16px; } }
+/* Photos tab (2026-09-09) */
+.phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:6px}
+.phcompare{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px}
+.phcell{position:relative;border-radius:var(--radius);overflow:hidden;background:var(--line);aspect-ratio:4/3}
+.phcell img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer}
+.phph{width:100%;height:100%;background:var(--line)}
+.phbadge{position:absolute;top:6px;left:6px;font-size:10.5px;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff}
+.phbadge.hero{left:auto;right:6px;background:var(--accent,#2f4a3e)}
+.phacts{position:absolute;bottom:0;left:0;right:0;display:flex;gap:4px;padding:5px;background:linear-gradient(transparent,rgba(0,0,0,.55));opacity:0;transition:opacity .15s}
+.phcell:hover .phacts,.phacts.open{opacity:1}
+@media (hover:none){.phacts{opacity:1}}
+.phacts button{flex:1;font-size:11.5px;padding:4px 0;border:0;border-radius:6px;background:rgba(255,255,255,.9);color:#1f2a24;cursor:pointer}
+.phacts button.stage{background:var(--accent,#2f4a3e);color:#fff;font-weight:600}
+.phjob{margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:var(--radius)}
 </style>
 </head>
 <body>
@@ -366,6 +380,7 @@
             <a href="javascript:void(0)" onclick="menuShowCalendarSuggestions()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Calendar suggestions <span id="more-menu-calsug-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
+            <a href="javascript:void(0)" onclick="menuShowPhotos()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Photos <span id="more-menu-photos-n" class="pill" style="display:none;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
             <a href="javascript:void(0)" onclick="menuShowBrief()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Morning Brief</a>
             <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
@@ -466,6 +481,15 @@
       <h2>Buyer Portal <span style="display:flex;gap:6px;"><a href="https://nickspiro.com" target="_blank" rel="noopener" class="hbtn" style="text-decoration:none;" title="Open the live portal in a new tab">Open ↗</a><button class="hbtn" onclick="fetchPortal(true)" title="Refresh">&#8635;</button></span></h2>
       <div class="hint" style="margin:-10px 0 12px;">In-app overview — buyer activity &amp; identity links, read-only. Not the live site itself; use "Open ↗" for that.</div>
       <div id="portal-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
+    <!-- Photos (2026-09-09): one place for listing photos -- what's missing, what arrived by email/Drive
+         and needs attaching, per-listing gallery (hero/order/remove) and virtual staging. Backend is
+         photo-stage (JWT-gated sibling of portal-bridge); the browser never holds portal keys. Nick's
+         brief: "robust engine underneath, simplistic interface". -->
+    <div class="card" id="photos-card" style="display:none;">
+      <h2>Photos <span style="display:flex;gap:6px;"><button class="hbtn" onclick="fetchPhotos(true)" title="Refresh">&#8635;</button></span></h2>
+      <div id="photos-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <div class="card" id="share-links-card" style="display:none;">
@@ -736,7 +760,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.217.0';
+var APP_VERSION = 'v5.218.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8354,6 +8378,98 @@ async function stageToPortal(table, id) {
   } catch (e) { toast('Could not stage — try again'); }
   finally { stageBusy = false; }
 }
+
+/* ---------- Photos tab (2026-09-09) ---------- */
+var PHOTO_STAGE_FN = 'https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/photo-stage';
+var PHOTOS = null, photosAt = 0, photosBusy = false, PHOTOS_SEL = null, PHOTO_URLS = {}, PH_STYLE = 'warm-modern', PH_ROOM = '', PH_INSTR = '', PH_JOB = null, phStaging = false;
+var PH_STYLE_LABELS = { 'warm-modern': 'Warm modern', 'transitional': 'Transitional', 'coastal': 'Coastal', 'hills-contemporary': 'Hills contemporary', 'minimal': 'Minimal', 'classic-estate': 'Classic estate' };
+function menuShowPhotos() { openPanel('photos-card'); if (PHOTOS) renderPhotos(); else fetchPhotos(false); }
+async function photoCall(payload) {
+  var s = await sb.auth.getSession(); var tok = s.data && s.data.session && s.data.session.access_token;
+  if (!tok) return { ok: false, error: 'Not signed in yet' };
+  try { var r = await withTimeout(fetch(PHOTO_STAGE_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify(payload) }), 150000, null);
+    if (!r) return { ok: false, error: 'Timed out' }; var jr = await r.json(); jr.ok = !!(r.ok && jr.ok); return jr; } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+async function fetchPhotos(force) {
+  if (photosBusy) return; if (!force && photosAt && Date.now() - photosAt < 5 * 60 * 1000) { renderPhotos(); return; }
+  photosBusy = true;
+  try { var jr = await photoCall({ action: 'photos_overview' });
+    if (!jr.ok) { var el = document.getElementById('photos-body'); if (el && !PHOTOS) el.innerHTML = '<div class="empty">' + esc(jr.error || 'Couldn’t reach the photo engine') + '</div>'; return; }
+    PHOTOS = jr; photosAt = Date.now();
+    var pill = document.getElementById('more-menu-photos-n'); if (pill) { pill.textContent = jr.needs_photos + (jr.inbox.length ? '+' + jr.inbox.length : ''); pill.style.display = (jr.needs_photos || jr.inbox.length) ? '' : 'none'; }
+    renderPhotos(); await photoSign();
+  } finally { photosBusy = false; }
+}
+async function photoSign() {
+  var need = []; var L = (PHOTOS && PHOTOS.listings) || [];
+  var sel = PHOTOS_SEL ? L.filter(function (l) { return l.id === PHOTOS_SEL; })[0] : null;
+  if (sel) sel.photos.forEach(function (p) { if (!PHOTO_URLS[p.path]) need.push(p.path); });
+  (PHOTOS.inbox || []).forEach(function (r) { (r.paths || []).slice(0, 3).forEach(function (p) { if (!PHOTO_URLS[p]) need.push(p); }); });
+  if (!need.length) return; var jr = await photoCall({ action: 'signed_urls', paths: need.slice(0, 200) });
+  if (jr.ok) { Object.keys(jr.urls || {}).forEach(function (k) { PHOTO_URLS[k] = jr.urls[k]; }); renderPhotos(); }
+}
+function phListing(id) { var L = (PHOTOS && PHOTOS.listings) || []; for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; }
+function phLabel(l) { return l.address || l.title || l.area || 'Untitled'; }
+function phSelect(id) { PHOTOS_SEL = id; PH_JOB = null; renderPhotos(); photoSign(); }
+function phImg(path, extra) { var u = PHOTO_URLS[path]; return u ? '<img loading="lazy" src="' + esc(u) + '" ' + (extra || '') + '>' : '<div class="phph" ' + (extra || '') + '></div>'; }
+function renderPhotos() { try {
+  var el = document.getElementById('photos-body'); if (!el || !PHOTOS) return;
+  var L = PHOTOS.listings || [], inbox = PHOTOS.inbox || [], h = '';
+  h += '<div class="hint" style="margin:-8px 0 12px;">Engine: ' + esc(PHOTOS.engine.model) + ' · ' + esc(PHOTOS.engine.size) + ' · ~$' + Number(PHOTOS.engine.per_variant_usd).toFixed(2) + '/variant · spent $' + Number(PHOTOS.spend_usd).toFixed(2) + ' total. Forward listing emails with photos to followupspiro@gmail.com, or drop them in the Spiro Photos Drive folder — they attach themselves.</div>';
+  if (!PHOTOS_SEL) {
+    var needs = L.filter(function (l) { return l.n === 0 && (l.status === 'published' || l.status === 'review'); });
+    if (needs.length) { h += '<div class="flabel">Needs photos <span style="font-weight:400;text-transform:none;">· ' + needs.length + ' listing' + (needs.length === 1 ? '' : 's') + ' a buyer could open with no images</span></div>';
+      needs.slice(0, 40).forEach(function (l) { h += '<div class="qi" onclick="phSelect(\'' + l.id + '\')"><div style="flex:1;min-width:0;"><div class="txt">' + esc(phLabel(l)) + '</div><div class="hint" style="margin:2px 0 0;">' + esc(l.status) + '</div></div><span class="pill">0</span></div>'; }); }
+    if (inbox.length) { h += '<div class="flabel" style="margin-top:14px;">Waiting to be attached <span style="font-weight:400;text-transform:none;">· arrived by ' + esc(inbox.map(function (r) { return r.source; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join('/')) + ' but no listing matched</span></div>';
+      inbox.forEach(function (r) { var opts = '<option value="">Attach to…</option>' + L.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('');
+        h += '<div class="qi" style="flex-wrap:wrap;gap:8px;"><div style="flex:1;min-width:200px;"><div class="txt">' + esc(r.address_hint || '(no address found)') + '</div><div class="hint" style="margin:2px 0 0;">' + (r.paths || []).length + ' photo' + ((r.paths || []).length === 1 ? '' : 's') + ' · ' + esc(r.sender || r.source) + '</div><div class="pthumbs" style="margin-top:6px;">' + (r.paths || []).slice(0, 3).map(function (p) { return phImg(p); }).join('') + '</div></div><div style="display:flex;gap:6px;align-items:center;"><select onchange="phAttach(\'' + r.id + '\', this.value)">' + opts + '</select><button class="qbtn" onclick="phDiscard(\'' + r.id + '\')">Discard</button></div></div>'; }); }
+    h += '<div class="flabel" style="margin-top:14px;">All listings</div><select style="width:100%;" onchange="if(this.value)phSelect(this.value)"><option value="">Open a listing…</option>' + L.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + ' · ' + l.n + ' photo' + (l.n === 1 ? '' : 's') + ' · ' + esc(l.status) + '</option>'; }).join('') + '</select>';
+    el.innerHTML = h; return;
+  }
+  var l = phListing(PHOTOS_SEL); if (!l) { PHOTOS_SEL = null; renderPhotos(); return; }
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><button class="hbtn" onclick="PHOTOS_SEL=null;PH_JOB=null;renderPhotos()">&larr; All</button><div style="flex:1;min-width:0;"><div class="txt">' + esc(phLabel(l)) + '</div><div class="hint" style="margin:2px 0 0;">' + esc(l.status) + ' · ' + l.n + ' photo' + (l.n === 1 ? '' : 's') + '</div></div></div>';
+  if (!l.photos.length) h += '<div class="empty" style="margin-top:10px;">No photos yet. Forward the listing email to followupspiro@gmail.com or drop photos in the Drive folder under a subfolder named “' + esc(phLabel(l)) + '”.</div>';
+  else { h += '<div class="hint" style="margin:8px 0 4px;">First photo is the hero. ★ makes a photo the hero, ✕ removes it from the listing (file is kept), Stage furnishes it.</div><div class="phgrid">';
+    l.photos.forEach(function (p, i) { h += '<div class="phcell">' + phImg(p.path, 'onclick="phBig(\'' + esc(p.path) + '\')"') + (p.kind === 'staged' ? '<span class="phbadge">Staged</span>' : '') + (i === 0 ? '<span class="phbadge hero">Hero</span>' : '') + '<div class="phacts">' + (i > 0 ? '<button onclick="phHero(\'' + l.id + '\',\'' + esc(p.path) + '\')" title="Make hero">★</button>' : '') + (i > 0 ? '<button onclick="phMove(\'' + l.id + '\',' + i + ',-1)" title="Move up">↑</button>' : '') + (i < l.photos.length - 1 ? '<button onclick="phMove(\'' + l.id + '\',' + i + ',1)" title="Move down">↓</button>' : '') + '<button onclick="phRemove(\'' + l.id + '\',\'' + esc(p.path) + '\')" title="Remove">✕</button>' + (p.kind !== 'staged' ? '<button class="stage" onclick="phStageOpen(\'' + esc(p.path) + '\')">Stage</button>' : '') + '</div></div>'; });
+    h += '</div>'; }
+  if (PH_JOB) h += phJobHtml(PH_JOB);
+  var jobs = (PHOTOS.jobs || []).filter(function (x) { return x.listing_id === l.id && x.status !== 'discarded' && (!PH_JOB || x.id !== PH_JOB.job.id); });
+  if (jobs.length) { h += '<div class="flabel" style="margin-top:14px;">Staging history</div>'; jobs.slice(0, 8).forEach(function (x) { h += '<div class="qi" onclick="phOpenJob(\'' + x.id + '\')"><div style="flex:1;"><div class="txt">' + esc(PH_STYLE_LABELS[x.style] || x.style) + (x.instruction ? ' · ' + esc(x.instruction) : '') + '</div><div class="hint" style="margin:2px 0 0;">' + esc(x.status) + ' · ' + (x.variants || []).length + ' variant' + ((x.variants || []).length === 1 ? '' : 's') + ' · $' + Number(x.est_cost_usd || 0).toFixed(2) + (x.error ? ' · ' + esc(x.error) : '') + '</div></div></div>'; }); }
+  el.innerHTML = h;
+} catch (e) { console.error('renderPhotos', e); reportError('render:photos', e, 'photos'); } }
+function phBig(path) { var u = PHOTO_URLS[path]; if (u) window.open(u, '_blank', 'noopener'); }
+async function phAttach(inboxId, listingId) { if (!listingId) return; var jr = await photoCall({ action: 'attach_inbox', inbox_id: inboxId, listing_id: listingId }); toast(jr.ok ? 'Attached ' + jr.moved + ' photo' + (jr.moved === 1 ? '' : 's') : 'Could not attach'); photosAt = 0; fetchPhotos(true); }
+async function phDiscard(inboxId) { if (!confirm('Discard these photos? (files are kept, they just leave this list)')) return; var jr = await photoCall({ action: 'discard_inbox', inbox_id: inboxId }); toast(jr.ok ? 'Discarded' : 'Failed'); photosAt = 0; fetchPhotos(true); }
+async function phSetOrder(listingId, paths) { var jr = await photoCall({ action: 'set_photos', listing_id: listingId, paths: paths }); if (!jr.ok) { toast('Could not reorder'); return; } var l = phListing(listingId); if (l) { var by = {}; l.photos.forEach(function (p) { by[p.path] = p; }); l.photos = paths.map(function (p) { return by[p]; }); } renderPhotos(); }
+function phHero(listingId, path) { var l = phListing(listingId); if (!l) return; var paths = l.photos.map(function (p) { return p.path; }).filter(function (p) { return p !== path; }); paths.unshift(path); phSetOrder(listingId, paths); }
+function phMove(listingId, i, d) { var l = phListing(listingId); if (!l) return; var paths = l.photos.map(function (p) { return p.path; }); var k = i + d; if (k < 0 || k >= paths.length) return; var t = paths[i]; paths[i] = paths[k]; paths[k] = t; phSetOrder(listingId, paths); }
+async function phRemove(listingId, path) { if (!confirm('Remove this photo from the listing? (file is kept; you can re-attach later)')) return; var jr = await photoCall({ action: 'remove_photo', listing_id: listingId, path: path }); if (!jr.ok) { toast('Could not remove'); return; } var l = phListing(listingId); if (l) { l.photos = l.photos.filter(function (p) { return p.path !== path; }); l.n = l.photos.length; } renderPhotos(); }
+function phStageOpen(path) { PH_JOB = { compose: true, path: path }; renderPhotos(); }
+function phJobHtml(J) {
+  if (J.compose) { var chips = Object.keys(PH_STYLE_LABELS).map(function (k) { return '<button class="qbtn' + (PH_STYLE === k ? ' done' : '') + '" onclick="PH_STYLE=\'' + k + '\';renderPhotos()">' + esc(PH_STYLE_LABELS[k]) + '</button>'; }).join('');
+    var cost = (Number(PHOTOS.engine.per_variant_usd) * 3).toFixed(2);
+    return '<div class="phjob"><div class="flabel">Stage this photo</div><div class="pthumbs">' + phImg(J.path) + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;">' + chips + '</div><input placeholder="Room (optional, e.g. primary bedroom)" value="' + esc(PH_ROOM) + '" oninput="PH_ROOM=this.value" style="width:100%;margin-bottom:6px;"><input placeholder="Anything specific? (optional, e.g. no rug, add a piano)" value="' + esc(PH_INSTR) + '" oninput="PH_INSTR=this.value" style="width:100%;margin-bottom:8px;"><button class="qbtn done" ' + (phStaging ? 'disabled' : '') + ' onclick="phStageRun()">' + (phStaging ? 'Staging… ~30–60s' : 'Stage · 3 variants · ~$' + cost) + '</button> <button class="qbtn" onclick="PH_JOB=null;renderPhotos()">Cancel</button>' + (PHOTOS.engine.model.indexOf('mock') === 0 ? '<div class="hint" style="margin-top:6px;">Mock mode: no GEMINI_API_KEY yet — variants will be copies of the original so the flow can be tested.</div>' : '') + '</div>'; }
+  var job = J.job, urls = J.urls || {}; var vs = job.variants || [];
+  var h = '<div class="phjob"><div class="flabel">' + esc(PH_STYLE_LABELS[job.style] || job.style) + (job.instruction ? ' · ' + esc(job.instruction) : '') + ' <span style="font-weight:400;text-transform:none;">· ' + esc(job.status) + ' · $' + Number(job.est_cost_usd || 0).toFixed(2) + '</span></div>';
+  if (job.status === 'running' || job.status === 'queued') h += '<div class="empty">Staging… this takes 30–60 seconds. <button class="qbtn" onclick="phOpenJob(\'' + job.id + '\')">Check</button></div>';
+  if (job.error && !vs.length) h += '<div class="empty">' + esc(job.error) + '</div>';
+  if (vs.length) { h += '<div class="phcompare"><div class="phcell"><img src="' + esc(urls[job.source_path] || PHOTO_URLS[job.source_path] || '') + '"><span class="phbadge">Original</span></div>';
+    vs.forEach(function (v, i) { h += '<div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="window.open(\'' + esc(urls[v.path] || '') + '\',\'_blank\',\'noopener\')"><span class="phbadge">v' + (i + 1) + '</span><div class="phacts open">' + (job.status !== 'picked' ? '<button class="stage" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '') + '<button onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
+    h += '</div>'; }
+  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;renderPhotos()">Close</button>' + (job.status !== 'picked' ? ' <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\')">Discard all</button>' : '') + '</div></div>';
+  return h;
+}
+async function phStageRun() { if (phStaging || !PH_JOB || !PH_JOB.compose) return; phStaging = true; renderPhotos();
+  var jr = await photoCall({ action: 'stage', listing_id: PHOTOS_SEL, path: PH_JOB.path, style: PH_STYLE, room: PH_ROOM || null, instruction: PH_INSTR || null, n: 3 });
+  phStaging = false;
+  if (!jr.ok && !jr.job) { toast(jr.error || 'Staging failed'); renderPhotos(); return; }
+  PH_JOB = { job: jr.job, urls: jr.urls || {} }; photosAt = 0; if (jr.job && jr.job.error && jr.job.status === 'failed') toast(jr.job.error);
+  renderPhotos(); fetchPhotos(true); logEvent('system', null, 'photos.staged', 'Staged a photo for ' + phLabel(phListing(PHOTOS_SEL) || {}) + ' (' + PH_STYLE + ', $' + Number(jr.job && jr.job.est_cost_usd || 0).toFixed(2) + ')');
+}
+async function phOpenJob(id) { var jr = await photoCall({ action: 'job', job_id: id }); if (!jr.ok) { toast('Could not load job'); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos(); }
+async function phPick(id, i, replace) { var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); if (!jr.ok) { toast(jr.error || 'Could not save'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; photosAt = 0; await fetchPhotos(true); }
+async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “swap the sofa for a cream sectional, lose the plant”)'); if (!ins) return; phStaging = true; renderPhotos(); var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: ins, n: 1 }); phStaging = false; if (!jr.ok && !jr.job) { toast(jr.error || 'Refine failed'); renderPhotos(); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; photosAt = 0; renderPhotos(); fetchPhotos(true); }
+async function phDiscardJob(id) { var jr = await photoCall({ action: 'discard_job', job_id: id }); toast(jr.ok ? 'Discarded' : 'Failed'); PH_JOB = null; photosAt = 0; fetchPhotos(true); }
 
 /* ---------- Buyer Portal overview (Phase 1: read-only view of the client portal, via portal-bridge) ----------
    The browser never holds the portal's key. portal-bridge verifies Nick's owner JWT, then reads the
