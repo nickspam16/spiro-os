@@ -217,7 +217,7 @@
 .lptab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 10px;font-size:13.5px;color:var(--ink-dim);cursor:pointer;font-family:inherit}
 .lptab.on{color:var(--ink);border-bottom-color:var(--accent,#2f4a3e);font-weight:600}
 .lpn{font-size:10.5px;color:var(--ink-dim);font-weight:400;margin-left:3px}
-#listing-page-body .det{display:block;font-size:13.5px;color:var(--ink-dim);line-height:1.6;margin-top:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:13px;white-space:pre-wrap;word-break:break-word}
+#listing-page-body .det{display:block;white-space:pre-wrap;word-break:break-word}
   .pthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .pthumbs img{width:64px;height:48px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--line);cursor:pointer}
   .rowthumb{width:40px;height:30px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--line);float:right;margin-left:8px}
@@ -810,7 +810,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.228.0';
+var APP_VERSION = 'v5.229.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
