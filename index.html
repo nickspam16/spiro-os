@@ -839,7 +839,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.233.0';
+var APP_VERSION = 'v5.234.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8628,7 +8628,7 @@ function phJobHtml(J, l) {
     vs.forEach(function (v, i) { h += '<div class="phvar"><div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbJob(' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + '</span></div><div class="phvacts">' + (job.status !== 'picked' ? '<button class="qbtn done" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button class="qbtn" onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '<span class="hint">picked</span>') + '<button class="qbtn" onclick="phMoreLike(\'' + job.id + '\',' + i + ')" title="Two elevated variations built from this one">2 more like this</button><button class="qbtn" onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
     if (running) for (var k = vs.length; k < (job.target_n || 3); k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">' + (k === vs.length ? 'rendering…' : 'queued') + '</span></div></div>';
     h += '</div>'; }
-  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'geometry\')">geometry wrong</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'wrong_style\')">wrong style</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'too_much\')">too much furniture</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'other\')">other</button>' : '') + '</div></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'geometry\')">geometry wrong</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'wrong_style\')">wrong style</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'too_much\')">too much furniture</button> <button class="qbtn" onclick="phDiscardWhy(\'' + job.id + '\')">tell it why…</button>' : '') + '</div></div>';
   return h;
 }
 function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, urls = PH_JOB.urls || {}; var list = [urls[job.source_path] || PHOTO_URLS[job.source_path] || ''].concat((job.variants || []).map(function (v) { return urls[v.path] || ''; })); phLbUrls(list, i); }
@@ -8669,7 +8669,8 @@ async function phOpenJob(id) { phPollStop(); phStatus('Loading…'); var jr = aw
 async function phPick(id, i, replace) { phStatus('Saving…'); var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); phStatus(''); if (!jr.ok) { toast(jr.error || 'Could not save'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; phPollStop(); photosAt = 0; await fetchPhotos(true); }
 async function phMoreLike(id, i) { var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: 'Keep this exact furniture layout and palette — the agent chose it. Produce a more elevated, editorial version: better-proportioned pieces, richer materials, more considered styling and lighting. Vary only the details, not the plan.', n: 2 }); if (!jr.ok || !jr.job_id) { toast(jr.error || 'Could not start'); return; } toast('Two more on the way, built from v' + (i + 1)); phDrive(jr.job_id); }
 async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “swap the sofa for a cream sectional, lose the plant”)'); if (!ins) return; var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: ins, n: 1 }); if (!jr.ok || !jr.job_id) { toast(jr.error || 'Refine failed'); return; } phDrive(jr.job_id); }
-async function phDiscardJob(id, reason) { var jr = await photoCall({ action: 'discard_job', job_id: id, reason: reason || null }); toast(jr.ok ? (reason ? 'Discarded — noted: ' + reason.replace('_', ' ') : 'Discarded') : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
+async function phDiscardJob(id, reason, note) { var jr = await photoCall({ action: 'discard_job', job_id: id, reason: reason || null, note: note || null }); toast(jr.ok ? (note ? 'Discarded — it will avoid that here and remember it' : reason ? 'Discarded — noted: ' + reason.replace('_', ' ') : 'Discarded') : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
+function phDiscardWhy(id) { var v = prompt('What was wrong? One line — e.g. “sofa too big for the room”, “rug hides the floor”, “too much art on the fireplace wall”. It becomes an Avoid note for this property and steers the next renders.'); if (v === null) return; v = v.trim(); if (!v) return; phDiscardJob(id, 'other', v); }
 /* What Spiro's learned about staging (2026-09-09): visible + editable, never a black box. */
 var PH_LEARN_OPEN = false, PH_NOTES_OPEN = null, PH_NOTES_VAL = '';
 function phLearnedHtml() {
@@ -8682,6 +8683,7 @@ function phLearnedHtml() {
   h += '<textarea id="ph-learned" rows="' + Math.max(3, (L.lines || []).length + 1) + '" style="width:100%;margin:8px 0;">' + esc((L.lines || []).join('\n')) + '</textarea>';
   h += '<button class="qbtn done" onclick="phLearnedSave()">Save</button>';
   if ((L.recent_instructions || []).length) h += '<div class="hint" style="margin-top:10px;">Recent instructions you gave: ' + esc(L.recent_instructions.slice(0, 5).join(' · ')) + '</div>';
+  if ((L.rejections || []).length) h += '<div class="hint" style="margin-top:4px;">Recently rejected (it avoids these): ' + esc(L.rejections.slice(0, 5).join(' · ')) + '</div>';
   if (Object.keys(L.discard_reasons || {}).length) h += '<div class="hint" style="margin-top:4px;">Discards: ' + esc(Object.keys(L.discard_reasons).map(function (k) { return k.replace('_', ' ') + ' ×' + L.discard_reasons[k]; }).join(' · ')) + '</div>';
   return h + '</div>';
 }
