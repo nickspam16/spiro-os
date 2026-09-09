@@ -839,7 +839,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.231.0';
+var APP_VERSION = 'v5.232.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8621,12 +8621,12 @@ function phJobHtml(J, l) {
     var n = J.paths.length, per = Number(PHOTOS.engine.per_variant_usd), cost = (per * 3 * n).toFixed(2);
     return '<div class="phjob"><div class="flabel">Stage ' + (n === 1 ? 'this photo' : n + ' photos') + '</div><div class="pthumbs">' + J.paths.slice(0, 8).map(function (p) { return phImg(p); }).join('') + (n > 8 ? '<span class="hint">+' + (n - 8) + '</span>' : '') + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;">' + chips + '</div>' + (n === 1 ? '<input placeholder="Room (optional, e.g. primary bedroom)" value="' + esc(PH_ROOM) + '" oninput="PH_ROOM=this.value" style="width:100%;margin-bottom:6px;">' : '') + '<input placeholder="Anything specific? (optional, e.g. no rug, add a piano)" value="' + esc(PH_INSTR) + '" oninput="PH_INSTR=this.value" style="width:100%;margin-bottom:8px;"><button class="qbtn done" ' + (phStaging ? 'disabled' : '') + ' onclick="phStageRun()">' + (phStaging ? 'Starting…' : 'Stage · 3 variants each · ~$' + cost) + '</button> <button class="qbtn" onclick="PH_JOB=null;renderPhotos()">Cancel</button>' + (PHOTOS.engine.model.indexOf('mock') === 0 ? '<div class="hint" style="margin-top:6px;">Mock mode: no GEMINI_API_KEY yet — variants will be copies of the original so the flow can be tested.</div>' : '') + '</div>'; }
   var job = J.job, urls = J.urls || {}; var vs = job.variants || []; var running = job.status === 'running' || job.status === 'queued';
-  var h = '<div class="phjob"><div class="flabel">' + esc(PH_STYLE_LABELS[job.style] || job.style) + (job.instruction ? ' · ' + esc(job.instruction) : '') + ' <span style="font-weight:400;text-transform:none;">· ' + (running ? 'staging… ' + vs.length + '/3 ready' : esc(job.status)) + ' · $' + Number(job.est_cost_usd || 0).toFixed(2) + '</span></div>';
+  var h = '<div class="phjob"><div class="flabel">' + esc(PH_STYLE_LABELS[job.style] || job.style) + (job.instruction ? ' · ' + esc(job.instruction) : '') + ' <span style="font-weight:400;text-transform:none;">· ' + (running ? 'staging… ' + vs.length + '/' + (job.target_n || 3) + ' ready' : esc(job.status)) + ' · $' + Number(job.est_cost_usd || 0).toFixed(2) + '</span></div>';
   if (running && !vs.length) h += '<div class="empty">Rendering the first variant — 20–40 seconds each. You can keep working; this panel updates itself.</div>';
   if (job.error && !vs.length && !running) h += '<div class="empty">' + esc(job.error) + '</div>';
   if (vs.length || running) { h += '<div class="phcompare"><div class="phvar"><div class="phcell"><img src="' + esc(urls[job.source_path] || PHOTO_URLS[job.source_path] || '') + '" onclick="phLbJob(0)"><span class="phbadge">Original</span></div><div class="phvacts"><span class="hint">Original</span></div></div>';
     vs.forEach(function (v, i) { h += '<div class="phvar"><div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbJob(' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + '</span></div><div class="phvacts">' + (job.status !== 'picked' ? '<button class="qbtn done" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button class="qbtn" onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '<span class="hint">picked</span>') + '<button class="qbtn" onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
-    if (running) for (var k = vs.length; k < 3; k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">rendering…</span></div></div>';
+    if (running) for (var k = vs.length; k < (job.target_n || 3); k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">' + (k === vs.length ? 'rendering…' : 'queued') + '</span></div></div>';
     h += '</div>'; }
   h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'geometry\')">geometry wrong</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'wrong_style\')">wrong style</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'too_much\')">too much furniture</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'other\')">other</button>' : '') + '</div></div>';
   return h;
@@ -8635,24 +8635,39 @@ function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, 
 function phLbUrls(urls, i) { urls = urls.filter(Boolean); if (!urls.length) return; var keys = urls.map(function (u, k) { var key = '__lb' + k; PHOTO_URLS[key] = u; return key; }); phLightbox(keys, Math.min(i, keys.length - 1)); }
 function phScrollTop() { try { var c = document.getElementById('photos-card'); if (c && window.scrollTo) window.scrollTo({ top: Math.max(0, c.offsetTop - 8), behavior: 'smooth' }); } catch (e) { /* */ } }
 function phPollStop() { if (PH_POLL) { clearTimeout(PH_POLL); PH_POLL = null; } }
-async function phPoll(jobId, tries) {
-  phPollStop(); var jr = await photoCall({ action: 'job', job_id: jobId }); if (!jr.ok) { if (tries < 40) PH_POLL = setTimeout(function () { phPoll(jobId, tries + 1); }, 5000); return; }
+/* Render driver (2026-09-09, v8): the engine renders ONE variant per call so nothing runs in the
+   background where the platform can kill it. phDrive keeps calling render_next until the job has all
+   its variants, updating the panel after each. Multiple queued jobs (Stage all) run one after another. */
+var PH_QUEUE = [];
+async function phPoll(jobId, tries) { phPollStop(); await phDrive(jobId); }
+async function phDrive(jobId) {
+  phPollStop(); var jr = await photoCall({ action: 'job', job_id: jobId }); if (!jr.ok) { toast('Could not load job'); return; }
   PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos();
-  var st = jr.job.status; if (st === 'running' || st === 'queued') { if (tries < 60) PH_POLL = setTimeout(function () { phPoll(jobId, tries + 1); }, 5000); else toast('Still rendering — check Staging history in a minute.'); }
-  else { photosAt = 0; fetchPhotos(true); if (st === 'failed') toast(jr.job.error || 'Staging failed'); else toast('Variants ready'); }
+  var guard = 0;
+  while (guard++ < 6) {
+    var job = PH_JOB.job; var have = (job.variants || []).length, want = Number(job.target_n || 3);
+    if (job.status === 'picked' || job.status === 'discarded' || job.status === 'failed' || have >= want) break;
+    var r = await photoCall({ action: 'render_next', job_id: jobId }, 170000);
+    if (!r.ok) { toast(r.error || 'Render call failed — tap the job to resume'); break; }
+    PH_JOB = { job: r.job, urls: r.urls || {} }; renderPhotos();
+    if (r.job.error && (r.job.variants || []).length === have) { toast(r.job.error); break; }
+  }
+  photosAt = 0; fetchPhotos(true);
+  if (PH_JOB && PH_JOB.job && (PH_JOB.job.variants || []).length >= Number(PH_JOB.job.target_n || 3)) toast('Variants ready');
+  if (PH_QUEUE.length) { var next = PH_QUEUE.shift(); phDrive(next); }
 }
 async function phStageRun() { if (phStaging || !PH_JOB || !PH_JOB.compose) return; var paths = PH_JOB.paths.slice(); phStaging = true; renderPhotos();
-  var first = null, started = 0;
-  for (var i = 0; i < paths.length; i++) { var jr = await photoCall({ action: 'stage', listing_id: PHOTOS_SEL, path: paths[i], style: PH_STYLE, room: paths.length === 1 ? (PH_ROOM || null) : null, instruction: PH_INSTR || null, n: 3 }); if (jr.ok && jr.job_id) { started++; if (!first) first = jr.job_id; } else if (!first) { toast(jr.error || 'Staging failed'); } }
+  var ids = [];
+  for (var i = 0; i < paths.length; i++) { var jr = await photoCall({ action: 'stage', listing_id: PHOTOS_SEL, path: paths[i], style: PH_STYLE, room: paths.length === 1 ? (PH_ROOM || null) : null, instruction: PH_INSTR || null, n: 3 }); if (jr.ok && jr.job_id) ids.push(jr.job_id); else if (!ids.length) toast(jr.error || 'Staging failed'); }
   phStaging = false;
-  logEvent('system', null, 'photos.staged', 'Started ' + started + ' staging job' + (started === 1 ? '' : 's') + ' for ' + phLabel(phListing(PHOTOS_SEL) || {}) + ' (' + PH_STYLE + ')');
-  if (!first) { renderPhotos(); return; }
-  if (started > 1) toast(started + ' photos staging — each shows in Staging history as it finishes');
-  PH_JOB = { job: { id: first, status: 'running', style: PH_STYLE, instruction: PH_INSTR || null, variants: [], source_path: paths[0], est_cost_usd: 0 }, urls: {} }; renderPhotos(); phPoll(first, 0);
+  logEvent('system', null, 'photos.staged', 'Started ' + ids.length + ' staging job' + (ids.length === 1 ? '' : 's') + ' for ' + phLabel(phListing(PHOTOS_SEL) || {}) + ' (' + PH_STYLE + ')');
+  if (!ids.length) { renderPhotos(); return; }
+  if (ids.length > 1) toast(ids.length + ' photos queued — rendering one at a time, ~35 s per variant');
+  PH_QUEUE = ids.slice(1); phDrive(ids[0]);
 }
-async function phOpenJob(id) { phPollStop(); phStatus('Loading…'); var jr = await photoCall({ action: 'job', job_id: id }); phStatus(''); if (!jr.ok) { toast('Could not load job'); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos(); if (jr.job.status === 'running' || jr.job.status === 'queued') phPoll(id, 0); phScrollTop(); }
+async function phOpenJob(id) { phPollStop(); phStatus('Loading…'); var jr = await photoCall({ action: 'job', job_id: id }); phStatus(''); if (!jr.ok) { toast('Could not load job'); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos(); phScrollTop(); var owed = (jr.job.status === 'running' || jr.job.status === 'queued') && (jr.job.variants || []).length < Number(jr.job.target_n || 3); if (owed) phDrive(id); }
 async function phPick(id, i, replace) { phStatus('Saving…'); var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); phStatus(''); if (!jr.ok) { toast(jr.error || 'Could not save'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; phPollStop(); photosAt = 0; await fetchPhotos(true); }
-async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “swap the sofa for a cream sectional, lose the plant”)'); if (!ins) return; var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: ins, n: 1 }); if (!jr.ok || !jr.job_id) { toast(jr.error || 'Refine failed'); return; } PH_JOB = { job: { id: jr.job_id, status: 'running', style: PH_STYLE, instruction: ins, variants: [], source_path: (PH_JOB && PH_JOB.job && PH_JOB.job.variants[i] && PH_JOB.job.variants[i].path) || '', est_cost_usd: 0 }, urls: PH_JOB && PH_JOB.urls || {} }; renderPhotos(); phPoll(jr.job_id, 0); }
+async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “swap the sofa for a cream sectional, lose the plant”)'); if (!ins) return; var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: ins, n: 1 }); if (!jr.ok || !jr.job_id) { toast(jr.error || 'Refine failed'); return; } phDrive(jr.job_id); }
 async function phDiscardJob(id, reason) { var jr = await photoCall({ action: 'discard_job', job_id: id, reason: reason || null }); toast(jr.ok ? (reason ? 'Discarded — noted: ' + reason.replace('_', ' ') : 'Discarded') : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
 /* What Spiro's learned about staging (2026-09-09): visible + editable, never a black box. */
 var PH_LEARN_OPEN = false, PH_NOTES_OPEN = null, PH_NOTES_VAL = '';
