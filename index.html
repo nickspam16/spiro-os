@@ -501,6 +501,7 @@
          taps inside it never collapse it and re-renders keep it open. -->
     <div class="card" id="listing-card" style="display:none;">
       <h2 id="listing-page-h2">Listing</h2>
+      <div id="listing-page-form-slot"></div>
       <div id="listing-page-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
@@ -781,7 +782,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.223.0';
+var APP_VERSION = 'v5.224.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -889,6 +890,7 @@ function panelBack() {
 }
 window.addEventListener('popstate', function () { if (PANEL_HOME) closePanel(); });
 function closePanel() {
+  if (FORM_IN_PAGE) { try { closeForm(); } catch (e) { unhostForm(); } }
   /* Neutralize our history entry when the panel is closed programmatically (jumpToRecord etc.)
      so a later Back doesn't consume a press on a stale state. silent-ok: history can throw. */
   try { if (history.state && history.state.spiroPanel) history.replaceState({}, '', ''); } catch (e) {}
@@ -3874,11 +3876,28 @@ function openNew(table) { if (PANEL_HOME) closePanel(); showForm(table, null); }
    still routed through the normal insert path -- editing.row stays null so saveForm() INSERTs,
    never UPDATEs, no matter what's in prefill. See addArchRegToProspects for the first caller. */
 function openNewPrefilled(table, prefill) { if (PANEL_HOME) closePanel(); showForm(table, null, prefill); }
+var FORM_IN_PAGE = null; /* {parent,next} of #form-card while it is hosted inside the listing page */
+function hostFormInListingPage() {
+  var fc = document.getElementById('form-card'), slot = document.getElementById('listing-page-form-slot');
+  if (!fc || !slot || FORM_IN_PAGE) return;
+  FORM_IN_PAGE = { parent: fc.parentNode, next: fc.nextSibling };
+  slot.appendChild(fc);
+}
+function unhostForm() {
+  if (!FORM_IN_PAGE) return;
+  var fc = document.getElementById('form-card');
+  try { FORM_IN_PAGE.parent.insertBefore(fc, FORM_IN_PAGE.next); } catch (e) { FORM_IN_PAGE.parent.appendChild(fc); }
+  FORM_IN_PAGE = null;
+}
 function openEdit(table, id) {
-  if (PANEL_HOME) closePanel();
   var row = null;
   (DATA[table] || []).forEach(function (x) { if (x.id === id) row = x; });
-  if (row) showForm(table, row);
+  if (!row) return;
+  /* Listing page (2026-09-09): editing the listing you're looking at happens IN the page, not back
+     on the dashboard. Anything else still closes the panel so the home editor is visible. */
+  if (PANEL_HOME && PANEL_HOME.id === 'listing-card' && table === 'listings' && String(id) === String(LISTING_PAGE_ID)) { hostFormInListingPage(); showForm(table, row); return; }
+  if (PANEL_HOME) closePanel();
+  showForm(table, row);
 }
 /* Dirty-state guard (scenario 2): compares every field against the value the form opened with,
    so a fat-fingered Cancel mid-edit can't silently throw away Nick's typing. */
@@ -3900,7 +3919,7 @@ function cancelForm() {
   if (formDirty() && !window.confirm('Discard your unsaved changes?')) return;
   closeForm();
 }
-function closeForm() { editing = null; memTarget = null; linkTarget = null; PROMOTING_ENGAGE_ID = null; document.getElementById('form-card').style.display = 'none'; }
+function closeForm() { editing = null; memTarget = null; linkTarget = null; PROMOTING_ENGAGE_ID = null; document.getElementById('form-card').style.display = 'none'; unhostForm(); }
 function submitForm() { if (memTarget) saveMemory(); else if (linkTarget) saveLink(); else saveForm(); }
 
 async function saveForm() {
