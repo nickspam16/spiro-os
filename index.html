@@ -839,7 +839,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.235.0';
+var APP_VERSION = 'v5.236.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8650,7 +8650,11 @@ async function phDrive(jobId) {
     var r = await photoCall({ action: 'render_next', job_id: jobId }, 170000);
     if (!r.ok) { toast(r.error || 'Render call failed — tap the job to resume'); break; }
     PH_JOB = { job: r.job, urls: r.urls || {} }; renderPhotos();
-    if (r.job.error && (r.job.variants || []).length === have) { toast(r.job.error); break; }
+    if (r.job.error && (r.job.variants || []).length === have) {
+      if (/timeout|hung|did not answer|not enough time/i.test(r.job.error) && !PH_JOB._retried) { PH_JOB._retried = true; phStatus('Model timed out — retrying once (not charged)…'); continue; }
+      toast(r.job.error); phStatus(''); break;
+    }
+    phStatus('');
   }
   photosAt = 0; fetchPhotos(true);
   if (PH_JOB && PH_JOB.job && (PH_JOB.job.variants || []).length >= Number(PH_JOB.job.target_n || 3)) toast('Variants ready');
