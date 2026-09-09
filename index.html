@@ -190,6 +190,28 @@
   .row .det{display:none;font-size:13.5px;color:var(--ink-dim);line-height:1.6;margin-top:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:13px;white-space:pre-wrap;word-break:break-word}
   .row.open .det{display:block}
 .lptabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:0 0 8px}
+/* ---- Global hierarchy pass (2026-09-09) -------------------------------------------------------
+   Nick: "this should feel high end not cluttered… headers are the same size font as the body… audit
+   the rest of the OS for the same aesthetic drag." Same palette and type family; only scale and
+   spacing change. Scoped to opened panels (#panel-slot) so the dashboard cards keep their compact
+   form, plus a few app-wide row/label tweaks. */
+#panel-slot .card > h2{font-family:var(--serif);font-size:26px;font-weight:400;letter-spacing:-.005em;text-transform:none;color:var(--ink);padding-bottom:14px;margin-bottom:18px;line-height:1.15}
+#panel-slot .card > h2 .hbtn{font-size:12px}
+#panel-slot .card > h2 > span:first-child > span:last-child,#panel-slot .card > h2 > span:first-child > span:only-child{text-transform:none;letter-spacing:0}
+#panel-slot .card > .hint:first-of-type{font-size:12.5px;color:var(--faint);max-width:70ch;margin:-8px 0 16px}
+#panel-slot .flabel{font-size:11.5px;letter-spacing:.16em;color:var(--ink-dim);margin:26px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line);font-weight:600}
+#panel-slot .flabel:first-child{margin-top:4px}
+#panel-slot .flabel span{letter-spacing:0;text-transform:none;font-weight:400;font-size:12.5px}
+#panel-slot .card{font-size:15px;line-height:1.55}
+#panel-slot .hint{font-size:13px}
+.row{padding:15px 18px}
+.row .r1{font-size:16px}
+.row .r2{font-size:13px;margin-top:4px;font-weight:400;color:var(--ink-dim)}
+.qi .txt{font-size:15px}
+/* Match Triage rows: the "why" line was 11px — make it readable, keep it secondary */
+#match-triage-card .hint,#mt-list .hint{font-size:12.5px;line-height:1.5}
+#listing-card > h2{display:none}
+#listing-card{padding-top:8px}
 /* Listing page typography (2026-09-09, Nick: "should feel high end, not cluttered… headers are the same
    size font as the body"). Scoped to the page so the rest of the app is untouched. */
 #listing-card{padding-top:18px}
@@ -810,7 +832,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.229.0';
+var APP_VERSION = 'v5.230.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2347,7 +2369,7 @@ async function loadAll(manual) {
   var res = await Promise.all([
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
     sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
-    sb.from('listings').select('id,address,status,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
+    sb.from('listings').select('id,address,status,listing_type,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
     /* beds/baths/sqft/lot_sqft are in FORM_SPECS.offmarket, so buildPayload writes all four on
        every save. They were NOT selected here, so the edit form rendered them blank and saving
        wrote blank back over whatever the database held. Fixed 2026-07-30 — see the conformance
