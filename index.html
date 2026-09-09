@@ -123,7 +123,7 @@
   .field-row input,.field-row select,.field-row textarea{border:none;background:none;padding:0;margin-bottom:0}
   .field-row .hint{margin:6px 0 0}
 
-  button.primary{width:100%;padding:16px;border-radius:var(--radius-lg);border:1px solid var(--green);cursor:pointer;font-size:12px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;min-height:50px;background:var(--green);color:var(--paper);transition:background .12s,transform .04s}
+  button.primary{width:100%;padding:12px 16px;border-radius:var(--radius-lg);border:1px solid var(--green);cursor:pointer;font-size:12px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;min-height:42px;background:var(--green);color:var(--paper);transition:background .12s,transform .04s}
   button.primary:hover{background:var(--green-deep)}
   button.primary:active{transform:translateY(1px)}
   button.quiet{background:none;border:none;color:var(--muted);font-size:14px;font-weight:300;padding:14px;width:100%;cursor:pointer}
@@ -212,6 +212,11 @@
 #match-triage-card .hint,#mt-list .hint{font-size:12.5px;line-height:1.5}
 #listing-card > h2{display:none}
 #listing-card{padding-top:8px}
+.mtgrp{margin:18px 0 6px}
+.mtgrp-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:0 0 8px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.mtgrp-name{font-family:var(--serif);font-size:18px;color:var(--ink);text-decoration:none}
+.mtgrp-n{font-size:11px;color:var(--ink-dim);margin-left:8px;border:1px solid var(--line);border-radius:999px;padding:1px 7px;vertical-align:middle}
+.mtgrp .qi{padding:10px 0}
 /* Listing page typography (2026-09-09, Nick: "should feel high end, not cluttered… headers are the same
    size font as the body"). Scoped to the page so the rest of the app is untouched. */
 #listing-card{padding-top:18px}
@@ -304,7 +309,9 @@
   .cols>div{min-width:0}
   @media (min-width:1000px){
     .app{max-width:1180px;padding-top:40px}
-    .cols{display:grid;grid-template-columns:1fr 1.1fr;gap:40px;align-items:start}
+    .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:32px;align-items:start}
+#omni-go{width:auto;min-width:140px}
+.omni-actions{justify-content:flex-end}
     /* STICKY LEFT COLUMN (2026-07-30). align-items:start is right — stretching Records to match
        Today's Focus would just be a taller empty box. But the two columns are wildly unequal in
        height (Records ~600px, Focus often 2000px+), so scrolling the focus list left ~700px of dead
@@ -832,7 +839,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.230.0';
+var APP_VERSION = 'v5.231.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1504,7 +1511,13 @@ function renderMatchTriage() {
       + (aiDismissN ? '<button class="qbtn" onclick="mtApplyAi(\'dismiss\')">Apply AI dismiss (' + aiDismissN + ')</button>' : '')
       : '')
     + '</div>';
-  body.innerHTML = visible.map(function (m) {
+  /* Grouped by buyer (2026-09-09): one flat list of 500 matches read as noise. Rows are now grouped
+     under the buyer, best score first within each buyer, buyers ordered by their best match. A group
+     header carries the buyer's criteria and select-all so a buyer can be worked as a unit. */
+  var groups = {}, order = [];
+  visible.forEach(function (m) { var k = String(m.buyer_id || '?'); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(m); });
+  order.sort(function (a, b) { return ((groups[b][0].score || 0) - (groups[a][0].score || 0)) || (groups[b].length - groups[a].length); });
+  var mtRow = function (m) {
     var id = String(m.id);
     var buyerLabel = recLabel('buyers', m.buyer_id) || 'Unknown buyer';
     var targetLabel = m.target_address || recLabel(m.target_type, m.target_id) || m.target_ref || '';
@@ -1514,7 +1527,7 @@ function renderMatchTriage() {
     return '<div class="qi" style="align-items:flex-start;">'
       + '<input type="checkbox" style="margin-top:4px;" onchange="mtToggle(\'' + escJs(id) + '\', this.checked)"' + checked + '>'
       + '<div class="txt" style="margin-left:8px;">'
-      + '<div class="t1"><a href="javascript:void(0)" onclick="event.stopPropagation();jumpToRecord(\'buyers\',\'' + escJs(String(m.buyer_id)) + '\')" style="color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);">' + esc(buyerLabel) + '</a> &middot; ' + esc(targetLabel) + (m.score != null ? ' &middot; fit ' + m.score + '/10' : '') + (m._age != null ? ' &middot; ' + m._age + 'd' : '') + '</div>'
+      + '<div class="t1">' + esc(targetLabel) + (m.score != null ? ' &middot; fit ' + m.score + '/10' : '') + (m._age != null ? ' &middot; ' + m._age + 'd' : '') + '</div>'
       + (m.rationale ? '<div class="t2">Why: ' + esc(m.rationale) + '</div>' : '')
       + (ai ? '<div class="t2" style="color:' + aiColor + ';">AI ' + esc(ai.action) + (ai.reason ? ': ' + esc(ai.reason) : '') + '</div>' : '')
       + '</div>'
@@ -1523,6 +1536,12 @@ function renderMatchTriage() {
       + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(\'' + escJs(id) + '\')">&#10005;</button>'
       + '<div id="dismiss-' + esc(id) + '" style="flex-basis:100%;"></div>'
       + '</div>';
+  };
+  body.innerHTML = order.map(function (k) {
+    var ms = groups[k]; var b = recOf('buyers', k); var name = recLabel('buyers', k) || 'Unknown buyer';
+    var crit = b ? [b.budget_max ? 'to ' + money(b.budget_max) : '', b.areas || '', b.timeline || ''].filter(Boolean).join(' · ') : '';
+    var ids = ms.map(function (m) { return String(m.id); });
+    return '<div class="mtgrp"><div class="mtgrp-h"><div style="min-width:0;"><a href="javascript:void(0)" onclick="jumpToRecord(\'buyers\',\'' + escJs(k) + '\')" class="mtgrp-name">' + esc(name) + '</a><span class="mtgrp-n">' + ms.length + '</span>' + (crit ? '<div class="hint" style="margin:2px 0 0;">' + esc(crit) + '</div>' : '') + '</div><button class="qbtn" onclick=\'mtSelectVisible(' + JSON.stringify(ids) + ')\'>Select ' + ms.length + '</button></div>' + ms.map(mtRow).join('') + '</div>';
   }).join('');
   if (rows.length > visible.length) body.innerHTML += '<button class="qbtn" style="margin-top:8px;" onclick="mtShowMore()">Show ' + Math.min(80, rows.length - visible.length) + ' more (' + (rows.length - visible.length) + ' remaining)</button>';
 }
@@ -8518,6 +8537,7 @@ function renderPhotos() { try {
   if (!PHOTOS_SEL) {
     var mineN = (PHOTOS.mine_crm || []).length;
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;"><button class="qbtn' + (PH_FILTER === 'mine' ? ' done' : '') + '" onclick="PH_FILTER=\'mine\';renderPhotos();photoSign()">My listings ' + mineN + '</button><button class="qbtn' + (PH_FILTER === 'all' ? ' done' : '') + '" onclick="PH_FILTER=\'all\';renderPhotos();photoSign()">All ' + L.length + '</button><input placeholder="Search address…" value="' + esc(PH_Q) + '" oninput="PH_Q=this.value;renderPhotos()" style="flex:1;min-width:160px;"></div>';
+    h += phLearnedHtml();
     if (inbox.length) { h += '<div class="flabel">Waiting to be attached <span style="font-weight:400;text-transform:none;">· arrived but no listing matched</span></div>';
       var mine = L.filter(function (l) { return l.mine; }), others = L.filter(function (l) { return !l.mine; });
       var opts = '<option value="">Attach to…</option><optgroup label="My listings">' + mine.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup><optgroup label="Others">' + others.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup>';
@@ -8544,7 +8564,9 @@ function renderPhotos() { try {
   }
   var l = phListing(PHOTOS_SEL); if (!l) { PHOTOS_SEL = null; renderPhotos(); return; }
   var stagedN = l.photos.filter(function (p) { return p.kind === 'staged'; }).length, origN = l.n - stagedN;
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><button class="hbtn" onclick="PHOTOS_SEL=null;PH_JOB=null;renderPhotos();photoSign()">&larr; Listings</button><div style="flex:1;min-width:0;"><div class="txt">' + esc(phLabel(l)) + '</div><div class="hint" style="margin:2px 0 0;">' + esc(l.status) + ' · ' + l.n + ' photo' + (l.n === 1 ? '' : 's') + (stagedN ? ' · ' + stagedN + ' staged' : '') + '</div></div><div style="display:flex;gap:6px;"><label class="qbtn" style="cursor:pointer;">Add photos<input type="file" accept="image/*" multiple style="display:none;" onchange="phUpload(\'' + l.id + '\', this.files)"></label>' + (origN > 1 ? '<button class="qbtn" onclick="phStageAllOpen()">Stage all ' + origN + '</button>' : '') + '</div></div>';
+  var crmRow = (PHOTOS.mine_crm || []).filter(function (m) { return m.portal_listing_id === l.id; })[0];
+  h += '<div class="lphero" style="padding-top:0;"><div class="lphero-main"><button class="hbtn" style="margin-bottom:10px;" onclick="PHOTOS_SEL=null;PH_JOB=null;renderPhotos();photoSign()">&larr; Listings</button><h1 class="lpaddr">' + esc(phLabel(l)) + '</h1><div class="lpsub">' + esc([crmRow && crmRow.listing_type === 'Lease' ? 'Lease' : '', crmRow ? crmRow.crm_status : null, 'portal: ' + l.status, l.n + ' photo' + (l.n === 1 ? '' : 's') + (stagedN ? ', ' + stagedN + ' staged' : '')].filter(Boolean).join(' · ')) + '</div></div><div class="lpprice">' + esc(l.price || (crmRow && crmRow.price ? money(crmRow.price) + (crmRow.listing_type === 'Lease' ? '/mo' : '') : '')) + '</div></div>';
+  h += '<div class="lpactions"><label class="qbtn" style="cursor:pointer;">Add photos<input type="file" accept="image/*" multiple style="display:none;" onchange="phUpload(\'' + l.id + '\', this.files)"></label>' + (origN > 1 ? '<button class="qbtn" onclick="phStageAllOpen()">Stage all ' + origN + '</button>' : '') + '<button class="qbtn" onclick="phNotesOpen(\'' + l.id + '\')">Notes for staging</button></div>';
   if (PH_JOB) h += phJobHtml(PH_JOB, l);
   if (!l.photos.length) h += '<div class="empty" style="margin-top:10px;">No photos yet. Tap <b>Add photos</b>, forward the listing email to followupspiro@gmail.com, or drop photos in the Drive folder under “' + esc(phLabel(l)) + '”.</div>';
   else { h += '<div class="hint" style="margin:10px 0 4px;">First photo is the hero. Tap a photo to view it. ★ hero · ↑↓ order · ✕ remove (file kept) · <b>Stage</b> furnishes it.</div><div class="phgrid">';
@@ -8606,7 +8628,7 @@ function phJobHtml(J, l) {
     vs.forEach(function (v, i) { h += '<div class="phvar"><div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbJob(' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + '</span></div><div class="phvacts">' + (job.status !== 'picked' ? '<button class="qbtn done" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button class="qbtn" onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '<span class="hint">picked</span>') + '<button class="qbtn" onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
     if (running) for (var k = vs.length; k < 3; k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">rendering…</span></div></div>';
     h += '</div>'; }
-  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\')">Discard all</button>' : '') + '</div></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'geometry\')">geometry wrong</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'wrong_style\')">wrong style</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'too_much\')">too much furniture</button> <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'other\')">other</button>' : '') + '</div></div>';
   return h;
 }
 function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, urls = PH_JOB.urls || {}; var list = [urls[job.source_path] || PHOTO_URLS[job.source_path] || ''].concat((job.variants || []).map(function (v) { return urls[v.path] || ''; })); phLbUrls(list, i); }
@@ -8631,7 +8653,24 @@ async function phStageRun() { if (phStaging || !PH_JOB || !PH_JOB.compose) retur
 async function phOpenJob(id) { phPollStop(); phStatus('Loading…'); var jr = await photoCall({ action: 'job', job_id: id }); phStatus(''); if (!jr.ok) { toast('Could not load job'); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos(); if (jr.job.status === 'running' || jr.job.status === 'queued') phPoll(id, 0); phScrollTop(); }
 async function phPick(id, i, replace) { phStatus('Saving…'); var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); phStatus(''); if (!jr.ok) { toast(jr.error || 'Could not save'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; phPollStop(); photosAt = 0; await fetchPhotos(true); }
 async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “swap the sofa for a cream sectional, lose the plant”)'); if (!ins) return; var jr = await photoCall({ action: 'refine', listing_id: PHOTOS_SEL, job_id: id, variant: i, instruction: ins, n: 1 }); if (!jr.ok || !jr.job_id) { toast(jr.error || 'Refine failed'); return; } PH_JOB = { job: { id: jr.job_id, status: 'running', style: PH_STYLE, instruction: ins, variants: [], source_path: (PH_JOB && PH_JOB.job && PH_JOB.job.variants[i] && PH_JOB.job.variants[i].path) || '', est_cost_usd: 0 }, urls: PH_JOB && PH_JOB.urls || {} }; renderPhotos(); phPoll(jr.job_id, 0); }
-async function phDiscardJob(id) { var jr = await photoCall({ action: 'discard_job', job_id: id }); toast(jr.ok ? 'Discarded' : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
+async function phDiscardJob(id, reason) { var jr = await photoCall({ action: 'discard_job', job_id: id, reason: reason || null }); toast(jr.ok ? (reason ? 'Discarded — noted: ' + reason.replace('_', ' ') : 'Discarded') : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
+/* What Spiro's learned about staging (2026-09-09): visible + editable, never a black box. */
+var PH_LEARN_OPEN = false, PH_NOTES_OPEN = null, PH_NOTES_VAL = '';
+function phLearnedHtml() {
+  var L = (PHOTOS && PHOTOS.learned) || { lines: [], style_picks: {}, discard_reasons: {}, recent_instructions: [] };
+  var picks = Object.keys(L.style_picks || {}).sort(function (a, b) { return L.style_picks[b] - L.style_picks[a]; });
+  var summary = (picks.length ? 'Leans ' + picks.slice(0, 2).map(function (k) { return (PH_STYLE_LABELS[k] || k).toLowerCase(); }).join(' and ') + ' · ' : '') + (L.lines || []).length + ' standing preference' + ((L.lines || []).length === 1 ? '' : 's');
+  var h = '<div class="flabel" style="cursor:pointer;" onclick="PH_LEARN_OPEN=!PH_LEARN_OPEN;renderPhotos()">' + (PH_LEARN_OPEN ? '&#9662;' : '&#9656;') + ' What Spiro’s learned about your staging <span>· ' + esc(summary) + '</span></div>';
+  if (!PH_LEARN_OPEN) return h;
+  h += '<div class="phjob" style="margin-top:0;"><div class="hint">These lines go into every staging prompt. Edit freely — one per line. Instructions you type while staging are added automatically; discards with a reason teach it too.</div>';
+  h += '<textarea id="ph-learned" rows="' + Math.max(3, (L.lines || []).length + 1) + '" style="width:100%;margin:8px 0;">' + esc((L.lines || []).join('\n')) + '</textarea>';
+  h += '<button class="qbtn done" onclick="phLearnedSave()">Save</button>';
+  if ((L.recent_instructions || []).length) h += '<div class="hint" style="margin-top:10px;">Recent instructions you gave: ' + esc(L.recent_instructions.slice(0, 5).join(' · ')) + '</div>';
+  if (Object.keys(L.discard_reasons || {}).length) h += '<div class="hint" style="margin-top:4px;">Discards: ' + esc(Object.keys(L.discard_reasons).map(function (k) { return k.replace('_', ' ') + ' ×' + L.discard_reasons[k]; }).join(' · ')) + '</div>';
+  return h + '</div>';
+}
+async function phLearnedSave() { var ta = document.getElementById('ph-learned'); if (!ta) return; var lines = ta.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); var jr = await photoCall({ action: 'prefs_set', key: 'global', learned: lines }); toast(jr.ok ? 'Saved — applies to the next staging' : 'Could not save'); if (jr.ok && PHOTOS) PHOTOS.learned.lines = lines; renderPhotos(); }
+async function phNotesOpen(listingId) { var jr = await photoCall({ action: 'prefs_get', key: 'listing:' + listingId }); var notes = (jr.ok && jr.value && jr.value.notes) || []; var v = prompt('Standing notes for staging THIS property (one per line). Applied to every photo here.', notes.join('\n')); if (v === null) return; var lines = v.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); var w = await photoCall({ action: 'prefs_set', key: 'listing:' + listingId, notes: lines }); toast(w.ok ? 'Saved ' + lines.length + ' note' + (lines.length === 1 ? '' : 's') + ' for this property' : 'Could not save'); }
 
 /* ---------- Buyer Portal overview (Phase 1: read-only view of the client portal, via portal-bridge) ----------
    The browser never holds the portal's key. portal-bridge verifies Nick's owner JWT, then reads the
