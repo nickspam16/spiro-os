@@ -271,7 +271,10 @@
 @media (max-width: 740px) { input, select, textarea { font-size: 16px; } }
 /* Photos tab (2026-09-09) */
 .phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:6px}
-.phcompare{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px}
+.phcompare{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:8px}
+.phvar .phcell{aspect-ratio:4/3}
+.phvacts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center}
+.phvacts .qbtn{padding:4px 8px;font-size:11.5px}
 .phcell{position:relative;border-radius:var(--radius);overflow:hidden;background:var(--line);aspect-ratio:4/3}
 .phcell img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer}
 .phph{width:100%;height:100%;background:var(--line)}
@@ -768,7 +771,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.221.0';
+var APP_VERSION = 'v5.222.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8519,13 +8522,14 @@ function phJobHtml(J, l) {
   var h = '<div class="phjob"><div class="flabel">' + esc(PH_STYLE_LABELS[job.style] || job.style) + (job.instruction ? ' · ' + esc(job.instruction) : '') + ' <span style="font-weight:400;text-transform:none;">· ' + (running ? 'staging… ' + vs.length + '/3 ready' : esc(job.status)) + ' · $' + Number(job.est_cost_usd || 0).toFixed(2) + '</span></div>';
   if (running && !vs.length) h += '<div class="empty">Rendering the first variant — 20–40 seconds each. You can keep working; this panel updates itself.</div>';
   if (job.error && !vs.length && !running) h += '<div class="empty">' + esc(job.error) + '</div>';
-  if (vs.length || running) { h += '<div class="phcompare"><div class="phcell"><img src="' + esc(urls[job.source_path] || PHOTO_URLS[job.source_path] || '') + '" onclick="phLbUrls([\'' + esc(urls[job.source_path] || PHOTO_URLS[job.source_path] || '') + '\'].concat(' + JSON.stringify(vs.map(function (v) { return urls[v.path] || ''; })) + '),0)"><span class="phbadge">Original</span></div>';
-    vs.forEach(function (v, i) { h += '<div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbUrls([\'' + esc(urls[job.source_path] || '') + '\'].concat(' + JSON.stringify(vs.map(function (v) { return urls[v.path] || ''; })) + '),' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + (job.picked_path && job.status === 'picked' ? '' : '') + '</span><div class="phacts open">' + (job.status !== 'picked' ? '<button class="stage" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '') + '<button onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
-    if (running) for (var k = vs.length; k < 3; k++) h += '<div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div>';
+  if (vs.length || running) { h += '<div class="phcompare"><div class="phvar"><div class="phcell"><img src="' + esc(urls[job.source_path] || PHOTO_URLS[job.source_path] || '') + '" onclick="phLbJob(0)"><span class="phbadge">Original</span></div><div class="phvacts"><span class="hint">Original</span></div></div>';
+    vs.forEach(function (v, i) { h += '<div class="phvar"><div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbJob(' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + '</span></div><div class="phvacts">' + (job.status !== 'picked' ? '<button class="qbtn done" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button class="qbtn" onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '<span class="hint">picked</span>') + '<button class="qbtn" onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button></div></div>'; });
+    if (running) for (var k = vs.length; k < 3; k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">rendering…</span></div></div>';
     h += '</div>'; }
   h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\')">Discard all</button>' : '') + '</div></div>';
   return h;
 }
+function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, urls = PH_JOB.urls || {}; var list = [urls[job.source_path] || PHOTO_URLS[job.source_path] || ''].concat((job.variants || []).map(function (v) { return urls[v.path] || ''; })); phLbUrls(list, i); }
 function phLbUrls(urls, i) { urls = urls.filter(Boolean); if (!urls.length) return; var keys = urls.map(function (u, k) { var key = '__lb' + k; PHOTO_URLS[key] = u; return key; }); phLightbox(keys, Math.min(i, keys.length - 1)); }
 function phScrollTop() { try { var c = document.getElementById('photos-card'); if (c && window.scrollTo) window.scrollTo({ top: Math.max(0, c.offsetTop - 8), behavior: 'smooth' }); } catch (e) { /* */ } }
 function phPollStop() { if (PH_POLL) { clearTimeout(PH_POLL); PH_POLL = null; } }
