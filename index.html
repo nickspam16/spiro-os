@@ -189,6 +189,7 @@
   .row .r2{font-size:12.5px;color:var(--faint);margin-top:3px;font-weight:300}
   .row .det{display:none;font-size:13.5px;color:var(--ink-dim);line-height:1.6;margin-top:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:13px;white-space:pre-wrap;word-break:break-word}
   .row.open .det{display:block}
+#listing-page-body .det{display:block;font-size:13.5px;color:var(--ink-dim);line-height:1.6;margin-top:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:13px;white-space:pre-wrap;word-break:break-word}
   .pthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .pthumbs img{width:64px;height:48px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--line);cursor:pointer}
   .rowthumb{width:40px;height:30px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--line);float:right;margin-left:8px}
@@ -494,6 +495,15 @@
       <div id="portal-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Listing page (2026-09-09): Nick — "when I click on this listing card it should take me to a
+         separate window for the listing; not enough functionality when it keeps collapsing." Same
+         content as the inline expander (topActionsHtml + recordExtras) but in its own panel, so
+         taps inside it never collapse it and re-renders keep it open. -->
+    <div class="card" id="listing-card" style="display:none;">
+      <h2 id="listing-page-h2">Listing</h2>
+      <div id="listing-page-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <!-- Photos (2026-09-09): one place for listing photos -- what's missing, what arrived by email/Drive
          and needs attaching, per-listing gallery (hero/order/remove) and virtual staging. Backend is
          photo-stage (JWT-gated sibling of portal-bridge); the browser never holds portal keys. Nick's
@@ -771,7 +781,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.222.0';
+var APP_VERSION = 'v5.223.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2478,6 +2488,7 @@ function nextEscrowDeadline(tx) {
 function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e); } }
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
+  if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { /* */ } }
   safeRender('stats', renderStats); safeRender('pulse', renderPulse);
   safeRender('queue', renderQueue); safeRender('intel', renderIntel);
   /* 2026-07-23: Data Coverage / Share Links / Recent Activity are hidden-by-default cards now
@@ -9219,8 +9230,7 @@ function jumpToRecord(t, id) {
     var tx = null; (DATA.transactions || []).forEach(function (r) { if (String(r.id) === String(id)) tx = r; });
     browseTab = 'listings'; propSeg = (tx && isPastTx(tx)) ? 'past' : (tx && isDocAnchorTx(tx)) ? 'docs' : 'escrow';
   } else if (t === 'listings') {
-    var ls = null; (DATA.listings || []).forEach(function (r) { if (String(r.id) === String(id)) ls = r; });
-    browseTab = 'listings'; propSeg = isPrepListing(ls) ? 'prep' : 'active';
+    openListingPage(id); return;
   } else { browseTab = t; propSeg = 'active'; }
   renderTabs(); renderBrowse();
   openRids[String(id)] = true;
@@ -11496,6 +11506,32 @@ function setTab(t) {
    of half-open cards behind — same idea as a native Mail/Notes list, tap the next one and the
    last one puts itself away. */
 var openRids = {};
+/* ---------- Listing page (2026-09-09) ---------- */
+var LISTING_PAGE_ID = null;
+function openListingPage(id) {
+  LISTING_PAGE_ID = String(id);
+  renderListingPage();
+  openPanel('listing-card');
+  logEvent('listings', id, 'listing.opened', 'Opened listing page: ' + (recLabel('listings', id) || id));
+}
+function renderListingPage() {
+  var id = LISTING_PAGE_ID; if (!id) return;
+  var x = recOf('listings', id); var h2 = document.getElementById('listing-page-h2'), body = document.getElementById('listing-page-body');
+  if (!x) { if (body) body.innerHTML = '<div class="empty">Listing not found.</div>'; return; }
+  if (h2) h2.innerHTML = '<span style="display:flex;align-items:center;gap:10px;min-width:0;"><button class="hbtn" onclick="closePanel()" title="Back to Listings">&larr;</button><span style="min-width:0;">' + esc(x.address || 'Listing') + '</span></span>';
+  var sub = [x.status, [x.beds, x.baths].filter(Boolean).join('/') , x.sqft ? (x.sqft + ' sqft') : '', x.seller_name].filter(Boolean).join(' · ');
+  var det = [x.seller_contact ? 'Seller: ' + (x.seller_name || '') + ' ' + x.seller_contact : '', x.notes || ''].filter(Boolean).join(NL2);
+  var h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px;"><div style="min-width:0;"><div class="hint" style="margin:0;">' + esc(sub) + '</div></div><div style="font-size:18px;white-space:nowrap;">' + esc(money(x.price) || '') + '</div></div>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;"><button class="qbtn done" onclick="openListingPhotos(\'' + escJs(String(id)) + '\')">Photos &amp; staging</button></div>';
+  h += '<div class="det" style="display:block;">' + (det ? esc(det) : '') + topActionsHtml('listings', id) + recordExtras('listings', id) + '</div>';
+  if (body) body.innerHTML = h;
+  reopenSections();
+}
+function openListingPhotos(id) {
+  menuShowPhotos();
+  var go = function () { if (PHOTOS) { phOpenCrm(String(id)); } else { setTimeout(go, 400); } };
+  setTimeout(go, 50);
+}
 function toggleRow(el) {
   var rid = el.getAttribute('data-rid');
   var wasOpen = el.classList.contains('open');
@@ -11551,7 +11587,8 @@ function rowHtml(nm, side, sub, det, hot, id, actions) {
   /* Swipe-to-archive (2026-07-24) scoped to Prospects + Leads only, per Nick's call — every other
      rowTable (buyers/listings/transactions/agents) renders through this same function untouched. */
   var swipeCls = (rowTable === 'prospects' || rowTable === 'offmarket') ? ' arch-swipe' : '';
-  return '<div class="row' + swipeCls + '" data-rid="' + esc(String(id)) + '" data-atable="' + esc(rowTable) + '" onclick="toggleRow(this)">' + cov
+  var onclick = (rowTable === 'listings') ? 'openListingPage(\'' + escJs(String(id)) + '\')' : 'toggleRow(this)';
+  return '<div class="row' + swipeCls + '" data-rid="' + esc(String(id)) + '" data-atable="' + esc(rowTable) + '" onclick="' + onclick + '">' + cov
     + '<div class="r1"><span class="nm">' + esc(nm) + (hot ? ' <span class="pill hot">HOT</span>' : '') + '</span><span class="rside">' + esc(side || '') + (actions || '') + '</span></div>'
     + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
     + '<div class="det">' + (det ? esc(det) : '') + topActionsHtml(rowTable, id) + recordExtras(rowTable, id) + '</div>'
