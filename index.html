@@ -782,7 +782,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.224.0';
+var APP_VERSION = 'v5.225.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -3652,7 +3652,7 @@ var FORM_SPECS = {
   offmarket: [['address_area','Address or area',null,'9146 St. Ives Dr — Bird Streets'],['price','Asking price',null,'3.2M','Type it any way — 3.2M, 3,200,000, "around 3 million"'],['beds','Beds',null,'3'],['baths','Baths',null,'3'],['sqft','Sqft',null,'2738'],['lot_sqft','Lot sqft',null,'6800'],['priority','How hot?',['Hot','Warm','Cold']],['source','Where you heard it',null,'agent text, TAN, dinner party…'],['list_agent','Listing agent','agentpicker',null,'Who represents it — type to search your agents or add a new name. Links to their card.'],['follow_up_date','Follow up on','date'],['buyer_links','Link buyers','buyerlinks',null,'Any of your buyers who might want this — check as many as fit. You can always add more later from the buyer’s card.'],['notes','Notes','textarea','Anything worth remembering — private, never shared externally']],
   buyers: [['name','Client name',null,'Kevin & Mike'],['contact','Email or phone',null,'kevin@gmail.com or 310-555-1212','Either or both — so you can reach them from here'],['budget_min','Budget — from',null,'2.5M','Type it any way — 2.5M, 2,500,000, 900k'],['budget_max','Budget — up to',null,'5M'],['areas','Neighborhoods',null,'Brentwood, Santa Monica'],['timeline','How soon',null,'ASAP · 3–6 months · just looking'],['must_haves','Must-haves',null,'pool, view, room for an office'],['notes','Notes','textarea','Anything worth remembering']],
   prospects: [['address','Address',null,'123 Ocean Ave'],['type','Type',null,'Cold Prospect'],['priority','Priority',['Hot','Warm','Cold']],['owner_name','Owner name',null,'Jane Smith'],['owner_contact','Owner email or phone',null,'jane@gmail.com or 310-555-1212'],['connection','Your connection',null,'family friend, met at an open house, referred by an agent','How you already know this owner, if you do — flagged in the list so you never cold-approach someone you actually know.'],['target_owner','Farming for (optional)',null,'Penelope Cruz','Prospecting this one because of someone ELSE nearby — a listing angle off a connection you have, or a home you could sell them directly? Name them here. Groups with search and shows on the card, separate from this row’s own owner.'],['target_reason','Why this target (optional)',null,'adjacency listing angle, potential direct buyer for them'],['follow_up_date','Follow up on','date'],['notes','Notes','textarea']],
-  listings: [['address','Address',null,'2433 28th Street #B'],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Off Market']],['price','Price',null,'1.775M'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
+  listings: [['address','Address',null,'2433 28th Street #B'],['listing_type','Type',['Sale','Lease']],['status','Status',['Prep','Coming Soon','Active','Pending','Sold','Leased','Off Market']],['price','Price',null,'1.775M (or 12,500 for a lease — per month)'],['beds','Beds',null,'4'],['baths','Baths',null,'3'],['seller_name','Seller name',null,'Rachel & Alex'],['seller_contact','Seller email or phone',null,'rachel@gmail.com or 310-555-1212'],['notes','Notes','textarea']],
   transactions: [['address','Address'],['status','Status'],['contract_price','Contract price',null,'2.9M'],['contingency_date','Contingency date','date'],['closing_date','Closing date','date'],['notes','Notes','textarea']],
   followups: [['action_text','What needs doing?',null,'Call Bianca about St. Ives photos'],['record_label','About which client / property? (optional)',null,'9146 St. Ives'],['due_date','Due date','date'],['urgency','How urgent?',['now','soon','later']]],
   agents: [['name','Agent name',null,'Drew Fenton'],['brokerage','Brokerage',null,'Carolwood, Hilton & Hyland…'],['email','Email',null,'agent@brokerage.com'],['phone','Phone',null,'310-555-1212'],['areas','Neighborhoods they work',null,'Bird Streets, Bel Air, Malibu'],['price_min','Their buyers — from',null,'5M','Type it any way — 5M, 5,000,000'],['price_max','Their buyers — up to',null,'40M'],['buyer_notes','Who their buyers are',null,'entertainment, intl, tech'],['relationship','Relationship / trust',null,'close · solid · new · careful'],['notes','Notes','textarea','Anything worth remembering']]
@@ -10374,7 +10374,7 @@ function previewDraft(listingId) {
   var names = Object.keys(sel).map(function (aid) { var a = agentRec(aid); return a ? (a.name || a.email) : null; }).filter(Boolean);
   var facts = [[x.beds, 'bd'], [x.baths, 'ba']].filter(function (f) { return f[0]; }).map(function (f) { return f[0] + ' ' + f[1]; }).join(' / ');
   var body = 'Off-market pricing preview — ' + (x.address || 'a new listing') + '\n'
-    + (x.price ? 'Asking: ' + money(x.price) + '\n' : '')
+    + (x.price ? 'Asking: ' + listingPrice(x) + '\n' : '')
     + [facts, x.sqft ? Number(x.sqft).toLocaleString() + ' sqft' : ''].filter(Boolean).join(' · ') + '\n\n'
     + (x.notes ? x.notes + '\n\n' : '')
     + 'Sharing privately before it hits the market — if you have a buyer in this range, let me know and I’ll send details.\n\n' + SPIRO_SIG;
@@ -11485,6 +11485,11 @@ function isDocAnchorTx(t) {
   return !!(t.extra && t.extra.reconstructed);
 }
 function isLiveEscrowTx(t) { return !isPastTx(t) && !isDocAnchorTx(t); }
+/* Lease listings (2026-09-09): a listing can be a Sale or a Lease. Lease price is per month and is
+   shown with "/mo"; lease listings stay out of purchase-buyer matching (DB side) and out of sale-only
+   surfaces here. isLease() tolerates the older rows that have no listing_type. */
+function isLease(l) { return !!(l && /^lease$/i.test(String(l.listing_type || ''))); }
+function listingPrice(l) { var m = money(l && l.price); return m ? (isLease(l) ? m + '/mo' : m) : ''; }
 function isPrepListing(l) { return !!(l && l.status === 'Prep'); }
 /* Listings status display order (2026-07-27): Pending, Active, Coming Soon, Off Market, then
    any other status sorts last (rather than in random/insertion order). */
@@ -11538,9 +11543,9 @@ function renderListingPage() {
   var x = recOf('listings', id); var h2 = document.getElementById('listing-page-h2'), body = document.getElementById('listing-page-body');
   if (!x) { if (body) body.innerHTML = '<div class="empty">Listing not found.</div>'; return; }
   if (h2) h2.innerHTML = '<span style="display:flex;align-items:center;gap:10px;min-width:0;"><button class="hbtn" onclick="closePanel()" title="Back to Listings">&larr;</button><span style="min-width:0;">' + esc(x.address || 'Listing') + '</span></span>';
-  var sub = [x.status, [x.beds, x.baths].filter(Boolean).join('/') , x.sqft ? (x.sqft + ' sqft') : '', x.seller_name].filter(Boolean).join(' · ');
+  var sub = [isLease(x) ? 'Lease' : '', x.status, [x.beds, x.baths].filter(Boolean).join('/') , x.sqft ? (x.sqft + ' sqft') : '', x.seller_name].filter(Boolean).join(' · ');
   var det = [x.seller_contact ? 'Seller: ' + (x.seller_name || '') + ' ' + x.seller_contact : '', x.notes || ''].filter(Boolean).join(NL2);
-  var h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px;"><div style="min-width:0;"><div class="hint" style="margin:0;">' + esc(sub) + '</div></div><div style="font-size:18px;white-space:nowrap;">' + esc(money(x.price) || '') + '</div></div>';
+  var h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px;"><div style="min-width:0;"><div class="hint" style="margin:0;">' + esc(sub) + '</div></div><div style="font-size:18px;white-space:nowrap;">' + esc(listingPrice(x)) + '</div></div>';
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;"><button class="qbtn done" onclick="openListingPhotos(\'' + escJs(String(id)) + '\')">Photos &amp; staging</button></div>';
   h += '<div class="det" style="display:block;">' + (det ? esc(det) : '') + topActionsHtml('listings', id) + recordExtras('listings', id) + '</div>';
   if (body) body.innerHTML = h;
@@ -14316,8 +14321,8 @@ function renderBrowse() {
       sub = [x.source, x.follow_up_date ? 'follow up ' + fmtDate(x.follow_up_date) : ''].filter(Boolean).join(' · ');
       det = x.notes || '';
     } else if (rowTable === 'listings') {
-      nm = x.address; side = money(x.price);
-      sub = [x.status, [x.beds, x.baths].filter(Boolean).join('/') , x.seller_name].filter(Boolean).join(' · ');
+      nm = x.address; side = listingPrice(x);
+      sub = [isLease(x) ? 'Lease' : '', x.status, [x.beds, x.baths].filter(Boolean).join('/') , x.seller_name].filter(Boolean).join(' · ');
       det = [x.seller_contact ? 'Seller: ' + (x.seller_name || '') + ' ' + x.seller_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'transactions') {
       nm = x.address; side = money(x.contract_price);
