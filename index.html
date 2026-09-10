@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.245.0';
+var APP_VERSION = 'v5.246.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1483,11 +1483,20 @@ async function mtBulkApply(action, reason) {
   await loadAll(false);
 }
 function mtSeedAi() { (DATA.matches || []).forEach(function (m) { if (m.ai_action && !MT_AI[m.id]) MT_AI[m.id] = { action: m.ai_action, reason: m.ai_reason, reason_code: m.ai_reason_code }; }); }
+var MT_SHOWN_LOGGED = {};
+function mtLogShown(ids) {
+  /* 2026-09-10: what Nick sees and doesn't act on is a (mild) signal; log once per match per session. */
+  var fresh = ids.filter(function (id) { return !MT_SHOWN_LOGGED[id]; }).slice(0, 200); if (!fresh.length) return;
+  fresh.forEach(function (id) { MT_SHOWN_LOGGED[id] = 1; });
+  var rows = fresh.map(function (id) { var m = null; (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(id)) m = x; }); return m ? { actor: 'system', subject_type: 'buyers', subject_id: String(m.buyer_id), object_type: m.target_type, object_id: String(m.target_id), signal: 'match.shown', verdict: 'neutral', meta: { features: m.features || {}, batch: new Date().toISOString().slice(0, 10) }, source: 'app' } : null; }).filter(Boolean);
+  if (rows.length) sb.from('signals').insert(rows).then(function () { /* fire and forget */ });
+}
 function renderMatchTriage() {
   mtSeedAi();
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
   if (!body || !bar) return;
   var allSuggested = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
+  setTimeout(function () { mtLogShown(allSuggested.slice(0, 120).map(function (m) { return String(m.id); })); }, 800);
   var now = Date.now();
   allSuggested.forEach(function (m) { m._age = m.created_at ? Math.floor((now - new Date(m.created_at).getTime()) / 86400000) : null; });
   allSuggested.sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || ((b._age || 0) - (a._age || 0)); });
@@ -2412,7 +2421,7 @@ async function loadAll(manual) {
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
     sb.from('followups').select('id,action_text,record_label,updated_at').eq('status', 'archived').order('updated_at', { ascending: false }).limit(50),
     sb.from('offmarket_potential_buyers').select('offmarket_id,buyer_id,sent_at,response,response_notes,response_at'),
-    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at,ai_action,ai_reason,ai_reason_code,ai_at').neq('status', 'dismissed'),
+    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at,ai_action,ai_reason,ai_reason_code,ai_at,outcome,outcome_at,features').neq('status', 'dismissed'),
     sb.from('transaction_deadlines').select('*'),
     sb.from('esign_envelopes').select('*'),
     sb.from('showings').select('*'),
@@ -9338,7 +9347,21 @@ function sendActionsHtml(via, recType, recId, buyerId, matchId, sentAt, response
       + '<button class="qbtn" onclick="event.stopPropagation();logBuyerResponse(' + q + ',\'passed\')">Passed</button>'
       + '<button class="qbtn" onclick="event.stopPropagation();logBuyerResponse(' + q + ',\'no_response\')">No response</button>';
   }
-  return '<button class="qbtn" onclick="event.stopPropagation();logBuyerResponse(' + q + ',\'pending\')">Undo</button>';
+  var oc = (function () { var m = null; (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(matchId)) m = x; }); return m && m.outcome; })();
+  var ocBtns = '';
+  if (matchId && response === 'interested') {
+    /* Outcomes (2026-09-10): "interested" is a weak label; what happened next is the strong one. These
+       write matches.outcome, which the learning ledger weights 2/4/5 (showed/offer/closed). */
+    ocBtns = [['showed', 'Showed it'], ['offer', 'Offer'], ['closed', 'Closed']].map(function (o) { return '<button class="qbtn' + (oc === o[0] ? ' done' : '') + '" onclick="event.stopPropagation();setMatchOutcome(\'' + esc(matchId) + '\',\'' + o[0] + '\')">' + o[1] + '</button>'; }).join('');
+  }
+  return ocBtns + '<button class="qbtn" onclick="event.stopPropagation();logBuyerResponse(' + q + ',\'pending\')">Undo</button>';
+}
+async function setMatchOutcome(matchId, outcome) {
+  var r = await sb.from('matches').update({ outcome: outcome, outcome_at: nowStamp() }).eq('id', matchId).select('id');
+  if (r.error) { toast('Could not save'); return; }
+  (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(matchId)) { x.outcome = outcome; } });
+  toast(outcome === 'showed' ? 'Logged: showed it' : outcome === 'offer' ? 'Logged: offer' : 'Logged: closed');
+  if (typeof renderAll === 'function') renderAll();
 }
 async function markSentToBuyer(via, recType, recId, buyerId, matchId) {
   var patch = { sent_at: nowStamp(), response: 'pending', response_at: null, response_notes: null };
@@ -9737,7 +9760,43 @@ function buyerSuggestedHtml(bid) {
       + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(' + "'" + s.matchId + "'" + ')">&#10005;</button>'
       + '<div id="dismiss-' + esc(String(s.matchId)) + '" style="flex-basis:100%;"></div></div>';
   }).join('');
+  html += beliefsPanelHtml('buyers', bid);
   return { count: r.suggested.length, html: html };
+}
+/* What Spiro believes (2026-09-10): the learning model's per-buyer beliefs, readable and correctable
+   on the buyer page. "Wrong" writes an override (weight 0, evidence 999) which the nightly refresh
+   never overwrites, and logs a belief.override signal — Nick's corrections are the strongest signal. */
+var BELIEFS = null, BELIEFS_AT = 0;
+async function loadBeliefs(force) {
+  if (BELIEFS && !force && Date.now() - BELIEFS_AT < 5 * 60 * 1000) return BELIEFS;
+  var r = await sb.from('beliefs').select('scope_type,scope_id,key,value,weight,evidence,confidence').eq('scope_type', 'buyers');
+  BELIEFS = r.error ? (BELIEFS || []) : (r.data || []); BELIEFS_AT = Date.now();
+  if (typeof renderAll === 'function') renderAll();
+  return BELIEFS;
+}
+function beliefLine(b) {
+  var k = b.key, v = b.value || {}, w = Number(b.weight || 0);
+  if (k === 'match_acceptance') return (w >= 0.3 ? 'Usually accepts suggestions' : w <= -0.3 ? 'Rarely accepts suggestions — higher bar' : 'Mixed on suggestions') + ' (' + Math.round((v.positive || 0)) + ' yes / ' + Math.round((v.negative || 0)) + ' no)';
+  if (k.indexOf('dismiss_reason:') === 0) return 'Often dismisses for: ' + k.slice(15).replace(/_/g, ' ') + ' (' + Math.round((v.share || 0) * 100) + '%)';
+  if (k.indexOf('feature:') === 0) { var f = k.slice(8).split('='); return (w < 0 ? 'Dislikes ' : 'Likes ') + f[0].replace(/_/g, ' ') + ' = ' + f[1]; }
+  if (k === 'response_latency_h') return 'You act on their matches in ~' + Math.round(v.median_h || 0) + ' h';
+  if (k === 'act_rate') return 'You act on ' + Math.round(((v.acted || 0) / Math.max(1, v.shown || 1)) * 100) + '% of what you see for them';
+  return k;
+}
+function beliefsPanelHtml(scopeType, scopeId) {
+  if (!BELIEFS) { loadBeliefs(); return ''; }
+  var rows = BELIEFS.filter(function (b) { return b.scope_type === scopeType && String(b.scope_id) === String(scopeId) && !(b.value && b.value.override); });
+  if (!rows.length) return '<div class="hint" style="margin:10px 0 4px;">What Spiro believes about this client: nothing yet — decisions on their matches teach it.</div>';
+  rows.sort(function (a, b) { return (b.confidence || 0) - (a.confidence || 0); });
+  return '<div class="flabel" style="margin-top:14px;">What Spiro believes</div>' + rows.slice(0, 8).map(function (b) {
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(beliefLine(b)) + '</div><div class="t2">confidence ' + Math.round((b.confidence || 0) * 100) + '% · ' + b.evidence + ' signals</div></div>'
+      + '<button class="qbtn" title="Mark this belief wrong — it stops being applied" onclick="event.stopPropagation();beliefWrong(\'' + esc(scopeType) + '\',\'' + esc(String(scopeId)) + '\',\'' + esc(b.key) + '\')">Wrong</button></div>';
+  }).join('');
+}
+async function beliefWrong(scopeType, scopeId, key) {
+  var r = await sb.rpc('fn_belief_override', { p_scope_type: scopeType, p_scope_id: scopeId, p_key: key, p_weight: 0 });
+  if (r.error) { toast('Could not save'); return; }
+  toast('Noted — that belief is off'); loadBeliefs(true);
 }
 function leadBuyersHtml(oid) {
   var h = '<div class="flabel">Potential buyers</div>';
@@ -10687,8 +10746,11 @@ async function confirmMatch(matchId) {
    which is worse than none, since a wrong one actively mistrains the scorer. */
 var DISMISS_CHIPS = [
   ['wrong_area', 'Wrong area'], ['over_budget', 'Over budget'], ['under_budget', 'Too cheap'],
-  ['too_small', 'Too small'], ['wrong_type', 'Wrong type'], ['not_now', 'Not looking now'],
-  ['already_knows', 'Already knows it'], ['other', 'Something else']
+  ['too_small', 'Too small'], ['wrong_type', 'Wrong type'],
+  /* 2026-09-10: the reasons that actually decide a house — these become per-buyer beliefs */
+  ['no_view', 'No view'], ['busy_street', 'Busy street'], ['dated', 'Dated'], ['bad_lot', 'Bad lot'],
+  ['wrong_architecture', 'Wrong architecture'], ['too_much_work', 'Too much work'], ['hoa', 'HOA'],
+  ['not_now', 'Not looking now'], ['already_knows', 'Already knows it'], ['other', 'Something else']
 ];
 function dismissMatch(matchId) {
   var host = document.getElementById('dismiss-' + matchId);
