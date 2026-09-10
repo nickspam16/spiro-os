@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.243.0';
+var APP_VERSION = 'v5.244.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1396,11 +1396,12 @@ async function mtRunAiTriage() {
   if (!rows.length) { toast('Nothing to triage'); return; }
   MT_AI_BUSY = true; renderMatchTriage();
   var chunks = [];
-  for (var i = 0; i < rows.length; i += 60) chunks.push(rows.slice(i, i + 60));
+  for (var i = 0; i < rows.length; i += 20) chunks.push(rows.slice(i, i + 20));
   var got = 0, failedChunks = 0;
   for (var c = 0; c < chunks.length; c++) {
     var batch = chunks[c].map(mtAiItem);
-    var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'match_triage', text: JSON.stringify(batch) } }), 45000, { error: { message: 'timed out' } });
+    var r = await withTimeout(sb.functions.invoke('ask', { body: { mode: 'match_triage', text: JSON.stringify(batch) } }), 100000, { error: { message: 'timed out' } });
+    if (typeof mtAiProgress === 'function') mtAiProgress(c + 1, chunks.length, got);
     if (r.error || !r.data || !Array.isArray(r.data.recommendations)) { failedChunks++; continue; }
     r.data.recommendations.forEach(function (rec) {
       MT_AI[rec.id] = { action: rec.action, reason: rec.reason, reason_code: rec.reason_code };
@@ -1414,6 +1415,7 @@ async function mtRunAiTriage() {
   toast(got + ' AI recommendation' + (got === 1 ? '' : 's') + (failedChunks ? ' — ' + failedChunks + ' batch' + (failedChunks === 1 ? '' : 'es') + ' failed' : ''));
   renderMatchTriage();
 }
+function mtAiProgress(done, total, got) { var el = document.getElementById('mt-ai-progress'); if (el) el.textContent = 'AI pre-flag: batch ' + done + ' of ' + total + ' · ' + got + ' verdicts so far'; }
 function mtAiFilter(v) { MT_AI_FILTER = (MT_AI_FILTER === v ? null : v); renderMatchTriage(); }
 /* Bulk-apply every currently-suggested match the AI flagged with this verdict. Never offered for
    "unsure" -- that verdict exists precisely so it's NOT auto-applied. Dismiss uses each match's OWN
