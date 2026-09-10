@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.241.0';
+var APP_VERSION = 'v5.242.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1406,6 +1406,9 @@ async function mtRunAiTriage() {
       MT_AI[rec.id] = { action: rec.action, reason: rec.reason, reason_code: rec.reason_code };
     });
     got += r.data.recommendations.length;
+    /* Persist (2026-09-09): verdicts used to live only in this tab. Now they're written to the match
+       row so an overnight pass is waiting in the morning and survives a reload. */
+    try { await Promise.all(r.data.recommendations.map(function (rec) { return sb.from('matches').update({ ai_action: rec.action, ai_reason: rec.reason, ai_reason_code: rec.reason_code, ai_at: new Date().toISOString() }).eq('id', rec.id); })); } catch (e) { /* non-fatal */ }
   }
   MT_AI_BUSY = false;
   toast(got + ' AI recommendation' + (got === 1 ? '' : 's') + (failedChunks ? ' — ' + failedChunks + ' batch' + (failedChunks === 1 ? '' : 'es') + ' failed' : ''));
@@ -1477,7 +1480,9 @@ async function mtBulkApply(action, reason) {
   toast(okN + ' updated' + (failN ? ', ' + failN + ' failed' : ''));
   await loadAll(false);
 }
+function mtSeedAi() { (DATA.matches || []).forEach(function (m) { if (m.ai_action && !MT_AI[m.id]) MT_AI[m.id] = { action: m.ai_action, reason: m.ai_reason, reason_code: m.ai_reason_code }; }); }
 function renderMatchTriage() {
+  mtSeedAi();
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
   if (!body || !bar) return;
   var allSuggested = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
@@ -2405,7 +2410,7 @@ async function loadAll(manual) {
     sb.from('memories').select('id,entity_type,entity_id,kind,content,confidence').eq('active', true),
     sb.from('followups').select('id,action_text,record_label,updated_at').eq('status', 'archived').order('updated_at', { ascending: false }).limit(50),
     sb.from('offmarket_potential_buyers').select('offmarket_id,buyer_id,sent_at,response,response_notes,response_at'),
-    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at').neq('status', 'dismissed'),
+    sb.from('matches').select('id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at,ai_action,ai_reason,ai_reason_code,ai_at').neq('status', 'dismissed'),
     sb.from('transaction_deadlines').select('*'),
     sb.from('esign_envelopes').select('*'),
     sb.from('showings').select('*'),
