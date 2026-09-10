@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.242.0';
+var APP_VERSION = 'v5.243.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -12882,7 +12882,7 @@ function floorPlanPanel(table, id) {
   h += '<div class="t2">' + n + ' room' + (n === 1 ? '' : 's') + ' &middot; ' + (fp.accuracy === 'measured' ? 'measured' : 'approximate (from photos)')
     + (fp.updated_at ? ' &middot; updated ' + esc(new Date(fp.updated_at).toLocaleDateString()) : '') + '</div>';
   h += '<div style="margin-top:6px;"><button class="qbtn" onclick="event.stopPropagation();openFloorPlanEditor(' + q + ')">Edit</button> '
-    + '<button class="qbtn done" onclick="event.stopPropagation();printFloorPlan(' + q + ')">Print / export</button></div>';
+    + '<button class="qbtn done" onclick="event.stopPropagation();exportFloorPlanImage(' + q + ')" title="2400×1600 JPG, ready to use as a listing photo">Export image</button><button class="qbtn" onclick="event.stopPropagation();printFloorPlan(' + q + ')">Print</button></div>';
   return h;
 }
 
@@ -13112,6 +13112,61 @@ async function fpSave() {
   render();
 }
 
+/* Listing-grade floor plan graphic (2026-09-09 night build). Nick's reason #1 for the feature was a
+   plan he can drop into the listing photos. This renders the room rectangles as a designed plate:
+   cream ground, walls as thick dark strokes, room names in small caps, a title block with the address
+   and the "approximate" disclosure, Spiro mark. Exports as a 2400x1600 JPG (3:2, MLS-friendly).
+   Geometry-only inputs (x/y/w/h already numeric); every string is esc()'d. */
+function floorPlanPlateSvg(x) {
+  var fp = x.extra && x.extra.floor_plan; if (!fp || !fp.rooms || !fp.rooms.length) return '';
+  var W = 2400, H = 1600, pad = 140, titleH = 220;
+  var minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+  fp.rooms.forEach(function (r) { var x1 = +r.x || 0, y1 = +r.y || 0, w1 = +r.w || 0, h1 = +r.h || 0; minX = Math.min(minX, x1); minY = Math.min(minY, y1); maxX = Math.max(maxX, x1 + w1); maxY = Math.max(maxY, y1 + h1); });
+  var bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+  var availW = W - pad * 2, availH = H - pad * 2 - titleH;
+  var sc = Math.min(availW / bw, availH / bh);
+  var ox = pad + (availW - bw * sc) / 2 - minX * sc, oy = pad + (availH - bh * sc) / 2 - minY * sc;
+  var wall = Math.max(6, Math.round(sc * 6));
+  var rooms = fp.rooms.map(function (r) {
+    var x1 = (+r.x || 0) * sc + ox, y1 = (+r.y || 0) * sc + oy, w1 = (+r.w || 0) * sc, h1 = (+r.h || 0) * sc;
+    var label = String(r.label || 'Room').toUpperCase();
+    /* fit: each char ≈ 0.62em wide + 0.18em tracking; shrink to fit, wrap to two lines if it gets small */
+    var fit = function (t) { return Math.min(40, (w1 * 0.86) / (t.length * 0.8)); };
+    var lines = [label], fs = fit(label);
+    if (fs < 22 && /\s/.test(label)) { var words = label.split(/\s+/), a = words.slice(0, Math.ceil(words.length / 2)).join(' '), b = words.slice(Math.ceil(words.length / 2)).join(' '); lines = [a, b]; fs = Math.min(fit(a), fit(b)); }
+    fs = Math.max(14, Math.min(fs, Math.round(h1 / (lines.length * 3))));
+    var lh = fs * 1.25, y0 = y1 + h1 / 2 - (lines.length - 1) * lh / 2 + fs * 0.35;
+    var text = lines.map(function (t, i) { return '<text x="' + (x1 + w1 / 2) + '" y="' + (y0 + i * lh) + '" text-anchor="middle" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="' + fs + '" letter-spacing="' + (fs * 0.18) + '" fill="#2A2B24">' + esc(t) + '</text>'; }).join('');
+    return '<rect x="' + x1 + '" y="' + y1 + '" width="' + w1 + '" height="' + h1 + '" fill="#FBF8F1" stroke="#2A2B24" stroke-width="' + wall + '" stroke-linejoin="miter"/>' + text;
+  }).join('');
+  var addr = esc(x.address || x.address_area || 'This property');
+  var sub = esc([x.beds ? x.beds + ' bed' : '', x.baths ? x.baths + ' bath' : '', x.sqft ? Number(String(x.sqft).replace(/[^0-9.]/g, '')).toLocaleString() + ' sq ft' : ''].filter(Boolean).join('  ·  '));
+  var note = fp.accuracy === 'measured' ? 'Floor plan' : 'Floor plan  ·  approximate, not a measured survey';
+  var ty = H - titleH + 40;
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">'
+    + '<rect width="' + W + '" height="' + H + '" fill="#F4EFE4"/>'
+    + rooms
+    + '<line x1="' + pad + '" y1="' + (H - titleH) + '" x2="' + (W - pad) + '" y2="' + (H - titleH) + '" stroke="#2A2B24" stroke-width="2"/>'
+    + '<text x="' + pad + '" y="' + (ty + 42) + '" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="64" fill="#2A2B24">' + addr + '</text>'
+    + (sub ? '<text x="' + pad + '" y="' + (ty + 96) + '" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="30" letter-spacing="2" fill="#6F6A5C">' + sub + '</text>' : '')
+    + '<text x="' + pad + '" y="' + (ty + 146) + '" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="24" letter-spacing="4" fill="#8A8273">' + esc(note.toUpperCase()) + '</text>'
+    + '<text x="' + (W - pad) + '" y="' + (ty + 42) + '" text-anchor="end" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="30" letter-spacing="6" fill="#2A2B24">NICK SPIRO</text>'
+    + '<text x="' + (W - pad) + '" y="' + (ty + 84) + '" text-anchor="end" font-family="Cormorant Garamond, Baskerville, Georgia, serif" font-size="22" letter-spacing="5" fill="#8A8273">CAROLWOOD ESTATES  ·  DRE 02148302</text>'
+    + '</svg>';
+}
+async function exportFloorPlanImage(table, id) {
+  var x = recOf(table, id); if (!x || !x.extra || !x.extra.floor_plan || !x.extra.floor_plan.rooms.length) { toast('Build a floor plan first'); return; }
+  var svg = floorPlanPlateSvg(x); if (!svg) return;
+  try {
+    var img = new Image(); var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    await new Promise(function (res, rej) { img.onload = res; img.onerror = rej; img.src = url; });
+    var c = document.createElement('canvas'); c.width = 2400; c.height = 1600; var ctx = c.getContext('2d'); ctx.fillStyle = '#F4EFE4'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    var name = String(x.address || 'floor-plan').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() + '-floor-plan.jpg';
+    c.toBlob(function (b) { var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000); toast('Floor plan exported — 2400×1600 JPG'); }, 'image/jpeg', 0.92);
+    logEvent(table, id, 'floorplan.exported', 'Exported floor plan image for ' + (x.address || x.address_area || ''));
+  } catch (e) { toast('Export failed'); }
+}
 function printFloorPlan(table, id) {
   var x = recOf(table, id); if (!x || !x.extra || !x.extra.floor_plan || !x.extra.floor_plan.rooms.length) { toast('Build a floor plan first'); return; }
   var fp = x.extra.floor_plan, addr = esc(x.address || x.address_area || 'This property');
