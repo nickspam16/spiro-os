@@ -453,6 +453,7 @@
             <a href="javascript:void(0)" onclick="menuShowPricingPreview()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Pricing Preview</a>
             <a href="javascript:void(0)" onclick="menuShowPortal()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer Portal</a>
             <a href="javascript:void(0)" onclick="menuShowPhotos()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Photos <span id="more-menu-photos-n" class="pill" style="display:none;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowContent()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">The Canyon Line</a>
             <a href="javascript:void(0)" onclick="menuShowShareLinks()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Share Links</a>
             <a href="javascript:void(0)" onclick="menuShowBrief()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Morning Brief</a>
             <a href="javascript:void(0)" onclick="menuShowActivity()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Recent Activity</a>
@@ -569,6 +570,12 @@
          and needs attaching, per-listing gallery (hero/order/remove) and virtual staging. Backend is
          photo-stage (JWT-gated sibling of portal-bridge); the browser never holds portal keys. Nick's
          brief: "robust engine underneath, simplistic interface". -->
+    <div class="card" id="content-card" style="display:none;">
+      <h2>The Canyon Line</h2>
+      <div class="hint" style="margin:-6px 0 10px;">Ask for a house the way you'd say it &mdash; &ldquo;MCM this week&rdquo;, &ldquo;farmhouse in Brentwood&rdquo;, &ldquo;untraded 40 years Bel Air&rdquo;, &ldquo;then now Silver Lake&rdquo;. Ranked from the hero list with why. Drafting a post creates the prospect and the owner note; nothing is published from here.</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;"><input id="tcl-q" placeholder="need a…" style="flex:1;" onkeydown="if(event.key==='Enter')tclSearch()"><button class="qbtn done" onclick="tclSearch()">Find</button></div>
+      <div id="tcl-body"><div class="empty">Type an ask.</div></div>
+    </div>
     <div class="card" id="photos-card" style="display:none;">
       <h2>Photos <span style="display:flex;gap:6px;"><button class="hbtn" onclick="fetchPhotos(true)" title="Refresh">&#8635;</button></span></h2>
       <div id="photos-body"><div class="empty">Loading&hellip;</div></div>
@@ -842,7 +849,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.247.0';
+var APP_VERSION = 'v5.248.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8524,6 +8531,35 @@ var PHOTOS = null, photosAt = 0, photosBusy = false, PHOTOS_SEL = null, PHOTO_UR
 var PH_STYLE_LABELS = { 'auto': 'Let Spiro choose', 'arnold': 'Arnold', 'pawson': 'Pawson', 'moser': 'Moser', 'clements': 'Clements', 'meyers': 'Meyers', 'uniacke': 'Uniacke', 'sikes': 'Sikes', 'warm-modern': 'Arnold', 'transitional': 'Clements', 'coastal': 'Meyers', 'hills-contemporary': 'Arnold', 'minimal': 'Pawson', 'classic-estate': 'Sikes' };
 var PH_STYLE_HINT = { 'auto': 'picks a designer from the architecture', 'arnold': 'warm tactile LA modern', 'pawson': 'monastic, light, near-empty', 'moser': 'organic Mediterranean', 'clements': 'soft modern, vintage soul', 'meyers': 'relaxed coastal classic', 'uniacke': 'quiet English luxury', 'sikes': 'classic American, blue & white' };
 function menuShowPhotos() { openPanel('photos-card'); if (PHOTOS) renderPhotos(); else fetchPhotos(false); }
+/* THE CANYON LINE content panel (2026-09-10). One house, two views: a hero house is a post AND a prospect.
+   fn_hero_search ranks by Nick's ask; tclDraft() calls fn_hero_post which creates/links the prospect (tier
+   featured), drafts the owner note (never sent by the system), opens the featured-agent follow-up on
+   'posted', and writes the tll.post signal. Nothing here touches Instagram. */
+var TCL_LAST = [];
+function menuShowContent() { openPanel('content-card'); setTimeout(function () { var q = document.getElementById('tcl-q'); if (q) q.focus(); }, 50); }
+async function tclSearch() {
+  var q = (document.getElementById('tcl-q') || {}).value || ''; var body = document.getElementById('tcl-body'); if (!body) return;
+  if (!q.trim()) { body.innerHTML = '<div class="empty">Type an ask.</div>'; return; }
+  body.innerHTML = '<div class="empty">Looking&hellip;</div>';
+  var r = await sb.rpc('fn_hero_search', { p_q: q, p_limit: 8 });
+  if (r.error) { body.innerHTML = '<div class="empty">Search failed: ' + esc(r.error.message) + '</div>'; return; }
+  TCL_LAST = r.data || [];
+  if (!TCL_LAST.length) { body.innerHTML = '<div class="empty">Nothing in the hero list matches yet &mdash; the list grows nightly from prospects, the hotsheet and research. Add &ldquo;vault&rdquo; to your ask to include the canon.</div>'; return; }
+  body.innerHTML = TCL_LAST.map(function (h, i) {
+    return '<div class="qi"><div class="txt"><div class="t1">' + esc(h.address || '') + (h.neighborhood ? ' <span class="hint">' + esc(h.neighborhood) + '</span>' : '') + (h.vault ? ' <span class="pill">vault</span>' : '') + '</div>'
+      + '<div class="t2">' + esc(h.why || '') + '</div></div>'
+      + '<button class="qbtn done" onclick="event.stopPropagation();tclDraft(' + i + ')" title="Create the draft post + prospect + owner note">Draft</button>'
+      + (h.market_status === 'active' ? '<span class="pill">on market</span>' : '') + '</div>';
+  }).join('');
+}
+async function tclDraft(i) {
+  var h = TCL_LAST[i]; if (!h) return;
+  var pillar = h.hooks && h.hooks.indexOf('then/now') >= 0 ? 'then_now' : (h.market_status === 'active' ? 'curated' : 'architect');
+  var r = await sb.rpc('fn_hero_post', { p_hero: h.id, p_pillar: pillar, p_status: 'draft' });
+  if (r.error || !(r.data && r.data.ok)) { toast('Could not draft: ' + esc((r.error && r.error.message) || (r.data && r.data.error) || '')); return; }
+  toast('Draft created · prospect linked'); logEvent('prospects', r.data.prospect_id, 'tcl.drafted', 'Drafted a ' + pillar + ' post for ' + (h.address || ''));
+  if (typeof fetchAll === 'function') fetchAll();
+}
 function phVisible(l) { if (PH_FILTER === 'mine' && !l.mine) return false; if (PH_Q) { var q = PH_Q.toLowerCase(); return (phLabel(l) + ' ' + (l.title || '') + ' ' + (l.area || '')).toLowerCase().indexOf(q) >= 0; } return true; }
 async function photoCall(payload, timeoutMs) {
   var s = await sb.auth.getSession(); var tok = s.data && s.data.session && s.data.session.access_token;
