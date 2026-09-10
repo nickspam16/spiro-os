@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.246.0';
+var APP_VERSION = 'v5.247.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -1491,6 +1491,7 @@ function mtLogShown(ids) {
   var rows = fresh.map(function (id) { var m = null; (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(id)) m = x; }); return m ? { actor: 'system', subject_type: 'buyers', subject_id: String(m.buyer_id), object_type: m.target_type, object_id: String(m.target_id), signal: 'match.shown', verdict: 'neutral', meta: { features: m.features || {}, batch: new Date().toISOString().slice(0, 10) }, source: 'app' } : null; }).filter(Boolean);
   if (rows.length) sb.from('signals').insert(rows).then(function () { /* fire and forget */ });
 }
+function mtGateHtml() { var g = BELIEFS_G && BELIEFS_G.ai_autonomy_ready; if (!g || !g.value) return ''; var v = g.value; return '<div class="hint" style="margin:0 0 8px;">AI pre-flag agrees with you ' + Math.round((v.agreement || 0) * 100) + '% over ' + (v.decisions_21d || 0) + ' decisions (21d) · ' + (v.ready ? '<b>ready to act on its own</b>' : 'needs 85% over 50 to act alone') + '</div>'; }
 function renderMatchTriage() {
   mtSeedAi();
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
@@ -1500,7 +1501,7 @@ function renderMatchTriage() {
   var now = Date.now();
   allSuggested.forEach(function (m) { m._age = m.created_at ? Math.floor((now - new Date(m.created_at).getTime()) / 86400000) : null; });
   allSuggested.sort(function (a, b) { return ((b.score || 0) - (a.score || 0)) || ((b._age || 0) - (a._age || 0)); });
-  if (!allSuggested.length) { bar.style.display = 'none'; body.innerHTML = '<div class="empty">No suggested matches waiting.</div>'; return; }
+  if (!allSuggested.length) { bar.style.display = 'none'; body.innerHTML = mtGateHtml() + '<div class="empty">No suggested matches waiting.</div>'; return; }
   var aiConfirmN = 0, aiDismissN = 0, aiUnsureN = 0, aiDoneN = 0;
   allSuggested.forEach(function (m) {
     var a = MT_AI[String(m.id)]; if (!a) return; aiDoneN++;
@@ -1556,7 +1557,7 @@ function renderMatchTriage() {
       + '<div id="dismiss-' + esc(id) + '" style="flex-basis:100%;"></div>'
       + '</div>';
   };
-  body.innerHTML = order.map(function (k) {
+  body.innerHTML = mtGateHtml() + order.map(function (k) {
     var ms = groups[k]; var b = recOf('buyers', k); var name = recLabel('buyers', k) || 'Unknown buyer';
     var crit = b ? [b.budget_max ? 'to ' + money(b.budget_max) : '', b.areas || '', b.timeline || ''].filter(Boolean).join(' · ') : '';
     var ids = ms.map(function (m) { return String(m.id); });
@@ -3019,9 +3020,14 @@ function buyersToCallRows() {
        there is nothing to send them today — so say so rather than implying a listing is waiting. */
     if (!mm.bestOnMarket) reasons.push('off-market prospects only');
     var pr = (mm.best >= 8 && !hasContact ? 2 : 0) + (mm.best >= 9 ? 1 : 0);
-    rows.push({ id: bu.id, name: bu.name, best: mm.best, count: mm.count, reasons: reasons, pr: pr, urgency: mm.urgency });
+    /* Learned priority (2026-09-10, #1): the model's brief_priority for this buyer — acceptance, act
+       rate, how fast Nick moves on them — breaks ties after readiness. Visible as a reason so it can
+       be corrected on the buyer page ("What Spiro believes"). */
+    var lp = beliefWeight('buyers', bu.id, 'brief_priority');
+    if (lp >= 0.3) reasons.push('you tend to act on this one'); else if (lp <= -0.3) reasons.push('you rarely act on this one');
+    rows.push({ id: bu.id, name: bu.name, best: mm.best, count: mm.count, reasons: reasons, pr: pr, urgency: mm.urgency, lp: lp });
   });
-  rows.sort(function (a, b) { return a.urgency - b.urgency || b.pr - a.pr || b.best - a.best; });
+  rows.sort(function (a, b) { return a.urgency - b.urgency || b.pr - a.pr || (b.lp || 0) - (a.lp || 0) || b.best - a.best; });
   return rows;
 }
 function renderIntel() { try {
@@ -9766,13 +9772,27 @@ function buyerSuggestedHtml(bid) {
 /* What Spiro believes (2026-09-10): the learning model's per-buyer beliefs, readable and correctable
    on the buyer page. "Wrong" writes an override (weight 0, evidence 999) which the nightly refresh
    never overwrites, and logs a belief.override signal — Nick's corrections are the strongest signal. */
-var BELIEFS = null, BELIEFS_AT = 0;
+var BELIEFS = null, BELIEFS_AT = 0, BELIEFS_G = {}, CRIT_PROPS = {};
 async function loadBeliefs(force) {
   if (BELIEFS && !force && Date.now() - BELIEFS_AT < 5 * 60 * 1000) return BELIEFS;
-  var r = await sb.from('beliefs').select('scope_type,scope_id,key,value,weight,evidence,confidence').eq('scope_type', 'buyers');
-  BELIEFS = r.error ? (BELIEFS || []) : (r.data || []); BELIEFS_AT = Date.now();
+  var r = await sb.from('beliefs').select('scope_type,scope_id,key,value,weight,evidence,confidence');
+  var all = r.error ? [] : (r.data || []);
+  BELIEFS = all.filter(function (b) { return b.scope_type !== 'global'; }); BELIEFS_AT = Date.now();
+  BELIEFS_G = {}; all.filter(function (b) { return b.scope_type === 'global'; }).forEach(function (b) { BELIEFS_G[b.key] = b; });
   if (typeof renderAll === 'function') renderAll();
   return BELIEFS;
+}
+function beliefWeight(scopeType, scopeId, key) { if (!BELIEFS) { loadBeliefs(); return 0; } var w = 0; BELIEFS.forEach(function (b) { if (b.scope_type === scopeType && String(b.scope_id) === String(scopeId) && b.key === key && !(b.value && b.value.override)) w = Number(b.weight || 0); }); return w; }
+/* #2 contact cadence: suggested due date from when Nick actually resolves follow-ups for this record */
+function cadenceSuggest(recType, recId) { if (!BELIEFS) return null; var c = null; BELIEFS.forEach(function (b) { if (b.scope_type === recType && String(b.scope_id) === String(recId) && b.key === 'contact_cadence' && (b.confidence || 0) >= 0.5) c = b.value; }); if (!c) return null; var d = new Date(); var add = ((Number(c.dow) - d.getDay()) + 7) % 7 || 7; d.setDate(d.getDate() + add); return { date: d.toISOString().slice(0, 10), hour: Number(c.hour_pt), dow: Number(c.dow) }; }
+/* #4 criteria proposals */
+async function loadCriteriaProposals(bid) { if (CRIT_PROPS[bid] && Date.now() - CRIT_PROPS[bid].at < 5 * 60 * 1000) return; CRIT_PROPS[bid] = { at: Date.now(), rows: [] }; var r = await sb.rpc('fn_criteria_proposals', { p_buyer: bid }); CRIT_PROPS[bid] = { at: Date.now(), rows: r.error ? [] : (r.data || []) }; if (typeof renderAll === 'function') renderAll(); }
+async function applyCriteriaProposal(bid, kind, value) {
+  var bu = recOf('buyers', bid); if (!bu) return; var ex = bu.extra || {}; ex.criteria = ex.criteria || {};
+  if (kind === 'add_area') { var areas = Array.isArray(ex.criteria.areas) ? ex.criteria.areas.slice() : []; if (areas.indexOf(value) < 0) areas.push(value); ex.criteria.areas = areas; }
+  else { var av = Array.isArray(ex.criteria.avoid) ? ex.criteria.avoid.slice() : []; if (av.indexOf(value) < 0) av.push(value); ex.criteria.avoid = av; }
+  var r = await sb.from('buyers').update({ extra: ex, updated_at: nowStamp() }).eq('id', bid).select('id'); if (r.error) { toast('Could not save'); return; }
+  bu.extra = ex; logEvent('buyers', bid, 'criteria.learned', (kind === 'add_area' ? 'Added area ' : 'Avoid ') + value + ' from learned behavior'); delete CRIT_PROPS[bid]; toast('Criteria updated'); renderAll();
 }
 function beliefLine(b) {
   var k = b.key, v = b.value || {}, w = Number(b.weight || 0);
@@ -9788,7 +9808,9 @@ function beliefsPanelHtml(scopeType, scopeId) {
   var rows = BELIEFS.filter(function (b) { return b.scope_type === scopeType && String(b.scope_id) === String(scopeId) && !(b.value && b.value.override); });
   if (!rows.length) return '<div class="hint" style="margin:10px 0 4px;">What Spiro believes about this client: nothing yet — decisions on their matches teach it.</div>';
   rows.sort(function (a, b) { return (b.confidence || 0) - (a.confidence || 0); });
-  return '<div class="flabel" style="margin-top:14px;">What Spiro believes</div>' + rows.slice(0, 8).map(function (b) {
+  var props = (CRIT_PROPS[scopeId] && CRIT_PROPS[scopeId].rows) || []; if (!CRIT_PROPS[scopeId]) loadCriteriaProposals(scopeId);
+  var propHtml = props.map(function (p) { return '<div class="qi"><div class="txt"><div class="t1">' + (p.kind === 'add_area' ? 'Spiro thinks they would consider <b>' + esc(p.value) + '</b>' : 'Spiro thinks they avoid <b>' + esc(p.value) + '</b>') + '</div><div class="t2">' + esc(p.why) + '</div></div><button class="qbtn done" onclick="event.stopPropagation();applyCriteriaProposal(\'' + esc(String(scopeId)) + '\',\'' + esc(p.kind) + '\',\'' + esc(p.value) + '\')">' + (p.kind === 'add_area' ? 'Add to areas' : 'Add to avoid') + '</button></div>'; }).join('');
+  return '<div class="flabel" style="margin-top:14px;">What Spiro believes</div>' + propHtml + rows.slice(0, 8).map(function (b) {
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(beliefLine(b)) + '</div><div class="t2">confidence ' + Math.round((b.confidence || 0) * 100) + '% · ' + b.evidence + ' signals</div></div>'
       + '<button class="qbtn" title="Mark this belief wrong — it stops being applied" onclick="event.stopPropagation();beliefWrong(\'' + esc(scopeType) + '\',\'' + esc(String(scopeId)) + '\',\'' + esc(b.key) + '\')">Wrong</button></div>';
   }).join('');
