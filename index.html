@@ -570,6 +570,10 @@
          and needs attaching, per-listing gallery (hero/order/remove) and virtual staging. Backend is
          photo-stage (JWT-gated sibling of portal-bridge); the browser never holds portal keys. Nick's
          brief: "robust engine underneath, simplistic interface". -->
+    <div class="card" id="house-card" style="display:none;">
+      <h2 id="house-title">House</h2>
+      <div id="house-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
     <div class="card" id="content-card" style="display:none;">
       <h2>The Canyon Line</h2>
       <div class="hint" style="margin:-6px 0 10px;">Ask for a house the way you'd say it &mdash; &ldquo;MCM this week&rdquo;, &ldquo;farmhouse in Brentwood&rdquo;, &ldquo;untraded 40 years Bel Air&rdquo;, &ldquo;then now Silver Lake&rdquo;. Ranked from the hero list with why. Drafting a post creates the prospect and the owner note; nothing is published from here.</div>
@@ -849,7 +853,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.248.0';
+var APP_VERSION = 'v5.249.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8535,6 +8539,29 @@ function menuShowPhotos() { openPanel('photos-card'); if (PHOTOS) renderPhotos()
    fn_hero_search ranks by Nick's ask; tclDraft() calls fn_hero_post which creates/links the prospect (tier
    featured), drafts the owner note (never sent by the system), opens the featured-agent follow-up on
    'posted', and writes the tll.post signal. Nothing here touches Instagram. */
+/* HOUSE PAGE (2026-09-10): one place every address opens. fn_house_memory + fn_house_timeline over the
+   property spine — what Nick sold/listed here, buyers who wanted it, market history, the hero row and
+   Canyon Line posts, the prospect, and the full timeline. Any address in the app should route here. */
+async function openHousePage(address) {
+  if (!address) return; openPanel('house-card');
+  var t = document.getElementById('house-title'), b = document.getElementById('house-body');
+  t.textContent = String(address).split(',')[0]; b.innerHTML = '<div class="empty">Loading&hellip;</div>';
+  var mem = await sb.rpc('fn_house_memory', { p_address: address }); var tl = await sb.rpc('fn_house_timeline', { p_address: address });
+  var m = (mem.data || {}), rows = tl.data || [];
+  var html = '';
+  var sold = m.nick_sold || [], listed = m.nick_listed || [], buyers = m.buyers_who_wanted_it || [], mh = m.market_history || [];
+  var facts = [];
+  if (sold.length) facts.push('<b>You sold this</b> — ' + sold.map(function (x) { return esc((x.side || '') + (x.closed ? ' · ' + fmtDate(String(x.closed)) : '') + (x.price ? ' · $' + Number(x.price).toLocaleString() : '')); }).join('; '));
+  if (listed.length) facts.push('Listed by you: ' + listed.map(function (x) { return esc((x.status || '') + (x.price ? ' · ' + x.price : '') + (x.when ? ' · ' + fmtDate(String(x.when)) : '')); }).join('; '));
+  if (buyers.length) facts.push('<b>' + buyers.length + ' buyer' + (buyers.length > 1 ? 's' : '') + ' wanted it</b> — ' + buyers.map(function (x) { return '<a href="javascript:void(0)" onclick="jumpToRecord(\'buyers\',\'' + esc(String(x.buyer_id)) + '\')">' + esc(x.name || '?') + '</a>' + esc((x.outcome ? ' (' + x.outcome + ')' : x.response ? ' (' + x.response + ')' : '')); }).join(', '));
+  if (mh.length) facts.push('Market: ' + mh.slice(0, 4).map(function (x) { return esc((x.type || '') + (x.date ? ' ' + fmtDate(String(x.date)) : '') + (x.price ? ' $' + Number(x.price).toLocaleString() : '')); }).join(' · '));
+  if (m.hero) facts.push('Canyon Line: ' + esc((m.hero.architect ? 'by ' + m.hero.architect + ' · ' : '') + ((m.hero.styles || []).join(', ') || '') + (m.hero.vault ? ' · vault' : '') + ' · ' + (m.hero.posted || 0) + ' post' + ((m.hero.posted || 0) === 1 ? '' : 's')));
+  if (m.prospect) facts.push('Prospect: ' + esc((m.prospect.status || '') + (m.prospect.owner ? ' · ' + m.prospect.owner : '') + (m.prospect.tier ? ' · ' + m.prospect.tier : '')) + ' <a href="javascript:void(0)" onclick="jumpToRecord(\'prospects\',\'' + esc(String(m.prospect.id)) + '\')">open</a>');
+  html += '<div class="flabel">Memory</div>' + (facts.length ? facts.map(function (f) { return '<div class="qi"><div class="txt"><div class="t1">' + f + '</div></div></div>'; }).join('') : '<div class="hint">Nothing on record for this house yet. It starts remembering the moment anything happens here.</div>');
+  html += '<div class="flabel" style="margin-top:14px;">Timeline</div>' + (rows.length ? rows.slice(0, 60).map(function (r) { return '<div class="qi"><div class="txt"><div class="t1">' + esc(r.detail || r.kind) + '</div><div class="t2">' + esc(r.ts ? fmtDate(String(r.ts).slice(0, 10)) : '') + ' · ' + esc(r.kind) + '</div></div></div>'; }).join('') : '<div class="hint">No events yet.</div>');
+  b.innerHTML = html;
+  logEvent('properties', m.property_id || '', 'house.opened', 'Opened house page: ' + String(address).split(',')[0]);
+}
 var TCL_LAST = [];
 function menuShowContent() { openPanel('content-card'); setTimeout(function () { var q = document.getElementById('tcl-q'); if (q) q.focus(); }, 50); }
 async function tclSearch() {
@@ -11864,7 +11891,7 @@ function renderListingPage() {
   });
   var counts = {}; Object.keys(groups).forEach(function (k) { counts[k] = groups[k].filter(function (n) { return n.nodeType === 1 && n.classList && n.classList.contains('flabel'); }).length; });
   if (!groups[LISTING_TAB] || (!groups[LISTING_TAB].length && LISTING_TAB !== 'overview')) LISTING_TAB = 'overview';
-  var h = '<div class="lphero"><div class="lphero-main"><h1 class="lpaddr">' + esc(x.address || 'Listing') + '</h1><div class="lpsub">' + esc(sub) + '</div></div><div class="lpprice">' + esc(listingPrice(x)) + (isLease(x) ? '' : '') + '</div></div>';
+  var h = '<div class="lphero"><div class="lphero-main"><h1 class="lpaddr">' + esc(x.address || 'Listing') + '</h1><div class="lpsub">' + esc(sub) + ' · <a href="javascript:void(0)" onclick="openHousePage(\'' + escJs(x.address || '') + '\')" title="Everything the OS remembers about this house">house memory</a></div></div><div class="lpprice">' + esc(listingPrice(x)) + (isLease(x) ? '' : '') + '</div></div>';
   if (det) h += '<div class="lpnotes">' + esc(det) + '</div>';
   h += '<div id="listing-page-actions" class="lpactions"><button class="qbtn done" onclick="openListingPhotos(\'' + escJs(String(id)) + '\')">Photos &amp; staging</button></div>';
   h += '<div class="lptabs">' + LISTING_TAB_DEFS.map(function (d) { var k = d[0]; if (k !== 'overview' && !groups[k].length) return ''; return '<button class="lptab' + (LISTING_TAB === k ? ' on' : '') + '" onclick="LISTING_TAB=\'' + k + '\';renderListingPage()">' + d[1] + (k !== 'overview' && counts[k] ? ' <span class="lpn">' + counts[k] + '</span>' : '') + '</button>'; }).join('') + '</div>';
