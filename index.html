@@ -842,7 +842,7 @@
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.244.0';
+var APP_VERSION = 'v5.245.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -8530,7 +8530,7 @@ async function photoSign() {
   var need = []; var L = (PHOTOS && PHOTOS.listings) || [];
   var sel = PHOTOS_SEL ? phListing(PHOTOS_SEL) : null;
   if (sel) sel.photos.forEach(function (p) { if (!PHOTO_URLS[p.path]) need.push(p.path); });
-  else if (PH_FILTER === 'mine') (PHOTOS.mine_crm || []).forEach(function (m) { var pl = m.portal_listing_id ? phListing(m.portal_listing_id) : null; if (pl && pl.photos[0] && !PHOTO_URLS[pl.photos[0].path]) need.push(pl.photos[0].path); });
+  else if (PH_FILTER === 'mine') phMineCrm().forEach(function (m) { var pl = m.portal_listing_id ? phListing(m.portal_listing_id) : null; if (pl && pl.photos[0] && !PHOTO_URLS[pl.photos[0].path]) need.push(pl.photos[0].path); });
   else L.filter(phVisible).slice(0, 40).forEach(function (l) { if (l.photos[0] && !PHOTO_URLS[l.photos[0].path]) need.push(l.photos[0].path); });
   (PHOTOS.inbox || []).forEach(function (r) { (r.paths || []).slice(0, 3).forEach(function (p) { if (!PHOTO_URLS[p]) need.push(p); }); });
   if (!need.length) return; var jr = await photoCall({ action: 'signed_urls', paths: need.slice(0, 200) });
@@ -8546,7 +8546,7 @@ function renderPhotos() { try {
   var L = PHOTOS.listings || [], inbox = PHOTOS.inbox || [], h = '';
   h += '<div id="ph-status" class="hint" style="margin:-8px 0 8px;' + (PH_BUSY ? '' : 'display:none;') + '">' + esc(PH_BUSY) + '</div>';
   if (!PHOTOS_SEL) {
-    var mineN = (PHOTOS.mine_crm || []).length;
+    var mineN = phMineCrm().length;
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;"><button class="qbtn' + (PH_FILTER === 'mine' ? ' done' : '') + '" onclick="PH_FILTER=\'mine\';renderPhotos();photoSign()">My listings ' + mineN + '</button><button class="qbtn' + (PH_FILTER === 'all' ? ' done' : '') + '" onclick="PH_FILTER=\'all\';renderPhotos();photoSign()">All ' + L.length + '</button><input placeholder="Search address…" value="' + esc(PH_Q) + '" oninput="PH_Q=this.value;renderPhotos()" style="flex:1;min-width:160px;"></div>';
     h += phLearnedHtml();
     if (inbox.length) { h += '<div class="flabel">Waiting to be attached <span style="font-weight:400;text-transform:none;">· arrived but no listing matched</span></div>';
@@ -8554,7 +8554,7 @@ function renderPhotos() { try {
       var opts = '<option value="">Attach to…</option><optgroup label="My listings">' + mine.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup><optgroup label="Others">' + others.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup>';
       inbox.forEach(function (r) { h += '<div class="qi" style="flex-wrap:wrap;gap:8px;"><div class="txt"><div>' + esc(r.address_hint || '(no address found)') + '</div><div class="hint" style="margin:2px 0 0;">' + (r.paths || []).length + ' photo' + ((r.paths || []).length === 1 ? '' : 's') + ' · ' + esc(r.sender || r.source) + '</div><div class="pthumbs" style="margin-top:6px;">' + (r.paths || []).slice(0, 3).map(function (p) { return phImg(p, 'onclick="phBig(\'' + esc(p) + '\')"'); }).join('') + '</div></div><div style="display:flex;gap:6px;align-items:center;"><select onchange="phAttach(\'' + r.id + '\', this.value)">' + opts + '</select><button class="qbtn" onclick="phDiscard(\'' + r.id + '\')">Discard</button></div></div>'; }); }
     if (PH_FILTER === 'mine') {
-      var M = (PHOTOS.mine_crm || []).filter(function (m) { return !PH_Q || String(m.address || '').toLowerCase().indexOf(PH_Q.toLowerCase()) >= 0; });
+      var M = phMineCrm().filter(function (m) { return !PH_Q || String(m.address || '').toLowerCase().indexOf(PH_Q.toLowerCase()) >= 0; });
       var noPhotos = M.filter(function (m) { var pl = m.portal_listing_id ? phListing(m.portal_listing_id) : null; return !pl || pl.n === 0; });
       var withPhotos = M.filter(function (m) { return noPhotos.indexOf(m) < 0; });
       if (noPhotos.length) { h += '<div class="flabel" style="margin-top:' + (inbox.length ? 14 : 0) + 'px;">Needs photos <span style="font-weight:400;text-transform:none;">· ' + noPhotos.length + ' of your ' + M.length + '</span></div>'; noPhotos.forEach(function (m) { h += phCrmRow(m); }); }
@@ -8575,7 +8575,7 @@ function renderPhotos() { try {
   }
   var l = phListing(PHOTOS_SEL); if (!l) { PHOTOS_SEL = null; renderPhotos(); return; }
   var stagedN = l.photos.filter(function (p) { return p.kind === 'staged'; }).length, origN = l.n - stagedN;
-  var crmRow = (PHOTOS.mine_crm || []).filter(function (m) { return m.portal_listing_id === l.id; })[0];
+  var crmRow = phMineCrm().filter(function (m) { return m.portal_listing_id === l.id; })[0];
   h += '<div class="lphero" style="padding-top:0;"><div class="lphero-main"><button class="hbtn" style="margin-bottom:10px;" onclick="PHOTOS_SEL=null;PH_JOB=null;renderPhotos();photoSign()">&larr; Listings</button><h1 class="lpaddr">' + esc(phLabel(l)) + '</h1><div class="lpsub">' + esc([crmRow && crmRow.listing_type === 'Lease' ? 'Lease' : '', crmRow ? crmRow.crm_status : null, 'portal: ' + l.status, l.n + ' photo' + (l.n === 1 ? '' : 's') + (stagedN ? ', ' + stagedN + ' staged' : '')].filter(Boolean).join(' · ')) + '</div></div><div class="lpprice">' + esc(l.price || (crmRow && crmRow.price ? money(crmRow.price) + (crmRow.listing_type === 'Lease' ? '/mo' : '') : '')) + '</div></div>';
   h += '<div class="lpactions"><label class="qbtn" style="cursor:pointer;">Add photos<input type="file" accept="image/*" multiple style="display:none;" onchange="phUpload(\'' + l.id + '\', this.files)"></label>' + (origN > 1 ? '<button class="qbtn" onclick="phStageAllOpen()">Stage all ' + origN + '</button>' : '') + '<button class="qbtn" onclick="phNotesOpen(\'' + l.id + '\')">Notes for staging</button></div>';
   if (PH_JOB) h += phJobHtml(PH_JOB, l);
@@ -8590,7 +8590,7 @@ function renderPhotos() { try {
 } catch (e) { console.error('renderPhotos', e); reportError('render:photos', e, 'photos'); } }
 function phCrmRow(m) { var pl = m.portal_listing_id ? phListing(m.portal_listing_id) : null; var hero = pl && pl.photos[0]; var n = pl ? pl.n : 0;
   return '<div class="qi" onclick="phOpenCrm(\'' + m.crm_id + '\')" style="gap:10px;"><div class="phmini">' + (hero ? phImg(hero.path) : '<div class="phph"></div>') + '</div><div class="txt">' + esc(m.address || 'Untitled') + '<div class="hint" style="margin:2px 0 0;">' + esc(m.crm_status || '') + (m.price ? ' · ' + esc(m.price) : '') + (pl ? ' · portal: ' + esc(pl.status) : ' · not on portal yet — tap to set up') + '</div></div><span class="pill' + (n === 0 ? ' warn' : '') + '">' + n + '</span></div>'; }
-async function phOpenCrm(crmId) { var m = (PHOTOS.mine_crm || []).filter(function (x) { return x.crm_id === crmId; })[0]; if (!m) return;
+async function phOpenCrm(crmId) { var m = phMineCrm().filter(function (x) { return x.crm_id === crmId; })[0]; if (!m) return;
   if (m.portal_listing_id && phListing(m.portal_listing_id)) { phSelect(m.portal_listing_id); return; }
   phStatus('Setting up a private photo home for ' + (m.address || 'this listing') + '…');
   var jr = await photoCall({ action: 'ensure_portal_listing', crm_id: crmId }); phStatus('');
@@ -8652,6 +8652,7 @@ function phPollStop() { if (PH_POLL) { clearTimeout(PH_POLL); PH_POLL = null; } 
 var PH_QUEUE = [];
 /* Pre-render brief (2026-09-09, Nick: "there should be some prompted questions from the OS before it
    renders"). One tap per question, all optional, remembered per property (staging_prefs listing:<id>.brief). */
+function phMineCrm() { return (PHOTOS && PHOTOS.mine_crm || []).filter(function (m) { return !/^(sold|leased|closed|expired|cancell?ed|withdrawn)/i.test(String(m.crm_status || '')); }); }
 function phQ(label, key, opts, cur, ref) { return '<div class="phq"><div class="phq-l">' + esc(label) + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;">' + opts.map(function (o) { var on = cur === o[0]; return '<button class="qbtn' + (on ? ' done' : '') + '" onclick="' + ref + '=' + (on ? "''" : "'" + escJs(o[0]) + "'") + ';renderPhotos()">' + esc(o[1]) + '</button>'; }).join('') + '</div></div>'; }
 async function phLoadBrief(listingId) { if (PH_BRIEF_LOADED === listingId) return; PH_BRIEF_LOADED = listingId; try { var jr = await photoCall({ action: 'prefs_get', key: 'listing:' + listingId }); if (jr.ok && jr.value && jr.value.brief) { PH_BRIEF = Object.assign({}, jr.value.brief); if (jr.value.brief.room && !PH_ROOM) PH_ROOM = jr.value.brief.room; renderPhotos(); } } catch (e) { /* */ } }
 var PH_FRAME_MIN = 0.72;
@@ -11653,6 +11654,9 @@ function isLiveEscrowTx(t) { return !isPastTx(t) && !isDocAnchorTx(t); }
 function isLease(l) { return !!(l && /^lease$/i.test(String(l.listing_type || ''))); }
 function listingPrice(l) { var m = money(l && l.price); return m ? (isLease(l) ? m + '/mo' : m) : ''; }
 function isPrepListing(l) { return !!(l && l.status === 'Prep'); }
+/* 2026-09-09 (Nick: "220 N Cliffwood still in my listings even though it's closed"): Sold/Leased/Closed
+   listings leave the active list; they're reachable under Past sales and in Photos via "All". */
+function isClosedListing(l) { return !!(l && /^(sold|leased|closed|expired|cancell?ed|withdrawn)/i.test(String(l.status || ''))); }
 /* Listings status display order (2026-07-27): Pending, Active, Coming Soon, Off Market, then
    any other status sorts last (rather than in random/insertion order). */
 var LISTING_STATUS_ORDER = { 'Pending': 0, 'Active': 1, 'Coming Soon': 2, 'Off Market': 3 };
@@ -14496,7 +14500,7 @@ function renderBrowse() {
     if (propSeg === 'docs' && !(DATA.transactions || []).some(isDocAnchorTx)) propSeg = 'escrow';
     rowTable = (propSeg === 'active' || propSeg === 'prep') ? 'listings' : 'transactions';
     rows = (propSeg === 'prep') ? (DATA.listings || []).filter(isPrepListing)
-         : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l); })
+         : (propSeg === 'active') ? (DATA.listings || []).filter(function (l) { return !isPrepListing(l) && !isClosedListing(l); })
          : (propSeg === 'escrow') ? (DATA.transactions || []).filter(isLiveEscrowTx)
          : (propSeg === 'docs') ? (DATA.transactions || []).filter(isDocAnchorTx)
                                     .sort(function (a, b) { return String(a.address || '').localeCompare(String(b.address || '')); })
