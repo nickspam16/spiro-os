@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1B2220">
+<title>Spiro Triage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#1B2220;
+  --surface:#242D2A;
+  --surface-2:#2C3733;
+  --paper:#ECEAE3;
+  --muted:#99A39D;
+  --hair:#3B4641;
+  --brass:#C8A24A;
+  --warn:#C77B6A;
+  --serif:'Fraunces',Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --pad:16px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  background:var(--ground);color:var(--paper);
+  font-family:var(--sans);
+  font-size:16px;line-height:1.45;
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom);
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,textarea{font:inherit}
+
+/* ---------- gate ---------- */
+#gate{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:center;
+  padding:0 24px;gap:20px;background:var(--ground);z-index:50}
+#gate h1{font-family:var(--serif);font-weight:400;font-size:30px;margin:0;line-height:1.15}
+#gate p{color:var(--muted);margin:0;font-size:15px;max-width:34ch}
+.pinrow{display:flex;gap:10px;flex-wrap:wrap}
+/* min-width:0 or the input refuses to shrink and shoves Start off a small screen */
+#pin{flex:1 1 140px;min-width:0;background:var(--surface);border:1px solid var(--hair);
+  border-radius:10px;color:var(--paper);padding:15px 12px;font-size:20px;
+  letter-spacing:.25em;text-align:center}
+.primary{flex:0 0 auto}
+#pin:focus,button:focus-visible,.chip:focus-visible,#freetext:focus{
+  outline:2px solid var(--brass);outline-offset:2px}
+.primary{background:var(--brass);color:#20170A;border-radius:10px;padding:15px 22px;font-weight:600}
+#gateerr{color:var(--warn);font-size:14px;min-height:1.2em;margin:0}
+
+/* ---------- shell ---------- */
+#app{display:none;flex-direction:column;height:100%}
+#app.on{display:flex}
+
+header{display:flex;align-items:baseline;justify-content:space-between;
+  padding:12px var(--pad) 10px;gap:12px;flex:none}
+#who{font-family:var(--serif);font-size:19px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#count{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums;flex:none}
+#bar{height:2px;background:var(--hair);flex:none}
+#bar>i{display:block;height:100%;width:0;background:var(--brass);transition:width .3s}
+@media (prefers-reduced-motion:reduce){#bar>i{transition:none}}
+
+#stage{flex:1;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding-bottom:40px}
+
+#shot{width:100%;aspect-ratio:4/3;background:var(--surface);display:block;object-fit:cover}
+/* no photo: a thin band, not 295px of empty box */
+#noshot{width:100%;height:56px;background:var(--surface);
+  display:none;align-items:center;justify-content:center;color:var(--muted);font-size:14px}
+
+.facts{padding:16px var(--pad) 8px}
+#price{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums;margin:0 0 4px}
+#addr{font-family:var(--serif);font-size:18px;font-weight:400;margin:0;line-height:1.3}
+#hood{color:var(--muted);margin:3px 0 0;font-size:15px}
+#specs{margin:12px 0 0;padding:12px 0 0;border-top:1px solid var(--hair);
+  color:var(--paper);font-size:15px;display:flex;flex-wrap:wrap;gap:4px 20px}
+#specs span{font-variant-numeric:tabular-nums}
+#specs b{font-weight:400;color:var(--muted)}
+#why{margin:14px var(--pad) 0;padding:11px 13px;background:var(--surface);
+  border-left:2px solid var(--brass);border-radius:0 8px 8px 0;
+  color:var(--muted);font-size:14px;line-height:1.4}
+#mls{margin:12px var(--pad) 24px;color:var(--hair);font-size:12px;
+  font-variant-numeric:tabular-nums}
+
+/* Short phones: give back some photo height so the reason the card is here
+   is readable without a scroll. */
+@media (max-height:645px){
+  #shot{aspect-ratio:16/10}
+  #price{font-size:27px}
+  .facts{padding-top:13px}
+  #why{margin-top:11px;padding:9px 12px}
+}
+
+/* ---------- verdicts ---------- */
+#verdicts{flex:none;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;
+  padding:8px var(--pad) calc(8px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--hair);background:var(--ground)}
+.v{min-height:54px;border-radius:9px;background:var(--surface);
+  border:1px solid var(--hair);font-size:14px;font-weight:600;
+  display:flex;align-items:center;justify-content:center}
+.v:active{background:var(--surface-2)}
+.v[data-v="never"],.v[data-v="pass"]{color:var(--muted)}
+.v[data-v="love"]{border-color:var(--brass);color:var(--brass)}
+
+/* ---------- reason sheet ---------- */
+#sheet{position:fixed;inset:0;background:rgba(10,14,13,.72);
+  display:none;align-items:flex-end;z-index:40}
+#sheet.on{display:flex}
+#sheetinner{width:100%;background:var(--ground);border-top:1px solid var(--hair);
+  border-radius:16px 16px 0 0;max-height:80vh;display:flex;flex-direction:column}
+.sheethead{flex:none;padding:16px var(--pad) 10px}
+.sheetbody{flex:1;overflow-y:auto;padding:0 var(--pad);overscroll-behavior:contain}
+#sheetq{font-family:var(--serif);font-size:19px;margin:0 0 3px;font-weight:600}
+#sheetsub{color:var(--muted);font-size:14px;margin:0}
+#chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+.chip{background:var(--surface);border:1px solid var(--hair);border-radius:22px;
+  padding:11px 15px;font-size:14px;min-height:44px}
+.chip[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:#20170A;font-weight:600}
+.chip.typed{border-style:dashed}
+#freetext{width:100%;background:var(--surface);border:1px solid var(--hair);
+  border-radius:10px;color:var(--paper);padding:14px;font-size:16px}
+#ftnote{color:var(--muted);font-size:13px;margin:7px 0 18px}
+#orchips{color:var(--muted);font-size:13px;margin:0 0 9px}
+#morebtn{background:none;border:none;color:var(--brass);font-size:14px;
+  padding:8px 0;min-height:44px;font-weight:600;text-align:left}
+.sheetfoot{flex:none;display:flex;gap:9px;padding:12px var(--pad)
+  calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--hair)}
+.sheetfoot button{flex:1;min-height:50px;border-radius:10px;font-weight:600;font-size:15px}
+#skip{background:var(--surface);border:1px solid var(--hair);color:var(--muted)}
+#save{background:var(--brass);color:#20170A}
+
+/* ---------- finish / toast ---------- */
+#done{flex:1;display:none;flex-direction:column;justify-content:center;padding:0 24px;gap:14px}
+#done.on{display:flex}
+#done h2{font-family:var(--serif);font-size:28px;font-weight:600;margin:0}
+#donesum{color:var(--muted);margin:0;font-size:15px;line-height:1.5}
+#donebtns{display:flex;gap:10px;margin-top:8px}
+#donebtns button{flex:1;min-height:52px;border-radius:10px;font-weight:600}
+#more{background:var(--brass);color:#20170A}
+#stop{background:var(--surface);border:1px solid var(--hair);color:var(--muted)}
+
+#toast{position:fixed;left:var(--pad);right:var(--pad);
+  bottom:calc(76px + env(safe-area-inset-bottom));
+  background:var(--surface-2);border:1px solid var(--hair);border-radius:10px;
+  padding:12px 14px;display:none;align-items:center;justify-content:space-between;
+  gap:12px;font-size:14px;z-index:30}
+#toast.on{display:flex}
+#undo{color:var(--brass);font-weight:600;flex:none;min-height:30px}
+#pending{position:fixed;top:calc(8px + env(safe-area-inset-top));right:var(--pad);
+  background:var(--warn);color:#20170A;font-size:12px;font-weight:600;
+  padding:4px 9px;border-radius:12px;display:none;z-index:35}
+#pending.on{display:block}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>Spiro Triage</h1>
+  <p>Enter your device PIN. It stays on this phone and never travels in the page.</p>
+  <div class="pinrow">
+    <input id="pin" type="tel" inputmode="numeric" autocomplete="off"
+           maxlength="12" placeholder="······" aria-label="Device PIN">
+    <button class="primary" id="enter">Start</button>
+  </div>
+  <p id="gateerr" role="status"></p>
+</div>
+
+<div id="app">
+  <header><div id="who"></div><div id="count"></div></header>
+  <div id="bar"><i></i></div>
+
+  <div id="stage">
+    <img id="shot" alt="" decoding="async">
+    <div id="noshot">No photo on this listing yet</div>
+    <div class="facts">
+      <p id="price"></p>
+      <p id="addr"></p>
+      <p id="hood"></p>
+      <div id="specs"></div>
+    </div>
+    <div id="why"></div>
+    <div id="mls"></div>
+  </div>
+
+  <div id="done">
+    <h2>That's the deck.</h2>
+    <p id="donesum"></p>
+    <div id="donebtns">
+      <button id="more">Next 10</button>
+      <button id="stop">Stop here</button>
+    </div>
+  </div>
+
+  <div id="verdicts">
+    <button class="v" data-v="never">Never</button>
+    <button class="v" data-v="pass">Pass</button>
+    <button class="v" data-v="maybe">Maybe</button>
+    <button class="v" data-v="show">Show</button>
+    <button class="v" data-v="love">Love</button>
+  </div>
+</div>
+
+<div id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetq">
+  <div id="sheetinner">
+    <div class="sheethead">
+      <p id="sheetq"></p>
+      <p id="sheetsub"></p>
+    </div>
+    <div class="sheetbody">
+      <input id="freetext" type="text" autocomplete="off" enterkeyhint="done"
+             placeholder="Say it in your own words" aria-label="Type your own reason">
+      <p id="ftnote">Press return to add. Whatever you type becomes a reason it learns.</p>
+      <p id="orchips">Or tap one you use often</p>
+      <div id="chips"></div>
+      <button id="morebtn" type="button"></button>
+    </div>
+    <div class="sheetfoot">
+      <button id="skip">Skip</button>
+      <button id="save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"><span id="toasttext"></span><button id="undo">Undo</button></div>
+<div id="pending"></div>
+
+<script>
+(function(){
+"use strict";
+
+var API = "https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/triage-api";
+var QKEY = "spiro.triage.queue.v1";
+var PKEY = "spiro.triage.pin.v1";
+
+var S = {
+  pin:"", cards:[], i:0, reasons:[], verdicts:[],
+  picked:{}, typed:[], current:null, pendingVerdict:null,
+  session:{done:0, newBuyers:{}, reasonsGiven:0}, toastTimer:null
+};
+
+var $ = function(id){ return document.getElementById(id); };
+
+/* ---------- storage helpers (never throw) ---------- */
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function queue(){ try{ return JSON.parse(lsGet(QKEY)||"[]"); }catch(e){ return []; } }
+function setQueue(q){ lsSet(QKEY, JSON.stringify(q)); paintPending(); }
+
+function paintPending(){
+  var n = queue().length;
+  var el = $("pending");
+  el.textContent = n + " waiting to send";
+  el.className = n ? "on" : "";
+}
+
+/* ---------- api ---------- */
+function getDeck(n){
+  return fetch(API + "?n=" + (n||10), { headers:{ "x-triage-pin": S.pin } })
+    .then(function(r){
+      if(r.status === 401) throw new Error("PIN_BAD");
+      if(!r.ok) throw new Error("HTTP_" + r.status);
+      return r.json();
+    });
+}
+
+// One flush at a time, and only the rows actually sent are cleared.
+// Clearing the whole queue after an in-flight POST double-submits the overlap
+// and can silently drop a verdict queued while the request was open.
+function flush(){
+  if(S.flushing) return Promise.resolve();
+  var batch = queue();
+  if(!batch.length) return Promise.resolve();
+  var sentCids = {};
+  batch.forEach(function(r){ sentCids[r.cid] = 1; });
+
+  S.flushing = true;
+  return fetch(API, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-triage-pin": S.pin },
+    body: JSON.stringify({ verdicts: batch.map(function(r){
+      // cid travels with the row: a retry after a lost response is ignored
+      // server-side rather than counted twice.
+      return { cid:r.cid, match_id:r.match_id, verdict:r.verdict,
+               reason_codes:r.reason_codes, note:r.note, client_ts:r.client_ts };
+    }) })
+  }).then(function(r){
+    if(!r.ok) throw new Error("HTTP_" + r.status);
+    return r.json();
+  }).then(function(){
+    setQueue(queue().filter(function(r){ return !sentCids[r.cid]; }));
+  }).catch(function(){
+    /* stays queued; retried on next verdict and on reconnect */
+  }).then(function(){
+    S.flushing = false;
+    if(queue().length) return flush();   // drain anything queued mid-flight
+  });
+}
+
+/* ---------- render ---------- */
+function money(n){
+  if(n === null || n === undefined || n === "") return "Price not listed";
+  return "$" + Number(n).toLocaleString("en-US");
+}
+function num(n){ return Number(n).toLocaleString("en-US"); }
+// "3058 Hollycrest Pl, Los Angeles, CA 90068" -> "3058 Hollycrest Pl"
+function street(a){ return String(a || "").split(",")[0].trim(); }
+function locality(a){
+  var p = String(a || "").split(",");
+  return p.length > 1 ? p[1].trim() : "";
+}
+
+function render(){
+  var c = S.cards[S.i];
+  S.current = c;
+  if(!c){ return finish(); }
+
+  $("stage").style.display = "";
+  $("verdicts").style.display = "grid";
+  $("done").className = "";
+  $("stage").scrollTop = 0;
+
+  $("who").textContent = c.buyer || "—";
+  $("count").textContent = (S.i + 1) + " of " + S.cards.length;
+  $("bar").firstElementChild.style.width = ((S.i) / S.cards.length * 100) + "%";
+
+  var img = $("shot"), ns = $("noshot");
+  if(c.photo){
+    // handlers before src: a cached failure can fire before assignment returns
+    img.onerror = function(){ img.style.display = "none"; ns.style.display = "flex"; };
+    img.onload  = function(){ img.style.display = "block"; ns.style.display = "none"; };
+    img.style.display = "block"; ns.style.display = "none";
+    img.alt = street(c.address) || "Listing photo";
+    img.src = c.photo;
+  } else {
+    img.onerror = null; img.onload = null;
+    img.removeAttribute("src");
+    img.style.display = "none"; ns.style.display = "flex";
+  }
+
+  $("price").textContent = money(c.price);
+  $("addr").textContent = street(c.address);
+  $("hood").textContent = c.hood || locality(c.address);
+
+  var bits = [];
+  if(c.beds)  bits.push("<span>" + c.beds + " <b>bed</b></span>");
+  if(c.baths) bits.push("<span>" + c.baths + " <b>bath</b></span>");
+  if(c.sqft)  bits.push("<span>" + num(c.sqft) + " <b>sq ft</b></span>");
+  if(c.year_built) bits.push("<span>" + c.year_built + " <b>built</b></span>");
+  $("specs").innerHTML = bits.join("");
+
+  $("why").textContent = c.why || "";
+  $("mls").textContent = c.mls ? ("MLS " + c.mls) : "";
+}
+
+function finish(){
+  $("stage").style.display = "none";
+  $("verdicts").style.display = "none";
+  $("done").className = "on";
+  $("bar").firstElementChild.style.width = "100%";
+  $("who").textContent = "Done";
+  $("count").textContent = "";
+
+  var firsts = Object.keys(S.session.newBuyers).length;
+  var parts = [S.session.done + (S.session.done === 1 ? " verdict" : " verdicts") + " recorded."];
+  if(firsts) parts.push("First read ever on " + firsts + (firsts === 1 ? " client." : " clients."));
+  if(S.session.reasonsGiven) parts.push(S.session.reasonsGiven + " carried a reason, which is what actually teaches it.");
+  parts.push("Everything is already saved. Nothing to upload.");
+  $("donesum").textContent = parts.join(" ");
+  flush();
+}
+
+/* ---------- reason sheet ---------- */
+var TOP_N = 8;
+
+function paintChips(){
+  var box = $("chips");
+  box.innerHTML = "";
+  // reasons arrive ordered by how often Nick has actually used them
+  var list = S.showAllReasons ? S.reasons : S.reasons.slice(0, TOP_N);
+  list.forEach(function(r){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.type = "button";
+    b.textContent = r.code.replace(/_/g, " ");
+    b.setAttribute("aria-pressed", S.picked[r.code] ? "true" : "false");
+    b.onclick = function(){
+      if(S.picked[r.code]) delete S.picked[r.code]; else S.picked[r.code] = true;
+      b.setAttribute("aria-pressed", S.picked[r.code] ? "true" : "false");
+    };
+    box.appendChild(b);
+  });
+
+  var hidden = S.reasons.length - list.length;
+  var mb = $("morebtn");
+  if(S.showAllReasons){
+    mb.textContent = "Show fewer";
+    mb.style.display = S.reasons.length > TOP_N ? "block" : "none";
+  } else if(hidden > 0){
+    mb.textContent = hidden + " more reasons";
+    mb.style.display = "block";
+  } else {
+    mb.style.display = "none";
+  }
+  S.typed.forEach(function(t, idx){
+    var b = document.createElement("button");
+    b.className = "chip typed";
+    b.type = "button";
+    b.setAttribute("aria-pressed", "true");
+    b.textContent = t + "  ×";
+    b.onclick = function(){ S.typed.splice(idx,1); paintChips(); };
+    box.appendChild(b);
+  });
+}
+
+function openSheet(verdict){
+  S.pendingVerdict = verdict;
+  S.picked = {}; S.typed = []; S.showAllReasons = false;
+  var c = S.current;
+  $("sheetq").textContent = verdict === "never" ? "Why never?" : "Why a pass?";
+  $("sheetsub").textContent = (c && c.address ? street(c.address) : "This one") +
+    " for " + (c && c.buyer ? c.buyer : "this client");
+  paintChips();
+  $("freetext").value = "";
+  $("sheetinner").querySelector(".sheetbody").scrollTop = 0;
+  $("sheet").className = "on";
+  // deliberately no autofocus: the keyboard would cover the chips and the Save button
+}
+
+function closeSheet(){ $("sheet").className = ""; S.pendingVerdict = null; }
+
+function addTyped(){
+  var v = $("freetext").value.trim();
+  if(!v) return;
+  if(S.typed.indexOf(v) === -1 && S.typed.length < 6) S.typed.push(v);
+  $("freetext").value = "";
+  paintChips();
+}
+
+/* ---------- verdict commit ---------- */
+function commit(verdict, codes, note){
+  var c = S.current;
+  if(!c) return;
+
+  var row = {
+    cid: c.match_id + ":" + Date.now(),
+    match_id: c.match_id,
+    verdict: verdict,
+    reason_codes: codes || [],
+    note: note || null,
+    client_ts: new Date().toISOString()
+  };
+
+  var q = queue(); q.push(row); setQueue(q);
+
+  S.session.done++;
+  if(/^First verdict for/.test(c.why || "")) S.session.newBuyers[c.buyer] = 1;
+  if((codes || []).length) S.session.reasonsGiven++;
+
+  S.lastRow = row;
+  S.lastIndex = S.i;
+
+  showToast(verdict === "never" ? "Marked never" :
+            verdict === "pass"  ? "Passed" :
+            verdict === "maybe" ? "Left as maybe" :
+            verdict === "show"  ? "Queued to show" : "Loved");
+
+  S.i++;
+  render();
+  scheduleFlush();
+}
+
+// Hold the send for slightly longer than the Undo toast, so Undo is real
+// rather than decorative. Nothing is lost if the app closes first: the queue
+// is on the phone and flushes on next open.
+function scheduleFlush(){
+  clearTimeout(S.flushTimer);
+  S.flushTimer = setTimeout(flush, 5000);
+}
+
+function showToast(msg){
+  $("toasttext").textContent = msg;
+  $("toast").className = "on";
+  clearTimeout(S.toastTimer);
+  S.toastTimer = setTimeout(function(){ $("toast").className = ""; }, 4000);
+}
+
+function undo(){
+  if(!S.lastRow) return;
+  var q = queue();
+  for(var j = q.length - 1; j >= 0; j--){
+    if(q[j].cid === S.lastRow.cid){ q.splice(j,1); break; }
+  }
+  setQueue(q);
+  S.session.done = Math.max(0, S.session.done - 1);
+  if((S.lastRow.reason_codes||[]).length) S.session.reasonsGiven = Math.max(0, S.session.reasonsGiven - 1);
+  S.i = S.lastIndex;
+  S.lastRow = null;
+  clearTimeout(S.flushTimer);
+  $("toast").className = "";
+  render();
+}
+
+/* ---------- wiring ---------- */
+document.querySelectorAll(".v").forEach(function(btn){
+  btn.addEventListener("click", function(){
+    var v = btn.getAttribute("data-v");
+    if(v === "pass" || v === "never") openSheet(v);
+    else commit(v, [], null);
+  });
+});
+
+$("save").onclick = function(){
+  addTyped();
+  var codes = Object.keys(S.picked).concat(S.typed.map(function(t){ return "new:" + t; }));
+  var note = S.typed.length ? S.typed.join("; ") : null;
+  var v = S.pendingVerdict;
+  closeSheet();
+  commit(v, codes, note);
+};
+$("skip").onclick = function(){
+  var v = S.pendingVerdict;
+  closeSheet();
+  commit(v, [], null);
+};
+$("sheet").addEventListener("click", function(e){ if(e.target === $("sheet")) closeSheet(); });
+$("freetext").addEventListener("keydown", function(e){
+  if(e.key === "Enter"){ e.preventDefault(); addTyped(); }
+});
+$("undo").onclick = undo;
+$("morebtn").onclick = function(){ S.showAllReasons = !S.showAllReasons; paintChips(); };
+
+$("more").onclick = function(){
+  $("done").className = "";
+  load(10);
+};
+$("stop").onclick = function(){
+  $("donesum").textContent = "Closed. Open this again whenever you have two minutes.";
+  $("donebtns").style.display = "none";
+};
+
+function load(n){
+  $("who").textContent = "Loading";
+  $("count").textContent = "";
+  getDeck(n).then(function(d){
+    S.cards = d.cards || [];
+    S.reasons = d.reasons || [];
+    S.i = 0;
+    S.session = { done:0, newBuyers:{}, reasonsGiven:0 };
+    if(!S.cards.length){
+      $("stage").style.display = "none";
+      $("verdicts").style.display = "none";
+      $("done").className = "on";
+      $("donesum").textContent = "Nothing waiting. The queue is clear — it refills itself as new listings come in.";
+      $("donebtns").style.display = "none";
+      $("who").textContent = "All clear";
+      return;
+    }
+    $("donebtns").style.display = "flex";
+    render();
+  }).catch(function(err){
+    if(String(err.message) === "PIN_BAD"){
+      lsSet(PKEY, "");
+      $("app").className = "";
+      $("gate").style.display = "flex";
+      $("gateerr").textContent = "That PIN was not recognised.";
+      return;
+    }
+    $("who").textContent = "Offline";
+    $("stage").style.display = "none";
+    $("verdicts").style.display = "none";
+    $("done").className = "on";
+    $("donebtns").style.display = "none";
+    $("donesum").textContent = "Could not reach the deck. Anything you already decided is saved on this phone and will send itself when you are back online.";
+  });
+}
+
+function start(pin){
+  S.pin = pin;
+  lsSet(PKEY, pin);
+  $("gate").style.display = "none";
+  $("app").className = "on";
+  paintPending();
+  flush();
+  load(10);
+}
+
+$("enter").onclick = function(){
+  var v = $("pin").value.trim();
+  if(v.length < 4){ $("gateerr").textContent = "PIN is at least 4 digits."; return; }
+  $("gateerr").textContent = "";
+  start(v);
+};
+$("pin").addEventListener("keydown", function(e){ if(e.key === "Enter") $("enter").click(); });
+
+window.addEventListener("online", function(){ if(S.pin) flush(); });
+
+var saved = lsGet(PKEY);
+if(saved){ start(saved); } else { $("pin").focus(); }
+
+})();
+</script>
+</body>
+</html>
