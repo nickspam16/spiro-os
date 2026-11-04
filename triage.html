@@ -71,6 +71,9 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 
 #shot{width:100%;aspect-ratio:4/3;background:var(--surface);display:block;object-fit:cover}
 /* no photo: a thin band, not 295px of empty box */
+#who[role=button]{cursor:pointer;border-radius:6px;padding:2px 4px;margin:-2px -4px}
+#who[role=button]::after{content:" \25BE";color:var(--muted);font-size:14px}
+#who[role=button]:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 #noshot{width:100%;height:56px;background:var(--surface);
   display:none;align-items:center;justify-content:center;color:var(--muted);font-size:14px}
 
@@ -128,6 +131,13 @@ header{display:flex;align-items:baseline;justify-content:space-between;
   border-radius:10px;color:var(--paper);padding:14px;font-size:16px}
 #ftnote{color:var(--muted);font-size:13px;margin:7px 0 18px}
 #orchips{color:var(--muted);font-size:13px;margin:0 0 9px}
+.buyer{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+  text-align:left;background:var(--surface);border:1px solid var(--hair);border-radius:10px;
+  padding:12px 14px;min-height:48px;margin:0 0 8px}
+.buyer b{font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.buyer small{color:var(--muted);font-size:12px;flex:none}
+.buyer.fit{border-color:var(--brass)}
+.buyer.fit small{color:var(--brass)}
 #morebtn{background:none;border:none;color:var(--brass);font-size:14px;
   padding:8px 0;min-height:44px;font-weight:600;text-align:left}
 .sheetfoot{flex:none;display:flex;gap:9px;padding:12px var(--pad)
@@ -173,7 +183,7 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 </div>
 
 <div id="app">
-  <header><div id="who"></div><div id="count"></div></header>
+  <header><div id="who" role="button" tabindex="0" aria-label="Move this card to a different client"></div><div id="count"></div></header>
   <div id="bar"><i></i></div>
 
   <div id="stage">
@@ -240,7 +250,7 @@ var QKEY = "spiro.triage.queue.v1";
 var PKEY = "spiro.triage.pin.v1";
 
 var S = {
-  pin:"", cards:[], i:0, reasons:[], verdicts:[],
+  pin:"", cards:[], i:0, reasons:[], reasonsPositive:[], buyers:[], verdicts:[], positive:false, mode:"verdict",
   picked:{}, typed:[], current:null, pendingVerdict:null,
   session:{done:0, newBuyers:{}, reasonsGiven:0}, toastTimer:null
 };
@@ -327,6 +337,7 @@ function render(){
   $("stage").scrollTop = 0;
 
   $("who").textContent = c.buyer || "—";
+  $("who").setAttribute("role", "button"); $("who").tabIndex = 0;
   $("count").textContent = (S.i + 1) + " of " + S.cards.length;
   $("bar").firstElementChild.style.width = ((S.i) / S.cards.length * 100) + "%";
 
@@ -365,6 +376,7 @@ function finish(){
   $("done").className = "on";
   $("bar").firstElementChild.style.width = "100%";
   $("who").textContent = "Done";
+  $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
   $("count").textContent = "";
 
   var firsts = Object.keys(S.session.newBuyers).length;
@@ -383,7 +395,8 @@ function paintChips(){
   var box = $("chips");
   box.innerHTML = "";
   // reasons arrive ordered by how often Nick has actually used them
-  var list = S.showAllReasons ? S.reasons : S.reasons.slice(0, TOP_N);
+  var src = S.positive ? S.reasonsPositive : S.reasons;
+  var list = S.showAllReasons ? src : src.slice(0, TOP_N);
   list.forEach(function(r){
     var b = document.createElement("button");
     b.className = "chip";
@@ -397,11 +410,11 @@ function paintChips(){
     box.appendChild(b);
   });
 
-  var hidden = S.reasons.length - list.length;
+  var hidden = src.length - list.length;
   var mb = $("morebtn");
   if(S.showAllReasons){
     mb.textContent = "Show fewer";
-    mb.style.display = S.reasons.length > TOP_N ? "block" : "none";
+    mb.style.display = src.length > TOP_N ? "block" : "none";
   } else if(hidden > 0){
     mb.textContent = hidden + " more reasons";
     mb.style.display = "block";
@@ -419,11 +432,26 @@ function paintChips(){
   });
 }
 
+var HEADS = { never:"Why never?", pass:"Why a pass?", love:"What makes it a love?", show:"Why show it?" };
+
+function sheetMode(m){
+  S.mode = m;
+  var rv = m === "reassign";
+  $("ftnote").style.display = rv ? "none" : "";
+  $("orchips").style.display = rv ? "none" : "";
+  $("morebtn").style.display = rv ? "none" : $("morebtn").style.display;
+  $("save").style.display = rv ? "none" : "";
+  $("skip").textContent = rv ? "Cancel" : "Skip";
+  $("freetext").placeholder = rv ? "Optional note, then tap a client" : "Say it in your own words";
+}
+
 function openSheet(verdict){
+  sheetMode("verdict");
   S.pendingVerdict = verdict;
+  S.positive = (verdict === "love" || verdict === "show");
   S.picked = {}; S.typed = []; S.showAllReasons = false;
   var c = S.current;
-  $("sheetq").textContent = verdict === "never" ? "Why never?" : "Why a pass?";
+  $("sheetq").textContent = HEADS[verdict] || "Why?";
   $("sheetsub").textContent = (c && c.address ? street(c.address) : "This one") +
     " for " + (c && c.buyer ? c.buyer : "this client");
   paintChips();
@@ -433,7 +461,76 @@ function openSheet(verdict){
   // deliberately no autofocus: the keyboard would cover the chips and the Save button
 }
 
-function closeSheet(){ $("sheet").className = ""; S.pendingVerdict = null; }
+function closeSheet(){ $("sheet").className = ""; S.pendingVerdict = null; sheetMode("verdict"); }
+
+function inBudget(b, price){
+  if(price === null || price === undefined || price === "") return false;
+  var p = Number(price), lo = b.budget_min, hi = b.budget_max;
+  if((lo === null || lo === undefined) && (hi === null || hi === undefined)) return false;
+  return (lo === null || lo === undefined || p >= Number(lo)) &&
+         (hi === null || hi === undefined || p <= Number(hi));
+}
+
+function openReassign(){
+  var c = S.current;
+  if(!c || $("stage").style.display === "none") return;
+  sheetMode("reassign");
+  S.pendingVerdict = null;
+  $("sheetq").textContent = "Move to who?";
+  $("sheetsub").textContent = (c.address ? street(c.address) : "This one") + " is wrong for " + (c.buyer || "this client");
+  $("freetext").value = "";
+  var box = $("chips");
+  box.innerHTML = "";
+  var list = (S.buyers || []).filter(function(b){ return b.id !== c.buyer_id; })
+    .map(function(b){ return { b:b, fit:inBudget(b, c.price) }; });
+  list.sort(function(x,y){ return (y.fit - x.fit) || String(x.b.name).localeCompare(String(y.b.name)); });
+  if(!list.length){
+    var p = document.createElement("p");
+    p.style.color = "var(--muted)"; p.textContent = "No other clients loaded. Pull to reload and try again.";
+    box.appendChild(p);
+  }
+  list.forEach(function(x){
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "buyer" + (x.fit ? " fit" : "");
+    var n = document.createElement("b"); n.textContent = x.b.name;
+    var sm = document.createElement("small");
+    sm.textContent = (x.fit ? "in budget · " : "") + (x.b.open || 0) + " open";
+    b.appendChild(n); b.appendChild(sm);
+    b.onclick = function(){ doReassign(x.b, b); };
+    box.appendChild(b);
+  });
+  $("sheetinner").querySelector(".sheetbody").scrollTop = 0;
+  $("sheet").className = "on";
+}
+
+function doReassign(buyer, btn){
+  var c = S.current;
+  if(!c || S.moving) return;
+  S.moving = true;
+  btn.disabled = true;
+  var note = $("freetext").value.trim() || null;
+  fetch(API, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-triage-pin": S.pin },
+    body: JSON.stringify({ action:"reassign", match_id:c.match_id, to_buyer:buyer.id, note:note })
+  }).then(function(r){
+    if(!r.ok) throw new Error("HTTP_" + r.status);
+    return r.json();
+  }).then(function(){
+    S.moving = false;
+    closeSheet();
+    buyer.open = (buyer.open || 0) + 1;
+    S.cards.splice(S.i, 1);
+    S.lastRow = null;
+    showToast("Moved to " + buyer.name, true);
+    render();
+  }).catch(function(){
+    S.moving = false;
+    btn.disabled = false;
+    showToast("Couldn't move it. Try again.", true);
+  });
+}
 
 function addTyped(){
   var v = $("freetext").value.trim();
@@ -484,7 +581,8 @@ function scheduleFlush(){
   S.flushTimer = setTimeout(flush, 5000);
 }
 
-function showToast(msg){
+function showToast(msg, noUndo){
+  $("undo").style.display = noUndo ? "none" : "";
   $("toasttext").textContent = msg;
   $("toast").className = "on";
   clearTimeout(S.toastTimer);
@@ -511,20 +609,21 @@ function undo(){
 document.querySelectorAll(".v").forEach(function(btn){
   btn.addEventListener("click", function(){
     var v = btn.getAttribute("data-v");
-    if(v === "pass" || v === "never") openSheet(v);
+    if(v === "pass" || v === "never" || v === "love" || v === "show") openSheet(v);
     else commit(v, [], null);
   });
 });
 
 $("save").onclick = function(){
   addTyped();
-  var codes = Object.keys(S.picked).concat(S.typed.map(function(t){ return "new:" + t; }));
+  var codes = Object.keys(S.picked).concat(S.typed.map(function(t){ return (S.positive ? "newpos:" : "new:") + t; }));
   var note = S.typed.length ? S.typed.join("; ") : null;
   var v = S.pendingVerdict;
   closeSheet();
   commit(v, codes, note);
 };
 $("skip").onclick = function(){
+  if(S.mode === "reassign"){ closeSheet(); return; }
   var v = S.pendingVerdict;
   closeSheet();
   commit(v, [], null);
@@ -534,6 +633,10 @@ $("freetext").addEventListener("keydown", function(e){
   if(e.key === "Enter"){ e.preventDefault(); addTyped(); }
 });
 $("undo").onclick = undo;
+$("who").addEventListener("click", openReassign);
+$("who").addEventListener("keydown", function(e){
+  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); openReassign(); }
+});
 $("morebtn").onclick = function(){ S.showAllReasons = !S.showAllReasons; paintChips(); };
 
 $("more").onclick = function(){
@@ -546,11 +649,13 @@ $("stop").onclick = function(){
 };
 
 function load(n){
-  $("who").textContent = "Loading";
+  $("who").textContent = "Loading"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
   $("count").textContent = "";
   getDeck(n).then(function(d){
     S.cards = d.cards || [];
     S.reasons = d.reasons || [];
+    S.reasonsPositive = d.reasons_positive || [];
+    S.buyers = d.buyers || [];
     S.i = 0;
     S.session = { done:0, newBuyers:{}, reasonsGiven:0 };
     if(!S.cards.length){
@@ -559,7 +664,7 @@ function load(n){
       $("done").className = "on";
       $("donesum").textContent = "Nothing waiting. The queue is clear — it refills itself as new listings come in.";
       $("donebtns").style.display = "none";
-      $("who").textContent = "All clear";
+      $("who").textContent = "All clear"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
       return;
     }
     $("donebtns").style.display = "flex";
@@ -572,7 +677,7 @@ function load(n){
       $("gateerr").textContent = "That PIN was not recognised.";
       return;
     }
-    $("who").textContent = "Offline";
+    $("who").textContent = "Offline"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
     $("stage").style.display = "none";
     $("verdicts").style.display = "none";
     $("done").className = "on";
