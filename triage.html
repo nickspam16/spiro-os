@@ -173,7 +173,8 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 
 <div id="gate">
   <h1>Spiro Triage</h1>
-  <p>Enter your device PIN. It stays on this phone and never travels in the page.</p>
+  <p>Enter your PIN once to set this phone up. After that the phone signs itself
+     in and the PIN is no longer stored here.</p>
   <div class="pinrow">
     <input id="pin" type="tel" inputmode="numeric" autocomplete="off"
            maxlength="12" placeholder="······" aria-label="Device PIN">
@@ -248,9 +249,11 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 var API = "https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/triage-api";
 var QKEY = "spiro.triage.queue.v1";
 var PKEY = "spiro.triage.pin.v1";
+var TKEY = "spiro.triage.token.v1";
 
 var S = {
-  pin:"", cards:[], i:0, reasons:[], reasonsPositive:[], buyers:[], verdicts:[], positive:false, mode:"verdict",
+  pin:"", token:"", cards:[], i:0, reasons:[], reasonsPositive:[], buyers:[],
+  verdicts:[], positive:false, mode:"verdict",
   picked:{}, typed:[], current:null, pendingVerdict:null,
   session:{done:0, newBuyers:{}, reasonsGiven:0}, toastTimer:null
 };
@@ -271,12 +274,40 @@ function paintPending(){
 }
 
 /* ---------- api ---------- */
+// The PIN is used exactly once, to enrol. After that this device holds a long
+// token and the PIN never travels again, which is what lets the server lock PIN
+// attempts hard without locking this phone out.
+function authHeaders(extra){
+  var h = extra || {};
+  if(S.token) h["x-triage-token"] = S.token;
+  else if(S.pin) h["x-triage-pin"] = S.pin;
+  return h;
+}
+
+function keepToken(d){
+  if(d && typeof d.device_token === "string" && d.device_token.length === 64){
+    S.token = d.device_token;
+    lsSet(TKEY, S.token);
+    S.pin = "";
+    lsSet(PKEY, "");     // the PIN is not kept on the device once enrolled
+  }
+  return d;
+}
+
 function getDeck(n){
-  return fetch(API + "?n=" + (n||10), { headers:{ "x-triage-pin": S.pin } })
+  return fetch(API + "?n=" + (n||10), { headers: authHeaders() })
     .then(function(r){
-      if(r.status === 401) throw new Error("PIN_BAD");
+      if(r.status === 429){
+        return r.json().catch(function(){ return {}; }).then(function(j){
+          var e = new Error("LOCKED"); e.detail = j; throw e;
+        });
+      }
+      if(r.status === 401){
+        S.token = ""; lsSet(TKEY, "");
+        throw new Error("PIN_BAD");
+      }
       if(!r.ok) throw new Error("HTTP_" + r.status);
-      return r.json();
+      return r.json().then(keepToken);
     });
 }
 
@@ -293,7 +324,7 @@ function flush(){
   S.flushing = true;
   return fetch(API, {
     method:"POST",
-    headers:{ "Content-Type":"application/json", "x-triage-pin": S.pin },
+    headers: authHeaders({ "Content-Type":"application/json" }),
     body: JSON.stringify({ verdicts: batch.map(function(r){
       // cid travels with the row: a retry after a lost response is ignored
       // server-side rather than counted twice.
@@ -303,7 +334,8 @@ function flush(){
   }).then(function(r){
     if(!r.ok) throw new Error("HTTP_" + r.status);
     return r.json();
-  }).then(function(){
+  }).then(function(d){
+    keepToken(d);
     setQueue(queue().filter(function(r){ return !sentCids[r.cid]; }));
   }).catch(function(){
     /* stays queued; retried on next verdict and on reconnect */
@@ -512,12 +544,13 @@ function doReassign(buyer, btn){
   var note = $("freetext").value.trim() || null;
   fetch(API, {
     method:"POST",
-    headers:{ "Content-Type":"application/json", "x-triage-pin": S.pin },
+    headers: authHeaders({ "Content-Type":"application/json" }),
     body: JSON.stringify({ action:"reassign", match_id:c.match_id, to_buyer:buyer.id, note:note })
   }).then(function(r){
     if(!r.ok) throw new Error("HTTP_" + r.status);
     return r.json();
-  }).then(function(){
+  }).then(function(d){
+    keepToken(d);
     S.moving = false;
     closeSheet();
     buyer.open = (buyer.open || 0) + 1;
@@ -671,13 +704,24 @@ function load(n){
     render();
   }).catch(function(err){
     if(String(err.message) === "PIN_BAD"){
-      lsSet(PKEY, "");
+      lsSet(PKEY, ""); lsSet(TKEY, "");
+      S.pin = ""; S.token = "";
       $("app").className = "";
       $("gate").style.display = "flex";
       $("gateerr").textContent = "That PIN was not recognised.";
       return;
     }
-    $("who").textContent = "Offline"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
+    if(String(err.message) === "LOCKED"){
+      var d = err.detail || {};
+      $("app").className = "";
+      $("gate").style.display = "flex";
+      $("gateerr").textContent = d.reason ||
+        "Too many sign-in attempts. Try again shortly.";
+      return;
+    }
+    $("who").textContent = "Offline";
+    $("who").removeAttribute("role");
+    $("who").removeAttribute("tabindex");
     $("stage").style.display = "none";
     $("verdicts").style.display = "none";
     $("done").className = "on";
@@ -687,8 +731,7 @@ function load(n){
 }
 
 function start(pin){
-  S.pin = pin;
-  lsSet(PKEY, pin);
+  if(pin){ S.pin = pin; lsSet(PKEY, pin); }
   $("gate").style.display = "none";
   $("app").className = "on";
   paintPending();
@@ -706,8 +749,11 @@ $("pin").addEventListener("keydown", function(e){ if(e.key === "Enter") $("enter
 
 window.addEventListener("online", function(){ if(S.pin) flush(); });
 
-var saved = lsGet(PKEY);
-if(saved){ start(saved); } else { $("pin").focus(); }
+S.token = lsGet(TKEY) || "";
+var savedPin = lsGet(PKEY);
+if(S.token){ start(""); }            // enrolled: no PIN needed, ever again
+else if(savedPin){ start(savedPin); }
+else { $("pin").focus(); }
 
 })();
 </script>
