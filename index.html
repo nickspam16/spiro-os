@@ -500,8 +500,6 @@
           <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
             <a href="javascript:void(0)" onclick="goDashboard()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Dashboard</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
-            <a href="javascript:void(0)" onclick="menuGoBuyers()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyers <span id="more-menu-buyers-n" style="color:var(--muted);font-size:12.5px;"></span></a>
-            <a href="javascript:void(0)" onclick="menuGoListings()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Listings <span id="more-menu-listings-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Relationships <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
@@ -603,7 +601,7 @@
     <div class="cols">
     <div>
     <div class="card" id="records-card">
-      <h2><span>Records<span id="records-head-active"></span></span></h2>
+      <h2><span><span id="records-head-word">Records</span><span id="records-head-active"></span></span></h2>
       <div class="tabs" id="tabs"></div>
       <div id="tab-add" style="margin:2px 0 16px;"></div>
       <input type="search" id="browse-q" placeholder="Filter this list&hellip;" oninput="browseFilterInput()">
@@ -1118,6 +1116,7 @@ function closePanel() {
     if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'learning-card', 'form-card', 'architect-registry-card', 'listing-card', 'house-card', 'content-card', 'photos-card'].indexOf(PANEL_HOME.id) !== -1 || PANEL_HOME.wasHidden) card.style.display = 'none';
   }
   PANEL_HOME = null;
+  if (RECORDS_HEAD) { RECORDS_HEAD = ''; renderTabs(); }
   document.getElementById('panel-view').style.display = 'none';
   document.getElementById('home-view').style.display = '';
   window.scrollTo(0, 0);
@@ -1134,8 +1133,12 @@ function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
 function menuGoMarket() { openPanel('market-card'); renderMarketReview(); }
 function menuGoPeople() { setTab('people'); openPanel('records-card'); }
 /* P11: the real browseTab keys are 'buyers' and 'listings' (the TABS array in the browse section). */
-function menuGoBuyers() { setTab('buyers'); openPanel('records-card'); }
-function menuGoListings() { setTab('listings'); openPanel('records-card'); }
+function menuGoBuyers() { setTab('buyers'); openPanel('records-card'); setRecordsHead('Buyers'); }
+function menuGoListings() { setTab('listings'); openPanel('records-card'); setRecordsHead('Listings'); }
+/* The Records card is one card behind two tab-bar buttons. The header names what was tapped (Buyers /
+   Listings); reached any other way it still says Records. renderTabs owns the text, closePanel clears it. */
+var RECORDS_HEAD = '';
+function setRecordsHead(w) { RECORDS_HEAD = w || ''; renderTabs(); }
 /* RENDER ON OPEN (2026-07-30, found driving every menu item).
    Both of these opened a card that had never been rendered and showed its literal initial markup —
    "Loading…" — forever. Nothing was loading. render() skips hidden cards, and these two cards are
@@ -3168,10 +3171,6 @@ function render() {
   if (moreTriageN) moreTriageN.textContent = rqOpen ? String(rqOpen) : '';
   var tabTriageN = document.getElementById('tab-triage-n');   /* P11: same number, not a second count */
   if (tabTriageN) tabTriageN.textContent = rqOpen ? String(rqOpen) : '';
-  var moreBuyersN = document.getElementById('more-menu-buyers-n');
-  if (moreBuyersN) moreBuyersN.textContent = (DATA.buyers || []).length ? String((DATA.buyers || []).length) : '';
-  var moreListingsN = document.getElementById('more-menu-listings-n');
-  if (moreListingsN) moreListingsN.textContent = (DATA.listings || []).length ? String((DATA.listings || []).length) : '';
   var mtCard = document.getElementById('match-triage-card');
   if (mtCard && mtCard.style.display !== 'none') safeRender('matchtriage', renderMatchTriage);
   var moreCalSugN = document.getElementById('more-menu-calsug-n');
@@ -3252,8 +3251,8 @@ function renderPulse() {
 var SYS_PLAIN = {
   'nightly-github-backup':        'Your off-site backup of the whole CRM',
   'nightly-github-backup-portal': 'The buyer-portal backup',
-  'geo-coverage':                 'Map coordinates (comps and area matching get thin without them)',
-  'hotsheet-band-cap':            'The MLS hotsheet is losing listings past its daily cap',
+  'geo-coverage':                 'Map coordinate coverage',
+  'hotsheet-band-cap':            'The MLS hotsheet',
   'hotsheet-gap-alert':           'The MLS hotsheet',
   'caravan-route':                'The Monday caravan route',
   'selftest':                     'The system self-test',
@@ -3282,28 +3281,41 @@ function sysSinceWords(detail) {
   return ' (' + n + ' days)';
 }
 
-function renderSystemLine() {
-  var el = document.getElementById('syshealth'); if (!el) return;
-  var rows = (DATA.feedHealth || []).filter(function (f) { return f && f.feed && f.problem; });
-  if (!rows.length) { el.innerHTML = ''; return; }
+/* Short label for the lead line when the feed supplies its own sentence (feed_health.detail.note). */
+var SYS_SHORT = { 'hotsheet-band-cap': 'MLS hotsheet', 'hotsheet-gap-alert': 'MLS hotsheet' };
+/* Pure: the banner HTML for a list of fn_feed_health_scan rows ('' when there is nothing to say).
+   A row's `note` is a complete, human-written sentence (what happened and what to do), so it is shown
+   as its own sentence. Without one, fall back to "<plain name> <verb>", e.g. "Listing photo caching is failing". */
+function systemLineHtml(allRows) {
+  var rows = (allRows || []).filter(function (f) { return f && f.feed && f.problem; });
+  if (!rows.length) return '';
   /* Serious first, then alphabetical, so the top line is always the thing that matters most. */
   rows.sort(function (a, b) {
     var sa = SYS_SERIOUS.test(a.feed) ? 0 : 1, sb = SYS_SERIOUS.test(b.feed) ? 0 : 1;
     return sa !== sb ? sa - sb : String(a.feed).localeCompare(String(b.feed));
   });
   var lead = rows[0];
-  var verb = FEED_PROBLEM_LABEL[lead.problem] || 'has a problem';
-  var rest = rows.length - 1;
-  el.innerHTML =
-    '<div onclick="(function(){var f=document.getElementById(\'focus-card\');if(f)f.scrollIntoView({behavior:\'smooth\',block:\'start\'});})()"'
+  var note = String(lead.note || '').trim();
+  var body;
+  if (note) {
+    if (!/[.!?]$/.test(note)) note += '.';
+    body = '<b>' + esc(SYS_SHORT[lead.feed] || sysPlainName(lead.feed)) + ':</b> ' + esc(note);
+  } else {
+    body = esc(sysPlainName(lead.feed)) + ' <b>' + esc(FEED_PROBLEM_LABEL[lead.problem] || 'has a problem') + '.</b>';
+  }
+  return '<div onclick="(function(){var f=document.getElementById(\'focus-card\');if(f)f.scrollIntoView({behavior:\'smooth\',block:\'start\'});})()"'
     + ' role="button" tabindex="0" aria-label="System problems, open Today\'s Focus"'
     + ' style="border:1px solid var(--line);border-left:3px solid var(--clay);background:var(--clay-soft);'
     + 'padding:11px 12px;margin:0 0 12px;border-radius:var(--radius);font-size:13.5px;line-height:1.5;'
     + 'min-height:44px;box-sizing:border-box;cursor:pointer;">'
     + '<span style="text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:var(--clay);margin-right:8px;">Needs fixing</span>'
-    + esc(sysPlainName(lead.feed)) + ' <b>' + esc(verb) + '</b>' + esc(sysSinceWords(lead.detail))
-    + (rest ? ' <span class="hint">(and ' + rest + ' other' + (rest === 1 ? '' : 's') + ')</span>' : '')
+    + '&mdash; <b>' + rows.length + ' problem' + (rows.length === 1 ? '' : 's') + '.</b> '
+    + body + esc(sysSinceWords(lead.detail))
     + '</div>';
+}
+function renderSystemLine() {
+  var el = document.getElementById('syshealth'); if (!el) return;
+  el.innerHTML = systemLineHtml(DATA.feedHealth);
 }
 
 /* Buyer-loss / showing-reactivation chain (2026-07-24): a buyer who explicitly passed on something
@@ -11778,6 +11790,8 @@ function renderTabs() {
      just a mystery blank. No back-control here anymore: these tabs are now reached through
      openPanel() (see the Panel navigation block), which already provides its own "← Back to
      Spiro OS" button above the panel — a second one here would just be a duplicate. */
+  var recWord = document.getElementById('records-head-word');
+  if (recWord) recWord.textContent = (PANEL_HOME && PANEL_HOME.id === 'records-card' && RECORDS_HEAD) ? RECORDS_HEAD : 'Records';
   var recHead = document.getElementById('records-head-active');
   if (recHead) recHead.innerHTML = HIDDEN_TAB_LABELS[browseTab] ? ' &middot; ' + esc(HIDDEN_TAB_LABELS[browseTab]) : '';
   /* Add action lives OUTSIDE the horizontally-scrolling tab strip (where it was invisible on mobile),
