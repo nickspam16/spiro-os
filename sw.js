@@ -15,7 +15,7 @@
 // Adding or removing a SHELL asset still requires editing this file, and that edit is itself what
 // triggers install/addAll, so the shell list stays correct without a version number to maintain.
 const CACHE = 'spiro-os';
-const SHELL = ['./index.html', './manifest.json', './icon.png', './supabase.js',
+const SHELL = ['./index.html', './triage.html', './manifest.json', './manifest.webmanifest', './icon.png', './supabase.js',
   './assets/ns-logo.svg', './assets/icon-192.png', './assets/icon-512.png',
   './assets/icon-192-maskable.png', './assets/icon-512-maskable.png',
   './assets/icon-180.png', './assets/icon-167.png', './assets/icon-152.png', './assets/icon-120.png',

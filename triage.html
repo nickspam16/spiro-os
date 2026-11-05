@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#1B2220">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32">
 <title>Spiro Triage</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -146,6 +149,34 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 #skip{background:var(--surface);border:1px solid var(--hair);color:var(--muted)}
 #save{background:var(--brass);color:#20170A}
 
+/* ---------- needs-criteria flag ---------- */
+#needs{display:none;margin:0 0 12px;padding:8px 11px;border:1px solid var(--warn);
+  border-radius:8px;color:var(--warn);font-size:13px;line-height:1.35}
+#needs b{font-weight:600;letter-spacing:.02em}
+
+/* ---------- yesterday's showings ---------- */
+#showings{flex:none;max-height:42vh;overflow-y:auto;overscroll-behavior:contain;
+  border-bottom:1px solid var(--hair);background:var(--surface)}
+#showings:empty{display:none}
+.shw{padding:10px var(--pad) 11px;border-top:1px solid var(--hair)}
+.shw:first-child{border-top:none}
+.shw p{margin:0 0 8px;font-size:15px;line-height:1.35}
+.shw .row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.shw .row button{min-height:44px;border-radius:9px;background:var(--ground);
+  border:1px solid var(--hair);font-size:13px;font-weight:600;padding:0 2px}
+.shw .row button[data-o="loved"]{border-color:var(--brass);color:var(--brass)}
+.shw .row button[data-o="no_show"],.shw .row button[data-o="pass"]{color:var(--muted)}
+.shw .row button:disabled{opacity:.5}
+.shw .msg{color:var(--warn);font-size:13px;margin:7px 0 0}
+
+/* ---------- load / network error ---------- */
+#err{flex:1;display:none;flex-direction:column;justify-content:center;padding:0 24px;gap:14px}
+#err.on{display:flex}
+#err h2{font-family:var(--serif);font-size:24px;font-weight:600;margin:0}
+#errmsg{color:var(--muted);margin:0;font-size:15px;line-height:1.5}
+#retry{align-self:flex-start;background:var(--brass);color:#20170A;border-radius:10px;
+  padding:14px 26px;min-height:50px;font-weight:600}
+
 /* ---------- finish / toast ---------- */
 #done{flex:1;display:none;flex-direction:column;justify-content:center;padding:0 24px;gap:14px}
 #done.on{display:flex}
@@ -163,9 +194,8 @@ header{display:flex;align-items:baseline;justify-content:space-between;
   gap:12px;font-size:14px;z-index:30}
 #toast.on{display:flex}
 #undo{color:var(--brass);font-weight:600;flex:none;min-height:30px}
-#pending{position:fixed;top:calc(8px + env(safe-area-inset-top));right:var(--pad);
-  background:var(--warn);color:#20170A;font-size:12px;font-weight:600;
-  padding:4px 9px;border-radius:12px;display:none;z-index:35}
+#pending{flex:none;display:none;padding:5px var(--pad);text-align:right;color:var(--warn);
+  font-size:12px;font-weight:600;border-bottom:1px solid var(--hair)}
 #pending.on{display:block}
 </style>
 </head>
@@ -186,11 +216,14 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 <div id="app">
   <header><div id="who" role="button" tabindex="0" aria-label="Move this card to a different client"></div><div id="count"></div></header>
   <div id="bar"><i></i></div>
+  <div id="pending"></div>
+  <div id="showings" aria-live="polite"></div>
 
   <div id="stage">
     <img id="shot" alt="" decoding="async">
     <div id="noshot">No photo on this listing yet</div>
     <div class="facts">
+      <p id="needs" role="note"><b>Needs criteria.</b> Matching is paused for this client, so treat this card as a rough guess.</p>
       <p id="price"></p>
       <p id="addr"></p>
       <p id="hood"></p>
@@ -200,11 +233,17 @@ header{display:flex;align-items:baseline;justify-content:space-between;
     <div id="mls"></div>
   </div>
 
+  <div id="err" role="alert">
+    <h2>Couldn't load.</h2>
+    <p id="errmsg"></p>
+    <button id="retry" type="button">Retry</button>
+  </div>
+
   <div id="done">
-    <h2>That's the deck.</h2>
+    <h2 id="doneh">That's the deck.</h2>
     <p id="donesum"></p>
     <div id="donebtns">
-      <button id="more">Next 10</button>
+      <button id="more">Show more</button>
       <button id="stop">Stop here</button>
     </div>
   </div>
@@ -240,7 +279,6 @@ header{display:flex;align-items:baseline;justify-content:space-between;
 </div>
 
 <div id="toast"><span id="toasttext"></span><button id="undo">Undo</button></div>
-<div id="pending"></div>
 
 <script>
 (function(){
@@ -250,12 +288,14 @@ var API = "https://mtnkkeftmcfxeygkbkja.supabase.co/functions/v1/triage-api";
 var QKEY = "spiro.triage.queue.v1";
 var PKEY = "spiro.triage.pin.v1";
 var TKEY = "spiro.triage.token.v1";
+var DKEY = "spiro.triage.day.v1";   // {d:"YYYY-MM-DD" (local), n:verdicts today}
 
 var S = {
   pin:"", token:"", cards:[], i:0, reasons:[], reasonsPositive:[], buyers:[],
   verdicts:[], positive:false, mode:"verdict",
   picked:{}, typed:[], current:null, pendingVerdict:null,
-  session:{done:0, newBuyers:{}, reasonsGiven:0}, toastTimer:null
+  session:{done:0, newBuyers:{}, reasonsGiven:0}, toastTimer:null,
+  cap:5, extra:false, waiting:0, showings:[]
 };
 
 var $ = function(id){ return document.getElementById(id); };
@@ -265,6 +305,36 @@ function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; 
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 function queue(){ try{ return JSON.parse(lsGet(QKEY)||"[]"); }catch(e){ return []; } }
 function setQueue(q){ lsSet(QKEY, JSON.stringify(q)); paintPending(); }
+
+function today(){
+  var t = new Date();
+  return t.getFullYear() + "-" + String(t.getMonth()+1).padStart(2,"0") + "-" + String(t.getDate()).padStart(2,"0");
+}
+function dayCount(){
+  try{ var o = JSON.parse(lsGet(DKEY)||"null"); return o && o.d === today() ? (o.n|0) : 0; }catch(e){ return 0; }
+}
+function setDayCount(n){ lsSet(DKEY, JSON.stringify({ d:today(), n:Math.max(0,n) })); }
+
+/* ---------- errors: visible message + best-effort log ---------- */
+function logErr(msg, stack){
+  try{ console.error("[triage] " + msg, stack || ""); }catch(e){}
+  if(!S.token || logErr.busy) return;
+  logErr.busy = true;
+  fetch(API, { method:"POST", headers: authHeaders({ "Content-Type":"application/json" }),
+    body: JSON.stringify({ action:"client_error", message:String(msg).slice(0,500),
+      stack: stack ? String(stack).slice(0,2000) : null, page:"triage.html", app_version:"triage-p2" })
+  }).catch(function(){}).then(function(){ logErr.busy = false; });
+}
+window.addEventListener("error", function(e){ logErr(e.message || "script error", e.error && e.error.stack); });
+window.addEventListener("unhandledrejection", function(e){ logErr("unhandled: " + (e.reason && e.reason.message || e.reason)); });
+
+// "HTTP_503" -> "HTTP 503"; anything else (fetch TypeError, bad JSON) -> no connection / bad reply
+function describe(err){
+  var m = /^HTTP_(\d+)/.exec(String(err && err.message));
+  if(m) return "HTTP " + m[1];
+  if(err && err.name === "SyntaxError") return "the server sent a reply this page couldn't read";
+  return "no connection";
+}
 
 function paintPending(){
   var n = queue().length;
@@ -295,7 +365,7 @@ function keepToken(d){
 }
 
 function getDeck(n){
-  return fetch(API + "?n=" + (n||10), { headers: authHeaders() })
+  return fetch(API + "?n=" + (n||30), { headers: authHeaders() })
     .then(function(r){
       if(r.status === 429){
         return r.json().catch(function(){ return {}; }).then(function(j){
@@ -337,8 +407,9 @@ function flush(){
   }).then(function(d){
     keepToken(d);
     setQueue(queue().filter(function(r){ return !sentCids[r.cid]; }));
-  }).catch(function(){
+  }).catch(function(e){
     /* stays queued; retried on next verdict and on reconnect */
+    try{ console.error("[triage] verdict send failed (" + describe(e) + "), kept for retry"); }catch(x){}
   }).then(function(){
     S.flushing = false;
     if(queue().length) return flush();   // drain anything queued mid-flight
@@ -362,7 +433,9 @@ function render(){
   var c = S.cards[S.i];
   S.current = c;
   if(!c){ return finish(); }
+  if(!S.extra && dayCount() >= S.cap){ S.current = null; return finish(true); }
 
+  $("err").className = "";
   $("stage").style.display = "";
   $("verdicts").style.display = "grid";
   $("done").className = "";
@@ -370,8 +443,15 @@ function render(){
 
   $("who").textContent = c.buyer || "—";
   $("who").setAttribute("role", "button"); $("who").tabIndex = 0;
-  $("count").textContent = (S.i + 1) + " of " + S.cards.length;
-  $("bar").firstElementChild.style.width = ((S.i) / S.cards.length * 100) + "%";
+  if(S.extra){
+    $("count").textContent = "More: " + (S.i + 1) + " of " + S.cards.length;
+    $("bar").firstElementChild.style.width = (S.i / S.cards.length * 100) + "%";
+  } else {
+    var k = Math.min(dayCount() + 1, S.cap);
+    $("count").textContent = "Today: " + k + " of " + S.cap;
+    $("bar").firstElementChild.style.width = (dayCount() / S.cap * 100) + "%";
+  }
+  $("needs").style.display = c.needs_criteria ? "block" : "none";
 
   var img = $("shot"), ns = $("noshot");
   if(c.photo){
@@ -402,15 +482,32 @@ function render(){
   $("mls").textContent = c.mls ? ("MLS " + c.mls) : "";
 }
 
-function finish(){
+function finish(capHit){
+  $("err").className = "";
   $("stage").style.display = "none";
   $("verdicts").style.display = "none";
   $("done").className = "on";
   $("bar").firstElementChild.style.width = "100%";
   $("who").textContent = "Done";
   $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
-  $("count").textContent = "";
+  $("count").textContent = capHit ? "Today: " + S.cap + " of " + S.cap : "";
 
+  if(capHit){
+    var left = Math.max(0, S.waiting);
+    $("doneh").textContent = "Done.";
+    $("donesum").textContent = left
+      ? left + " more waiting if you want them."
+      : "Nothing else is waiting. The queue refills itself as new listings come in.";
+    $("donebtns").style.display = "flex";
+    $("more").style.display = left ? "" : "none";
+    $("more").textContent = "Show more";
+    $("stop").textContent = "Stop here";
+    flush();
+    return;
+  }
+  $("doneh").textContent = "That's the deck.";
+  $("more").style.display = "";
+  $("more").textContent = "Next 10";
   var firsts = Object.keys(S.session.newBuyers).length;
   var parts = [S.session.done + (S.session.done === 1 ? " verdict" : " verdicts") + " recorded."];
   if(firsts) parts.push("First read ever on " + firsts + (firsts === 1 ? " client." : " clients."));
@@ -590,6 +687,8 @@ function commit(verdict, codes, note){
   var q = queue(); q.push(row); setQueue(q);
 
   S.session.done++;
+  setDayCount(dayCount() + 1);
+  S.waiting = Math.max(0, S.waiting - 1);
   if(/^First verdict for/.test(c.why || "")) S.session.newBuyers[c.buyer] = 1;
   if((codes || []).length) S.session.reasonsGiven++;
 
@@ -630,6 +729,8 @@ function undo(){
   }
   setQueue(q);
   S.session.done = Math.max(0, S.session.done - 1);
+  setDayCount(dayCount() - 1);
+  S.waiting += 1;
   if((S.lastRow.reason_codes||[]).length) S.session.reasonsGiven = Math.max(0, S.session.reasonsGiven - 1);
   S.i = S.lastIndex;
   S.lastRow = null;
@@ -673,28 +774,99 @@ $("who").addEventListener("keydown", function(e){
 $("morebtn").onclick = function(){ S.showAllReasons = !S.showAllReasons; paintChips(); };
 
 $("more").onclick = function(){
+  S.extra = true;
   $("done").className = "";
-  load(10);
+  if(S.i < S.cards.length){ render(); return; }
+  // Cards on hand are used up: send what is queued first, so the next deck excludes them.
+  flush().then(function(){ load(30); });
 };
 $("stop").onclick = function(){
-  $("donesum").textContent = "Closed. Open this again whenever you have two minutes.";
+  $("doneh").textContent = "Closed.";
+  $("donesum").textContent = "Open this again whenever you have two minutes.";
   $("donebtns").style.display = "none";
 };
+$("retry").onclick = function(){ load(30); };
+
+function showError(title, detail){
+  $("stage").style.display = "none";
+  $("verdicts").style.display = "none";
+  $("done").className = "";
+  $("who").textContent = "Spiro";
+  $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
+  $("count").textContent = "";
+  $("err").querySelector("h2").textContent = title;
+  $("errmsg").textContent = detail;
+  $("err").className = "on";
+}
+
+/* ---------- yesterday's showings ---------- */
+var OUT = [["loved","Loved"],["fine","Fine"],["pass","Pass"],["no_show","Didn't happen"]];
+
+function paintShowings(){
+  var box = $("showings");
+  box.innerHTML = "";
+  (S.showings || []).forEach(function(sh){
+    var d = document.createElement("div"); d.className = "shw";
+    var p = document.createElement("p");
+    p.textContent = "How was " + sh.address + " with " + sh.who + "?";
+    var row = document.createElement("div"); row.className = "row";
+    var msg = document.createElement("p"); msg.className = "msg"; msg.style.display = "none";
+    OUT.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.setAttribute("data-o", o[0]); b.textContent = o[1];
+      b.onclick = function(){ answerShowing(sh, o[0], d, row, msg); };
+      row.appendChild(b);
+    });
+    d.appendChild(p); d.appendChild(row); d.appendChild(msg);
+    box.appendChild(d);
+  });
+}
+
+function answerShowing(sh, outcome, d, row, msg){
+  var btns = row.querySelectorAll("button");
+  btns.forEach(function(b){ b.disabled = true; });
+  msg.style.display = "none";
+  fetch(API, {
+    method:"POST",
+    headers: authHeaders({ "Content-Type":"application/json" }),
+    body: JSON.stringify({ action:"showing_outcome", showing_id:sh.id, outcome:outcome })
+  }).then(function(r){
+    if(!r.ok) throw new Error("HTTP_" + r.status);
+    return r.json();
+  }).then(function(j){
+    keepToken(j);
+    S.showings = S.showings.filter(function(x){ return x.id !== sh.id; });
+    paintShowings();
+    showToast("Noted", true);
+  }).catch(function(e){
+    btns.forEach(function(b){ b.disabled = false; });
+    msg.textContent = "Couldn't save (" + describe(e) + "). Tap again to retry.";
+    msg.style.display = "block";
+    logErr("showing outcome failed: " + describe(e));
+  });
+}
 
 function load(n){
   $("who").textContent = "Loading"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
   $("count").textContent = "";
+  $("err").className = "";
   getDeck(n).then(function(d){
     S.cards = d.cards || [];
     S.reasons = d.reasons || [];
     S.reasonsPositive = d.reasons_positive || [];
     S.buyers = d.buyers || [];
+    S.cap = Math.max(1, Number(d.cap) || 5);
+    S.waiting = Math.max(0, (Number(d.backlog_total) || S.cards.length) - (Number(d.snoozed) || 0));
+    S.showings = d.showings || [];
+    if(d.showings_error) logErr("showings unavailable: " + d.showings_error);
+    paintShowings();
     S.i = 0;
     S.session = { done:0, newBuyers:{}, reasonsGiven:0 };
     if(!S.cards.length){
       $("stage").style.display = "none";
       $("verdicts").style.display = "none";
       $("done").className = "on";
+      $("doneh").textContent = "All clear.";
       $("donesum").textContent = "Nothing waiting. The queue is clear — it refills itself as new listings come in.";
       $("donebtns").style.display = "none";
       $("who").textContent = "All clear"; $("who").removeAttribute("role"); $("who").removeAttribute("tabindex");
@@ -719,14 +891,9 @@ function load(n){
         "Too many sign-in attempts. Try again shortly.";
       return;
     }
-    $("who").textContent = "Offline";
-    $("who").removeAttribute("role");
-    $("who").removeAttribute("tabindex");
-    $("stage").style.display = "none";
-    $("verdicts").style.display = "none";
-    $("done").className = "on";
-    $("donebtns").style.display = "none";
-    $("donesum").textContent = "Could not reach the deck. Anything you already decided is saved on this phone and will send itself when you are back online.";
+    var why = describe(err);
+    logErr("deck load failed: " + why, err && err.stack);
+    showError("Couldn't load the deck.", "Reason: " + why + ". Anything you already decided is saved on this phone and will send itself when you are back online.");
   });
 }
 
@@ -736,7 +903,7 @@ function start(pin){
   $("app").className = "on";
   paintPending();
   flush();
-  load(10);
+  load(30);
 }
 
 $("enter").onclick = function(){
@@ -748,6 +915,14 @@ $("enter").onclick = function(){
 $("pin").addEventListener("keydown", function(e){ if(e.key === "Enter") $("enter").click(); });
 
 window.addEventListener("online", function(){ if(S.pin) flush(); });
+
+if("serviceWorker" in navigator){
+  // Shared worker: caches the app shell only. It ignores cross-origin requests, so the
+  // triage-api responses are never cached.
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("./sw.js").catch(function(e){ console.error("[triage] sw", e); });
+  });
+}
 
 S.token = lsGet(TKEY) || "";
 var savedPin = lsGet(PKEY);
