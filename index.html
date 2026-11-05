@@ -1607,6 +1607,64 @@ async function mtBulkApply(action, reason) {
   toast(okN + ' updated' + (failN ? ', ' + failN + ' failed' : ''));
   await loadAll(false);
 }
+/* Move a suggested match to a different buyer (P10, 2026-11-05). Same server function the deck
+   (the deck) uses via triage-api, but called straight from here: fn_triage_reassign is
+   security definer, owner-asserting, and granted to authenticated, so the signed-in app needs no
+   PIN/token. The server dismisses this card (reason wrong_buyer) and opens or reuses one on the
+   chosen buyer. It returns {ok:false,error} rather than throwing, so r.data.ok is checked. */
+function mtInBudget(b, price) {
+  if (price == null) return false;
+  var lo = b.budget_min_num != null ? b.budget_min_num : numFrom(b.budget_min);
+  var hi = b.budget_max_num != null ? b.budget_max_num : numFrom(b.budget_max);
+  if (lo == null && hi == null) return false;
+  return (lo == null || price >= lo) && (hi == null || price <= hi);
+}
+function mtMove(matchId) {
+  var host = document.getElementById('dismiss-' + matchId);
+  if (!host) return;
+  if (host.innerHTML && host.getAttribute('data-mode') === 'move') { host.innerHTML = ''; host.removeAttribute('data-mode'); return; }
+  host.setAttribute('data-mode', 'move');
+  host.innerHTML = '<div class="t2 hint" style="margin:6px 0 4px;">Move this to another buyer</div>'
+    + '<input id="mtmv-q-' + esc(matchId) + '" type="text" placeholder="Filter buyers by name&hellip;" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:4px;" onclick="event.stopPropagation()" oninput="mtMoveList(\'' + escJs(matchId) + '\')">'
+    + '<input id="mtmv-n-' + esc(matchId) + '" type="text" maxlength="500" placeholder="Note (optional)" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:6px;" onclick="event.stopPropagation()">'
+    + '<div id="mtmv-l-' + esc(matchId) + '"></div>';
+  mtMoveList(matchId);
+}
+function mtMoveList(matchId) {
+  var listEl = document.getElementById('mtmv-l-' + matchId);
+  if (!listEl) return;
+  var m = null; (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(matchId)) m = x; });
+  if (!m) return;
+  var qEl = document.getElementById('mtmv-q-' + matchId);
+  var q = qEl ? qEl.value.trim().toLowerCase() : '';
+  var target = recOf(m.target_type, m.target_id) || {};
+  var price = numFrom(target.price_num || target.price);
+  var cands = (DATA.buyers || []).filter(function (b) {
+    return String(b.id) !== String(m.buyer_id) && (!q || String(b.name || '').toLowerCase().indexOf(q) !== -1);
+  }).map(function (b) { return { b: b, fit: mtInBudget(b, price) ? 1 : 0 }; });
+  cands.sort(function (x, y) { return (y.fit - x.fit) || String(x.b.name || '').localeCompare(String(y.b.name || '')); });
+  if (!cands.length) { listEl.innerHTML = '<div class="hint">No buyers match.</div>'; return; }
+  listEl.innerHTML = cands.slice(0, 40).map(function (c) {
+    var attr = 'event.stopPropagation();mtMovePick(this,\'' + escJs(matchId) + '\',\'' + escJs(String(c.b.id)) + '\')';
+    return '<button class="qbtn' + (c.fit ? ' done' : '') + '" style="margin:0 4px 4px 0;" onclick="' + esc(attr) + '">' + esc(c.b.name || 'Unnamed') + (c.fit ? ' &middot; in budget' : '') + '</button>';
+  }).join('') + (cands.length > 40 ? '<div class="hint">Showing 40 of ' + cands.length + ' &mdash; type to narrow.</div>' : '');
+}
+async function mtMovePick(btn, matchId, buyerId) {
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
+  var nEl = document.getElementById('mtmv-n-' + matchId);
+  var note = nEl ? nEl.value.trim().slice(0, 500) : '';
+  var r = await withTimeout(sb.rpc('fn_triage_reassign', { p_match_id: matchId, p_to_buyer: buyerId, p_note: note || null }), 20000, { timedOut: true });
+  if (r && r.timedOut) { await reportUnconfirmedWrite(); return; }
+  if (!r || r.error || !r.data || r.data.ok !== true) {
+    if (btn) btn.disabled = false;
+    saveFailed((r && r.error) || (r && r.data && r.data.error) || 'reassign returned not-ok', 'reassign');
+    return;
+  }
+  DATA.matches = (DATA.matches || []).filter(function (x) { return String(x.id) !== String(matchId); });
+  toast('Moved to ' + (r.data.to_buyer || recLabel('buyers', buyerId) || 'buyer'));
+  renderMatchTriage();
+  await loadAll(false);   /* pick up the new/reopened match on the other buyer */
+}
 function mtSeedAi() { (DATA.matches || []).forEach(function (m) { if (m.ai_action && !MT_AI[m.id]) MT_AI[m.id] = { action: m.ai_action, reason: m.ai_reason, reason_code: m.ai_reason_code }; }); }
 var MT_SHOWN_LOGGED = {};
 function mtLogShown(ids) {
@@ -1680,6 +1738,7 @@ function renderMatchTriage() {
       + '<button class="qbtn" title="Already shown" onclick="event.stopPropagation();markShown(\'' + escJs(id) + '\')">&#128065;</button>'
       + '<button class="qbtn done" onclick="event.stopPropagation();confirmMatch(\'' + escJs(id) + '\')">&#10003;</button>'
       + '<button class="qbtn" onclick="event.stopPropagation();dismissMatch(\'' + escJs(id) + '\')">&#10005;</button>'
+      + '<button class="qbtn" title="Move to another buyer" onclick="event.stopPropagation();mtMove(\'' + escJs(id) + '\')">&#8594;</button>'
       + '<div id="dismiss-' + esc(id) + '" style="flex-basis:100%;"></div>'
       + '</div>';
   };
@@ -11048,7 +11107,8 @@ var DISMISS_CHIPS = [
 function dismissMatch(matchId) {
   var host = document.getElementById('dismiss-' + matchId);
   if (!host) { return sendDismiss(matchId, null); }   /* no room to ask — behave as before */
-  if (host.innerHTML) { host.innerHTML = ''; return; }
+  if (host.innerHTML && host.getAttribute('data-mode') !== 'move') { host.innerHTML = ''; host.removeAttribute('data-mode'); return; }
+  host.setAttribute('data-mode', 'dismiss');
   host.innerHTML = '<div class="t2 hint" style="margin:6px 0 4px;">Why not? One tap teaches the matcher.</div>'
     + DISMISS_CHIPS.map(function (c) {
         var attr = 'event.stopPropagation();sendDismiss(\'' + escJs(matchId) + '\',\'' + escJs(c[0]) + '\')';
