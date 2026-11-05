@@ -355,6 +355,42 @@
 .phlb img{max-width:96vw;max-height:88vh;object-fit:contain;border-radius:4px}
 .phlbbar{position:absolute;bottom:0;left:0;right:0;display:flex;gap:8px;align-items:center;padding:10px 14px;color:#fff;font-size:13px;background:linear-gradient(transparent,rgba(0,0,0,.7))}
 .phlbbar button{font-size:18px;line-height:1;padding:6px 12px;border:0;border-radius:6px;background:rgba(255,255,255,.15);color:#fff;cursor:pointer}
+
+/* ---- 2026-11-05: touch ergonomics pass (iPhone) --------------------------------------------
+   Measured on a real iPhone 15 Pro viewport (393px): 9 of 12 visible controls sat under Apple's
+   44pt minimum, the worst being "+ To-do" at 22px — a control you have to aim at. Text ran as
+   small as 9px.
+   Deliberately NOT touched: the letterspaced uppercase labels at 10px ("RECORDS", "NEEDS YOU").
+   Those are an editorial device, not reading text, and enlarging them would flatten the whole
+   visual hierarchy. Everything a finger actually has to hit is brought to 44px.
+   Scoped to coarse pointers so the desktop layout is unchanged. */
+@media (pointer: coarse) {
+  button, [role="button"], a.btn, select,
+  input[type="search"], input[type="text"], input[type="email"], input[type="tel"],
+  input[type="number"], input[type="date"] { min-height: 44px; }
+
+  /* Inline header buttons sat at 22px beside their heading. */
+  .hbtn { display: inline-flex; align-items: center; padding: 0 12px; font-size: 13px; min-height: 44px; }
+
+  /* Icon buttons need width as well as height to be hittable. */
+  button.refresh, .omni-mic, .omni-cam, .omni-file { min-width: 44px; }
+
+  /* Widening those three header buttons squeezed the masthead and wrapped the wordmark subtitle
+     onto two lines. The letterspacing is the point of that line, so it must stay on one. */
+  .brand .wm .tag { white-space: nowrap; }
+
+  /* .tag is NOT touched: the only 9px .tag is the masthead's "PRIVATE WORKSPACE" wordmark
+     subtitle, which is letterspaced small-caps by design. Enlarging it would wreck the masthead.
+     button.primary carries its own min-height:42px, which out-specifies the generic rule above,
+     so the 2px has to be corrected here. */
+  button.primary { font-size: 13.5px; min-height: 44px; }
+
+  /* iOS zooms the whole page when a focused field is under 16px. */
+  input, textarea, select { font-size: 16px; }
+
+  /* The omnibox placeholder was being clipped mid-word ("ask a questio—"). */
+  #omni-text { min-height: 72px; line-height: 1.45; }
+}
 </style>
 </head>
 <body>
@@ -487,6 +523,9 @@
 
     <div class="stat-row" id="stats" style="display:none;"></div>
     <div id="pulse"></div>
+    <!-- "Needs fixing": infrastructure that has actually stopped working. Empty and invisible
+         whenever everything is healthy, so it costs nothing on a good day. See renderSystemLine. -->
+    <div id="syshealth"></div>
 
     <!-- Omnibox: one reserved input for everything. Jot a note, add a lead, or ask a question;
          intent is auto-detected (a question is answered, anything else is filed by the AI).
@@ -2592,6 +2631,7 @@ function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
   if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { /* */ } }
   safeRender('stats', renderStats); safeRender('pulse', renderPulse);
+  safeRender('syshealth', renderSystemLine);
   safeRender('queue', renderQueue); safeRender('intel', renderIntel);
   /* 2026-07-23: Data Coverage / Share Links / Recent Activity are hidden-by-default cards now
      (reached via the "⋮" menu) — renderCoverage() in particular runs six full scans over the
@@ -2699,6 +2739,73 @@ function renderPulse() {
   el.innerHTML = '<div style="border:1px solid var(--line);border-left:3px solid var(--green);background:var(--panel);padding:8px 12px;margin:0 0 12px;border-radius:var(--radius);font-size:13px;line-height:1.5;">'
     + '<span style="text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:var(--muted);margin-right:8px;">Needs you</span>'
     + items.slice(0, 3).join(' <span style="color:var(--muted);">&middot;</span> ') + '</div>';
+}
+
+/* "Needs fixing" — the line that was missing, and the reason six weeks of failures went unseen.
+   DATA.feedHealth was never wrong: fn_feed_health_scan correctly flags never_ran / errored /
+   stale / suspicious_zero, and feedHealthHtml() has always rendered it. But it renders INSIDE the
+   collapsed Today's Focus card, and on 2026-08-02 it was deliberately excluded from the one-line
+   summary, reasoning that automation health is "not something to tap here". That reasoning is
+   defensible and it cost: the off-site CRM backup failed 28 nights running (2026-10-07 -> 11-04),
+   five market feeds sat dark for three weeks behind HTTP 402s, and thecanyonline.com was
+   suspended for 41 days. Every one of those was computed, rendered, and never read.
+   So: some infrastructure failures ARE the most important thing on the screen precisely because
+   you cannot tap them. This line names them in plain English and disappears when all is well. */
+var SYS_PLAIN = {
+  'nightly-github-backup':        'Your off-site backup of the whole CRM',
+  'nightly-github-backup-portal': 'The buyer-portal backup',
+  'geo-coverage':                 'Map coordinates (comps and area matching get thin without them)',
+  'hotsheet-band-cap':            'The MLS hotsheet is losing listings past its daily cap',
+  'hotsheet-gap-alert':           'The MLS hotsheet',
+  'caravan-route':                'The Monday caravan route',
+  'selftest':                     'The system self-test',
+  'daily-digest':                 'Your daily digest email',
+  'mls-reconcile':                'Listing status sync with the MLS',
+  'registered-parties-daily':     'The per-listing registered-buyer list',
+  'photo-cache-drip':             'Listing photo caching',
+  'caldav-showing-sync':          'Showings syncing from your calendar'
+};
+/* Things that mean "you could lose work or miss inventory", not "a nightly tidy-up skipped". */
+var SYS_SERIOUS = /backup|hotsheet|mls|showing|caldav|digest/i;
+
+function sysPlainName(feed) {
+  if (SYS_PLAIN[feed]) return SYS_PLAIN[feed];
+  return String(feed || '').replace(/[-_]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+}
+/* detail looks like: "last run 2026-10-07 10:30, status error, http -, rows 30726 (expected >= 3000)" */
+function sysSinceWords(detail) {
+  var m = /last run (\d{4}-\d{2}-\d{2})/.exec(String(detail || ''));
+  if (!m) return '';
+  var d = daysUntil(m[1]);               /* negative = in the past */
+  var n = Math.abs(Math.round(d));
+  if (!isFinite(n)) return '';
+  if (n === 0) return ' (today)';
+  if (n === 1) return ' (since yesterday)';
+  return ' (' + n + ' days)';
+}
+
+function renderSystemLine() {
+  var el = document.getElementById('syshealth'); if (!el) return;
+  var rows = (DATA.feedHealth || []).filter(function (f) { return f && f.feed && f.problem; });
+  if (!rows.length) { el.innerHTML = ''; return; }
+  /* Serious first, then alphabetical, so the top line is always the thing that matters most. */
+  rows.sort(function (a, b) {
+    var sa = SYS_SERIOUS.test(a.feed) ? 0 : 1, sb = SYS_SERIOUS.test(b.feed) ? 0 : 1;
+    return sa !== sb ? sa - sb : String(a.feed).localeCompare(String(b.feed));
+  });
+  var lead = rows[0];
+  var verb = FEED_PROBLEM_LABEL[lead.problem] || 'has a problem';
+  var rest = rows.length - 1;
+  el.innerHTML =
+    '<div onclick="(function(){var f=document.getElementById(\'focus-card\');if(f)f.scrollIntoView({behavior:\'smooth\',block:\'start\'});})()"'
+    + ' role="button" tabindex="0" aria-label="System problems, open Today\'s Focus"'
+    + ' style="border:1px solid var(--line);border-left:3px solid var(--clay);background:var(--clay-soft);'
+    + 'padding:11px 12px;margin:0 0 12px;border-radius:var(--radius);font-size:13.5px;line-height:1.5;'
+    + 'min-height:44px;box-sizing:border-box;cursor:pointer;">'
+    + '<span style="text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:var(--clay);margin-right:8px;">Needs fixing</span>'
+    + esc(sysPlainName(lead.feed)) + ' <b>' + esc(verb) + '</b>' + esc(sysSinceWords(lead.detail))
+    + (rest ? ' <span class="hint">(and ' + rest + ' other' + (rest === 1 ? '' : 's') + ')</span>' : '')
+    + '</div>';
 }
 
 /* Buyer-loss / showing-reactivation chain (2026-07-24): a buyer who explicitly passed on something
@@ -3120,8 +3227,15 @@ function renderSyncAge() {
     var hh = d.getHours(), mm = ('0' + d.getMinutes()).slice(-2);
     var ampm = hh >= 12 ? 'pm' : 'am'; hh = hh % 12; if (!hh) hh = 12;
     var sameDay = (new Date()).toDateString() === d.toDateString();
-    el.textContent = 'Offline — showing saved data from ' + (sameDay ? '' : fmtDate(d.toISOString().slice(0, 10)) + ', ')
-      + hh + ':' + mm + ampm;
+    var stamp = (sameDay ? '' : fmtDate(d.toISOString().slice(0, 10)) + ', ') + hh + ':' + mm + ampm;
+    /* 2026-11-05: this said "Offline" on EVERY cold start. !lastLoad only means the first fetch
+       has not returned yet, which is true for a second or two of every launch whether or not
+       there is a network — so the app's opening statement was routinely a lie, and Nick learned
+       to distrust the line. Only navigator.onLine can answer "are we actually offline"; without
+       it, the honest sentence is that we are showing saved data WHILE refreshing. */
+    el.textContent = navigator.onLine
+      ? 'Showing saved data from ' + stamp + ' · refreshing…'
+      : 'Offline — showing saved data from ' + stamp;
     return;
   }
   if (!lastLoad) { el.textContent = ''; return; }
