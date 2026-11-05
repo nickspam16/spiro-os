@@ -1071,7 +1071,9 @@ function openPanel(cardId) {
   var card = document.getElementById(cardId); if (!card) return;
   closeMoreMenu();
   if (PANEL_HOME && PANEL_HOME.id !== cardId) closePanel();
-  if (!PANEL_HOME) { PANEL_HOME = { id: cardId, parent: card.parentNode, next: card.nextSibling }; }
+  /* wasHidden: remembered BEFORE we clear display, so closePanel can restore the resting state of ANY card
+     (see the list in closePanel for why that list alone is not enough). */
+  if (!PANEL_HOME) { PANEL_HOME = { id: cardId, parent: card.parentNode, next: card.nextSibling, wasHidden: card.style.display === 'none' }; }
   card.style.display = '';
   document.getElementById('panel-slot').appendChild(card);
   document.getElementById('home-view').style.display = 'none';
@@ -1106,8 +1108,14 @@ function closePanel() {
     /* Cards that live hidden-by-default on the home page (Who to call / Buyer Portal / Share
        Links / Recent Activity / Data Coverage / Morning Brief / Farming) go back to hidden,
        matching their normal resting state — Records doesn't, since it's always visible on the
-       home page. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'learning-card', 'form-card', 'architect-registry-card'].indexOf(PANEL_HOME.id) !== -1) card.style.display = 'none';
+       home page. WHY A LIST AT ALL: openPanel clears display so the card shows in the panel, and
+       the card then has to be re-hidden on the way home. The explicit list is the original
+       mechanism and goes stale every time a hidden-by-default card is added (review-queue-card
+       v5.180, then listing/house/content/photos-card — which stayed parked visible on the home
+       screen after one open/close). PANEL_HOME.wasHidden, recorded at open, covers any card
+       the list forgets; the list is kept for cards that are shown on home by a render function
+       but must still rest hidden. */
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'learning-card', 'form-card', 'architect-registry-card', 'listing-card', 'house-card', 'content-card', 'photos-card'].indexOf(PANEL_HOME.id) !== -1 || PANEL_HOME.wasHidden) card.style.display = 'none';
   }
   PANEL_HOME = null;
   document.getElementById('panel-view').style.display = 'none';
@@ -1643,6 +1651,8 @@ async function mtBulkApply(action, reason) {
    PIN/token. The server dismisses this card (reason wrong_buyer) and opens or reuses one on the
    chosen buyer. It returns {ok:false,error} rather than throwing, so r.data.ok is checked. */
 function mtInBudget(b, price) {
+  /* silent-ok: pure predicate, no I/O. A listing with no price cannot be "in budget" -- false is the
+     honest answer and the picker just sorts that buyer below the in-budget ones. */
   if (price == null) return false;
   var lo = b.budget_min_num != null ? b.budget_min_num : numFrom(b.budget_min);
   var hi = b.budget_max_num != null ? b.budget_max_num : numFrom(b.budget_max);
@@ -1688,6 +1698,8 @@ async function mtMovePick(btn, matchId, buyerId) {
   if (!r || r.error || !r.data || r.data.ok !== true) {
     if (btn) btn.disabled = false;
     saveFailed((r && r.error) || (r && r.data && r.data.error) || 'reassign returned not-ok', 'reassign');
+    /* silent-ok: not silent -- saveFailed() above toasts "Could not save" and reports to client_errors;
+       the ratchet's saidSomething pattern simply does not know that helper. Button is re-enabled for retry. */
     return;
   }
   DATA.matches = (DATA.matches || []).filter(function (x) { return String(x.id) !== String(matchId); });
@@ -4597,7 +4609,13 @@ function unhostForm() {
 function openEdit(table, id) {
   var row = null;
   (DATA[table] || []).forEach(function (x) { if (x.id === id) row = x; });
-  if (!row) return;
+  if (!row) {
+    /* Tapping Edit and getting nothing reads as a dead button. The row is gone from the loaded data
+       (archived/merged elsewhere, or a list rendered before the last refresh), so say so and report it. */
+    reportError('openEdit', new Error('row not in DATA: ' + table + ' ' + id), { toast: false });
+    toast('Couldn’t find that record — pull to refresh and try again');
+    return;
+  }
   /* Listing page (2026-09-09): editing the listing you're looking at happens IN the page, not back
      on the dashboard. Anything else still closes the panel so the home editor is visible. */
   if (PANEL_HOME && PANEL_HOME.id === 'listing-card' && table === 'listings' && String(id) === String(LISTING_PAGE_ID)) { hostFormInListingPage(); showForm(table, row); return; }
@@ -9153,10 +9171,10 @@ async function openHousePage(address) {
   var facts = [];
   if (sold.length) facts.push('<b>You sold this</b> — ' + sold.map(function (x) { return esc((x.side || '') + (x.closed ? ' · ' + fmtDate(String(x.closed)) : '') + (x.price ? ' · $' + Number(x.price).toLocaleString() : '')); }).join('; '));
   if (listed.length) facts.push('Listed by you: ' + listed.map(function (x) { return esc((x.status || '') + (x.price ? ' · ' + x.price : '') + (x.when ? ' · ' + fmtDate(String(x.when)) : '')); }).join('; '));
-  if (buyers.length) facts.push('<b>' + buyers.length + ' buyer' + (buyers.length > 1 ? 's' : '') + ' wanted it</b> — ' + buyers.map(function (x) { return '<a href="javascript:void(0)" onclick="jumpToRecord(\'buyers\',\'' + esc(String(x.buyer_id)) + '\')">' + esc(x.name || '?') + '</a>' + esc((x.outcome ? ' (' + x.outcome + ')' : x.response ? ' (' + x.response + ')' : '')); }).join(', '));
+  if (buyers.length) facts.push('<b>' + buyers.length + ' buyer' + (buyers.length > 1 ? 's' : '') + ' wanted it</b> — ' + buyers.map(function (x) { return '<a href="javascript:void(0)" onclick="jumpToRecord(\'buyers\',\'' + escJs(String(x.buyer_id)) + '\')">' + esc(x.name || '?') + '</a>' + esc((x.outcome ? ' (' + x.outcome + ')' : x.response ? ' (' + x.response + ')' : '')); }).join(', '));
   if (mh.length) facts.push('Market: ' + mh.slice(0, 4).map(function (x) { return esc((x.type || '') + (x.date ? ' ' + fmtDate(String(x.date)) : '') + (x.price ? ' $' + Number(x.price).toLocaleString() : '')); }).join(' · '));
   if (m.hero) facts.push('Canyon Line: ' + esc((m.hero.architect ? 'by ' + m.hero.architect + ' · ' : '') + ((m.hero.styles || []).join(', ') || '') + (m.hero.vault ? ' · vault' : '') + ' · ' + (m.hero.posted || 0) + ' post' + ((m.hero.posted || 0) === 1 ? '' : 's')));
-  if (m.prospect) facts.push('Prospect: ' + esc((m.prospect.status || '') + (m.prospect.owner ? ' · ' + m.prospect.owner : '') + (m.prospect.tier ? ' · ' + m.prospect.tier : '')) + ' <a href="javascript:void(0)" onclick="jumpToRecord(\'prospects\',\'' + esc(String(m.prospect.id)) + '\')">open</a>');
+  if (m.prospect) facts.push('Prospect: ' + esc((m.prospect.status || '') + (m.prospect.owner ? ' · ' + m.prospect.owner : '') + (m.prospect.tier ? ' · ' + m.prospect.tier : '')) + ' <a href="javascript:void(0)" onclick="jumpToRecord(\'prospects\',\'' + escJs(String(m.prospect.id)) + '\')">open</a>');
   html += '<div class="flabel">Memory</div>' + (facts.length ? facts.map(function (f) { return '<div class="qi"><div class="txt"><div class="t1">' + f + '</div></div></div>'; }).join('') : '<div class="hint">Nothing on record for this house yet. It starts remembering the moment anything happens here.</div>');
   html += '<div class="flabel" style="margin-top:14px;">Timeline</div>' + (rows.length ? rows.slice(0, 60).map(function (r) { return '<div class="qi"><div class="txt"><div class="t1">' + esc(r.detail || r.kind) + '</div><div class="t2">' + esc(r.ts ? fmtDate(String(r.ts).slice(0, 10)) : '') + ' · ' + esc(r.kind) + '</div></div></div>'; }).join('') : '<div class="hint">No events yet.</div>');
   b.innerHTML = html;
@@ -9230,7 +9248,7 @@ function renderPhotos() { try {
     if (inbox.length) { h += '<div class="flabel">Waiting to be attached <span style="font-weight:400;text-transform:none;">· arrived but no listing matched</span></div>';
       var mine = L.filter(function (l) { return l.mine; }), others = L.filter(function (l) { return !l.mine; });
       var opts = '<option value="">Attach to…</option><optgroup label="My listings">' + mine.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup><optgroup label="Others">' + others.map(function (l) { return '<option value="' + l.id + '">' + esc(phLabel(l)) + '</option>'; }).join('') + '</optgroup>';
-      inbox.forEach(function (r) { h += '<div class="qi" style="flex-wrap:wrap;gap:8px;"><div class="txt"><div>' + esc(r.address_hint || '(no address found)') + '</div><div class="hint" style="margin:2px 0 0;">' + (r.paths || []).length + ' photo' + ((r.paths || []).length === 1 ? '' : 's') + ' · ' + esc(r.sender || r.source) + '</div><div class="pthumbs" style="margin-top:6px;">' + (r.paths || []).slice(0, 3).map(function (p) { return phImg(p, 'onclick="phBig(\'' + esc(p) + '\')"'); }).join('') + '</div></div><div style="display:flex;gap:6px;align-items:center;"><select onchange="phAttach(\'' + r.id + '\', this.value)">' + opts + '</select><button class="qbtn" onclick="phDiscard(\'' + r.id + '\')">Discard</button></div></div>'; }); }
+      inbox.forEach(function (r) { h += '<div class="qi" style="flex-wrap:wrap;gap:8px;"><div class="txt"><div>' + esc(r.address_hint || '(no address found)') + '</div><div class="hint" style="margin:2px 0 0;">' + (r.paths || []).length + ' photo' + ((r.paths || []).length === 1 ? '' : 's') + ' · ' + esc(r.sender || r.source) + '</div><div class="pthumbs" style="margin-top:6px;">' + (r.paths || []).slice(0, 3).map(function (p) { return phImg(p, 'onclick="phBig(\'' + escJs(p) + '\')"'); }).join('') + '</div></div><div style="display:flex;gap:6px;align-items:center;"><select onchange="phAttach(\'' + r.id + '\', this.value)">' + opts + '</select><button class="qbtn" onclick="phDiscard(\'' + r.id + '\')">Discard</button></div></div>'; }); }
     if (PH_FILTER === 'mine') {
       var M = phMineCrm().filter(function (m) { return !PH_Q || String(m.address || '').toLowerCase().indexOf(PH_Q.toLowerCase()) >= 0; });
       var noPhotos = M.filter(function (m) { var pl = m.portal_listing_id ? phListing(m.portal_listing_id) : null; return !pl || pl.n === 0; });
@@ -9259,7 +9277,7 @@ function renderPhotos() { try {
   if (PH_JOB) h += phJobHtml(PH_JOB, l);
   if (!l.photos.length) h += '<div class="empty" style="margin-top:10px;">No photos yet. Tap <b>Add photos</b>, forward the listing email to followupspiro@gmail.com, or drop photos in the Drive folder under “' + esc(phLabel(l)) + '”.</div>';
   else { h += '<div class="hint" style="margin:10px 0 4px;">First photo is the hero. Tap a photo to view it. ★ hero · ↑↓ order · ✕ remove (file kept) · <b>Stage</b> furnishes it.</div><div class="phgrid">';
-    l.photos.forEach(function (p, i) { h += '<div class="phcell">' + phImg(p.path, 'onclick="phBig(\'' + esc(p.path) + '\')"') + (p.kind === 'staged' ? '<span class="phbadge">Staged</span>' : '') + (i === 0 ? '<span class="phbadge hero">Hero</span>' : '') + '<div class="phacts">' + (i > 0 ? '<button onclick="phHero(\'' + l.id + '\',\'' + esc(p.path) + '\')" title="Make hero">★</button><button onclick="phMove(\'' + l.id + '\',' + i + ',-1)" title="Move up">↑</button>' : '') + (i < l.photos.length - 1 ? '<button onclick="phMove(\'' + l.id + '\',' + i + ',1)" title="Move down">↓</button>' : '') + '<button onclick="phRemove(\'' + l.id + '\',\'' + esc(p.path) + '\')" title="Remove">✕</button>' + (p.kind !== 'staged' ? '<button class="stage" onclick="phStageOpen(\'' + esc(p.path) + '\')">Stage</button>' : '') + '</div></div>'; });
+    l.photos.forEach(function (p, i) { h += '<div class="phcell">' + phImg(p.path, 'onclick="phBig(\'' + escJs(p.path) + '\')"') + (p.kind === 'staged' ? '<span class="phbadge">Staged</span>' : '') + (i === 0 ? '<span class="phbadge hero">Hero</span>' : '') + '<div class="phacts">' + (i > 0 ? '<button onclick="phHero(\'' + l.id + '\',\'' + escJs(p.path) + '\')" title="Make hero">★</button><button onclick="phMove(\'' + l.id + '\',' + i + ',-1)" title="Move up">↑</button>' : '') + (i < l.photos.length - 1 ? '<button onclick="phMove(\'' + l.id + '\',' + i + ',1)" title="Move down">↓</button>' : '') + '<button onclick="phRemove(\'' + l.id + '\',\'' + escJs(p.path) + '\')" title="Remove">✕</button>' + (p.kind !== 'staged' ? '<button class="stage" onclick="phStageOpen(\'' + escJs(p.path) + '\')">Stage</button>' : '') + '</div></div>'; });
     h += '</div>'; }
   var jobs = (PHOTOS.jobs || []).filter(function (x) { return x.listing_id === l.id && x.status !== 'discarded' && (!PH_JOB || !PH_JOB.job || x.id !== PH_JOB.job.id); });
   if (jobs.length) { h += '<div class="flabel" style="margin-top:14px;">Staging history</div>'; jobs.slice(0, 8).forEach(function (x) { h += '<div class="qi" onclick="phOpenJob(\'' + x.id + '\')"><div class="txt">' + esc(PH_STYLE_LABELS[x.style] || x.style) + (x.instruction ? ' · ' + esc(x.instruction) : '') + '<div class="hint" style="margin:2px 0 0;">' + esc(x.status) + ' · ' + (x.variants || []).length + ' variant' + ((x.variants || []).length === 1 ? '' : 's') + ' · $' + Number(x.est_cost_usd || 0).toFixed(2) + (x.error ? ' · ' + esc(x.error) : '') + '</div></div></div>'; }); }
@@ -9317,7 +9335,7 @@ function phJobHtml(J, l) {
     vs.forEach(function (v, i) { h += '<div class="phvar"><div class="phcell"><img src="' + esc(urls[v.path] || '') + '" onclick="phLbJob(' + (i + 1) + ')"><span class="phbadge">v' + (i + 1) + '</span></div><div class="phvacts">' + (job.status !== 'picked' ? '<button class="qbtn done" onclick="phPick(\'' + job.id + '\',' + i + ',false)">Use this</button><button class="qbtn" onclick="phPick(\'' + job.id + '\',' + i + ',true)" title="Use this and put it where the original was">Use &amp; replace</button>' : '<span class="hint">picked</span>') + '<button class="qbtn" onclick="phMoreLike(\'' + job.id + '\',' + i + ')" title="Two elevated variations built from this one">2 more like this</button><button class="qbtn" onclick="phRefine(\'' + job.id + '\',' + i + ')">Refine…</button><a class="qbtn" href="' + esc(urls[v.path] || '') + '" download="' + esc(phFileName(job, i)) + '" target="_blank" rel="noopener" title="Download the full-resolution file">Download</a></div></div>'; });
     if (running) for (var k = vs.length; k < (job.target_n || 3); k++) h += '<div class="phvar"><div class="phcell phwait"><span class="phbadge">v' + (k + 1) + '</span></div><div class="phvacts"><span class="hint">' + (k === vs.length ? 'rendering…' : 'queued') + '</span></div></div>';
     h += '</div>'; }
-  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> ' + phChips().map(function (c) { return '<button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'' + esc(c.key) + '\')">' + esc(c.label) + '</button> '; }).join('') + '<button class="qbtn" onclick="phDiscardWhy(\'' + job.id + '\')">tell it why…</button>' : '') + '</div></div>';
+  h += '<div style="margin-top:8px;"><button class="qbtn" onclick="PH_JOB=null;phPollStop();renderPhotos()">Close</button>' + (job.status !== 'picked' && !running ? ' <span class="hint" style="margin-left:6px;">Discard all —</span> ' + phChips().map(function (c) { return '<button class="qbtn" onclick="phDiscardJob(\'' + job.id + '\',\'' + escJs(c.key) + '\')">' + esc(c.label) + '</button> '; }).join('') + '<button class="qbtn" onclick="phDiscardWhy(\'' + job.id + '\')">tell it why…</button>' : '') + '</div></div>';
   return h;
 }
 function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, urls = PH_JOB.urls || {}; var list = [urls[job.source_path] || PHOTO_URLS[job.source_path] || ''].concat((job.variants || []).map(function (v) { return urls[v.path] || ''; })); phLbUrls(list, i); }
@@ -10021,7 +10039,7 @@ function sendActionsHtml(via, recType, recId, buyerId, matchId, sentAt, response
   if (matchId && response === 'interested') {
     /* Outcomes (2026-09-10): "interested" is a weak label; what happened next is the strong one. These
        write matches.outcome, which the learning ledger weights 2/4/5 (showed/offer/closed). */
-    ocBtns = [['showed', 'Showed it'], ['offer', 'Offer'], ['closed', 'Closed']].map(function (o) { return '<button class="qbtn' + (oc === o[0] ? ' done' : '') + '" onclick="event.stopPropagation();setMatchOutcome(\'' + esc(matchId) + '\',\'' + o[0] + '\')">' + o[1] + '</button>'; }).join('');
+    ocBtns = [['showed', 'Showed it'], ['offer', 'Offer'], ['closed', 'Closed']].map(function (o) { return '<button class="qbtn' + (oc === o[0] ? ' done' : '') + '" onclick="event.stopPropagation();setMatchOutcome(\'' + escJs(matchId) + '\',\'' + o[0] + '\')">' + o[1] + '</button>'; }).join('');
   }
   return ocBtns + '<button class="qbtn" onclick="event.stopPropagation();logBuyerResponse(' + q + ',\'pending\')">Undo</button>';
 }
@@ -10472,10 +10490,10 @@ function beliefsPanelHtml(scopeType, scopeId) {
   if (!rows.length) return '<div class="hint" style="margin:10px 0 4px;">What Spiro believes about this client: nothing yet — decisions on their matches teach it.</div>';
   rows.sort(function (a, b) { return (b.confidence || 0) - (a.confidence || 0); });
   var props = (CRIT_PROPS[scopeId] && CRIT_PROPS[scopeId].rows) || []; if (!CRIT_PROPS[scopeId]) loadCriteriaProposals(scopeId);
-  var propHtml = props.map(function (p) { return '<div class="qi"><div class="txt"><div class="t1">' + (p.kind === 'add_area' ? 'Spiro thinks they would consider <b>' + esc(p.value) + '</b>' : 'Spiro thinks they avoid <b>' + esc(p.value) + '</b>') + '</div><div class="t2">' + esc(p.why) + '</div></div><button class="qbtn done" onclick="event.stopPropagation();applyCriteriaProposal(\'' + esc(String(scopeId)) + '\',\'' + esc(p.kind) + '\',\'' + esc(p.value) + '\')">' + (p.kind === 'add_area' ? 'Add to areas' : 'Add to avoid') + '</button></div>'; }).join('');
+  var propHtml = props.map(function (p) { return '<div class="qi"><div class="txt"><div class="t1">' + (p.kind === 'add_area' ? 'Spiro thinks they would consider <b>' + esc(p.value) + '</b>' : 'Spiro thinks they avoid <b>' + esc(p.value) + '</b>') + '</div><div class="t2">' + esc(p.why) + '</div></div><button class="qbtn done" onclick="event.stopPropagation();applyCriteriaProposal(\'' + escJs(String(scopeId)) + '\',\'' + escJs(p.kind) + '\',\'' + escJs(p.value) + '\')">' + (p.kind === 'add_area' ? 'Add to areas' : 'Add to avoid') + '</button></div>'; }).join('');
   return '<div class="flabel" style="margin-top:14px;">What Spiro believes</div>' + propHtml + rows.slice(0, 8).map(function (b) {
     return '<div class="qi"><div class="txt"><div class="t1">' + esc(beliefLine(b)) + '</div><div class="t2">confidence ' + Math.round((b.confidence || 0) * 100) + '% · ' + b.evidence + ' signals</div></div>'
-      + '<button class="qbtn" title="Mark this belief wrong — it stops being applied" onclick="event.stopPropagation();beliefWrong(\'' + esc(scopeType) + '\',\'' + esc(String(scopeId)) + '\',\'' + esc(b.key) + '\')">Wrong</button></div>';
+      + '<button class="qbtn" title="Mark this belief wrong — it stops being applied" onclick="event.stopPropagation();beliefWrong(\'' + escJs(scopeType) + '\',\'' + escJs(String(scopeId)) + '\',\'' + escJs(b.key) + '\')">Wrong</button></div>';
   }).join('');
 }
 async function beliefWrong(scopeType, scopeId, key) {
