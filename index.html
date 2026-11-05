@@ -391,6 +391,28 @@
   /* The omnibox placeholder was being clipped mid-word ("ask a questio—"). */
   #omni-text { min-height: 72px; line-height: 1.45; }
 }
+
+/* ---- Bottom tab bar: phones only, never on desktop where the dropdown is fine ---------------- */
+#tabbar { display: none; }
+@media (pointer: coarse) {
+  #tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    background: var(--panel); border-top: 1px solid var(--line);
+    /* Clears the iPhone home indicator; without this the last row is unreachable. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  #tabbar .tb {
+    flex: 1 1 0; min-width: 0; min-height: 54px;
+    background: none; border: 0; border-top: 2px solid transparent; border-radius: 0;
+    font-family: var(--sans); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 12px 2px 10px; cursor: pointer; line-height: 1.25;
+  }
+  #tabbar .tb[aria-current="page"] {
+    color: var(--green); border-top-color: var(--green); background: var(--panel2);
+  }
+  /* Content must not hide behind a fixed bar — the classic way a tab bar eats the last card. */
+  #screen-app { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+}
 </style>
 </head>
 <body>
@@ -869,6 +891,23 @@
     <div class="foot" id="ver"></div>
   </div>
 
+  <!-- Bottom tab bar (2026-11-05). The app already had full-page section navigation via
+       openPanel(), but it lived behind a 38px "⋮" in the top-right corner — on a phone, the
+       hardest place on the screen to reach and the easiest to miss. Fourteen destinations were
+       one unlabelled tap deep. These five surface the ones used daily; every button calls the
+       SAME menuShow*/menuGo* function the dropdown calls, so there is no second navigation
+       path to keep in sync. Text-only letterspaced caps rather than icons: this app is set in
+       EB Garamond throughout and a row of generic glyphs would read as borrowed. -->
+  <nav id="tabbar" aria-label="Main sections">
+    <button class="tb" data-tab="today"  onclick="tabGo('today')"  aria-current="page">Today</button>
+    <button class="tb" data-tab="triage" onclick="tabGo('triage')">Triage</button>
+    <button class="tb" data-tab="market" onclick="tabGo('market')">Market</button>
+    <!-- "Calls", not "Who to call": the full name wrapped to two lines and broke the row's
+         rhythm. The destination still titles itself "Who to call" when you get there. -->
+    <button class="tb" data-tab="calls"  onclick="tabGo('calls')">Calls</button>
+    <button class="tb" data-tab="more"   onclick="tabGo('more')">More</button>
+  </nav>
+
 </div>
 <div id="toast"></div>
 <div id="lightbox" onclick="closeLightbox()">
@@ -932,6 +971,42 @@ function toggleMoreMenu() {
   if (!m) return;
   var open = m.style.display === 'none';
   m.style.display = open ? 'block' : 'none';
+}
+
+/* Bottom tab bar (2026-11-05). Deliberately thin: every tab delegates to the function the "⋮"
+   dropdown already calls, so there is exactly one navigation implementation. "More" opens that
+   dropdown rather than duplicating its fourteen entries. */
+var TAB_CUR = 'today';
+function tabMark(t) {
+  var bar = document.getElementById('tabbar'); if (!bar) return;
+  var bs = bar.querySelectorAll('.tb');
+  for (var i = 0; i < bs.length; i++) {
+    if (bs[i].getAttribute('data-tab') === t) bs[i].setAttribute('aria-current', 'page');
+    else bs[i].removeAttribute('aria-current');
+  }
+}
+function tabGo(t) {
+  try {
+    if (t === 'more') { toggleMoreMenu(); return; }   /* a menu, not a destination */
+    if (t === 'today') { closePanel(); window.scrollTo(0, 0); }
+    else if (t === 'triage') { menuShowMatchTriage(); }
+    else if (t === 'market') { menuGoMarket(); }
+    else if (t === 'calls')  { menuShowIntel(); }
+    TAB_CUR = t; tabMark(t);
+  } catch (e) {
+    /* Navigation must never be able to strand him on a blank screen. */
+    try { reportError('tabGo:' + t, e); } catch (e2) {}
+    try { closePanel(); TAB_CUR = 'today'; tabMark('today'); } catch (e3) {}
+  }
+}
+/* Back, the per-panel "← Back" control and jumpToRecord all move the panel without going through
+   tabGo, so the highlight is re-derived on every render rather than trusted. */
+function tabSync() {
+  if (!document.getElementById('tabbar')) return;
+  if (!PANEL_HOME) { TAB_CUR = 'today'; tabMark('today'); return; }
+  var byCard = { 'match-triage-card': 'triage', 'market-card': 'market', 'intel-card': 'calls' };
+  var t = byCard[PANEL_HOME.id];
+  if (t) { TAB_CUR = t; tabMark(t); } else { tabMark(''); }   /* some other panel: no tab is current */
 }
 function closeMoreMenu() {
   var m = document.getElementById('more-menu');
@@ -2632,6 +2707,7 @@ function render() {
   if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { /* */ } }
   safeRender('stats', renderStats); safeRender('pulse', renderPulse);
   safeRender('syshealth', renderSystemLine);
+  safeRender('tabsync', tabSync);
   safeRender('queue', renderQueue); safeRender('intel', renderIntel);
   /* 2026-07-23: Data Coverage / Share Links / Recent Activity are hidden-by-default cards now
      (reached via the "⋮" menu) — renderCoverage() in particular runs six full scans over the
