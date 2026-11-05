@@ -947,21 +947,21 @@ function toggleBrief() {
   var open = b.style.display === 'none';
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
-  try { localStorage.setItem('spiro_brief_open', open ? '1' : '0'); } catch (e) {}
+  try { localStorage.setItem('spiro_brief_open', open ? '1' : '0'); } catch (e) { reportError('toggleBrief', e, {toast:false}); }
 }
 function toggleFocus() {
   var b = document.getElementById('queue'), c = document.getElementById('focus-caret');
   var open = b.style.display === 'none';
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
-  try { localStorage.setItem('spiro_focus_open', open ? '1' : '0'); } catch (e) {}
+  try { localStorage.setItem('spiro_focus_open', open ? '1' : '0'); } catch (e) { reportError('toggleFocus', e, {toast:false}); }
 }
 function toggleCoverage() {
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
   var open = b.style.display === 'none';
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
-  try { localStorage.setItem('spiro_coverage_open', open ? '1' : '0'); } catch (e) {}
+  try { localStorage.setItem('spiro_coverage_open', open ? '1' : '0'); } catch (e) { reportError('toggleCoverage', e, {toast:false}); }
 }
 /* "More" header dropdown (2026-07-23) — Agents / Data Coverage / stats strip live one tap deeper
    here instead of permanently on the launch pad. Closes on outside tap or Escape, like any other
@@ -995,8 +995,8 @@ function tabGo(t) {
     TAB_CUR = t; tabMark(t);
   } catch (e) {
     /* Navigation must never be able to strand him on a blank screen. */
-    try { reportError('tabGo:' + t, e); } catch (e2) {}
-    try { closePanel(); TAB_CUR = 'today'; tabMark('today'); } catch (e3) {}
+    try { reportError('tabGo:' + t, e); } catch (e2) { console.warn('[spiro] reportError failed in tabGo', e2); }
+    try { closePanel(); TAB_CUR = 'today'; tabMark('today'); } catch (e3) { reportError('tabGo', e3, {toast:false}); }
   }
 }
 /* Back, the per-panel "← Back" control and jumpToRecord all move the panel without going through
@@ -1065,12 +1065,12 @@ function openPanel(cardId) {
   try {
     if (history.state && history.state.spiroPanel) history.replaceState({ spiroPanel: cardId }, '', '');
     else history.pushState({ spiroPanel: cardId }, '', '');
-  } catch (e) {}
+  } catch (e) { reportError('openPanel', e, {toast:true}); }
 }
 /* The visible Back button routes through history when we own the top entry, so the browser's
    own Back and ours stay in step; popstate below does the actual close. */
 function panelBack() {
-  try { if (history.state && history.state.spiroPanel) { history.back(); return; } } catch (e) {}
+  try { if (history.state && history.state.spiroPanel) { history.back(); return; } } catch (e) { reportError('panelBack', e, {toast:false}); }
   closePanel();
 }
 window.addEventListener('popstate', function () { if (PANEL_HOME) closePanel(); });
@@ -1078,7 +1078,7 @@ function closePanel() {
   if (FORM_IN_PAGE) { try { closeForm(); } catch (e) { unhostForm(); } }
   /* Neutralize our history entry when the panel is closed programmatically (jumpToRecord etc.)
      so a later Back doesn't consume a press on a stale state. silent-ok: history can throw. */
-  try { if (history.state && history.state.spiroPanel) history.replaceState({}, '', ''); } catch (e) {}
+  try { if (history.state && history.state.spiroPanel) history.replaceState({}, '', ''); } catch (e) { reportError('closePanel', e, {toast:false}); }
   if (!PANEL_HOME) { document.getElementById('home-view').style.display = ''; document.getElementById('panel-view').style.display = 'none'; return; }
   var homeId = PANEL_HOME.id;
   var card = document.getElementById(PANEL_HOME.id);
@@ -1119,14 +1119,14 @@ function menuShowPortal() { openPanel('portal-card'); if (PORTAL_OVERVIEW) rende
 function menuShowShareLinks() {
   openPanel('share-links-card');
   var b = document.getElementById('share-links-body'), c = document.getElementById('share-links-caret');
-  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_sharelinks_open', '1'); } catch (e) {} }
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_sharelinks_open', '1'); } catch (e) { reportError('menuShowShareLinks', e, {toast:false}); } }
   renderShareLinks(); /* card was hidden -> render() skips it; force one fresh render now that it's visible */
 }
 function menuShowActivity() { openPanel('activity-card'); renderActivity(); }
 function menuShowBrief() {
   openPanel('brief-card');
   var b = document.getElementById('brief-body'), c = document.getElementById('brief-caret');
-  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_brief_open', '1'); } catch (e) {} }
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_brief_open', '1'); } catch (e) { reportError('menuShowBrief', e, {toast:false}); } }
   fetchBrief(false); /* cached per-day; card was hidden so this is likely the first paint of it this load */
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
@@ -1534,7 +1534,7 @@ async function mtRunAiTriage() {
     got += r.data.recommendations.length;
     /* Persist (2026-09-09): verdicts used to live only in this tab. Now they're written to the match
        row so an overnight pass is waiting in the morning and survives a reload. */
-    try { await Promise.all(r.data.recommendations.map(function (rec) { return sb.from('matches').update({ ai_action: rec.action, ai_reason: rec.reason, ai_reason_code: rec.reason_code, ai_at: new Date().toISOString() }).eq('id', rec.id); })); } catch (e) { /* non-fatal */ }
+    try { await Promise.all(r.data.recommendations.map(function (rec) { return sb.from('matches').update({ ai_action: rec.action, ai_reason: rec.reason, ai_reason_code: rec.reason_code, ai_at: new Date().toISOString() }).eq('id', rec.id); })); } catch (e) { reportError('mtRunAiTriage', e, {toast:false}); /* non-fatal */ }
   }
   MT_AI_BUSY = false;
   toast(got + ' AI recommendation' + (got === 1 ? '' : 's') + (failedChunks ? ' — ' + failedChunks + ' batch' + (failedChunks === 1 ? '' : 'es') + ' failed' : ''));
@@ -1649,6 +1649,7 @@ function renderMatchTriage() {
       }).join('') + '<button class="qbtn" style="opacity:.7;" onclick="mtBulkApply(\'dismiss\',null)">Just dismiss</button></div>' : '')
     + '<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
     + '<button class="qbtn"' + (MT_AI_BUSY ? ' disabled' : '') + ' onclick="mtRunAiTriage()">' + (MT_AI_BUSY ? 'AI triaging…' : (aiDoneN ? 'Re-run AI pre-flag' : 'AI pre-flag')) + '</button>'
+    + (MT_AI_BUSY ? '<span class="hint" id="mt-ai-progress" style="margin:0;"></span>' : '')
     + (aiDoneN ? '<span class="hint" style="margin:0;">AI: ' + aiConfirmN + ' confirm &middot; ' + aiDismissN + ' dismiss &middot; ' + aiUnsureN + ' unsure</span>'
       + '<button class="qbtn' + (MT_AI_FILTER === 'confirm' ? ' done' : '') + '" onclick="mtAiFilter(\'confirm\')">' + (MT_AI_FILTER === 'confirm' ? 'Showing AI confirm' : 'Show AI confirm') + '</button>'
       + '<button class="qbtn' + (MT_AI_FILTER === 'dismiss' ? ' done' : '') + '" onclick="mtAiFilter(\'dismiss\')">' + (MT_AI_FILTER === 'dismiss' ? 'Showing AI dismiss' : 'Show AI dismiss') + '</button>'
@@ -1752,7 +1753,7 @@ async function saveCalSugMatch(id) {
   else if (type === 'buyer') patch.matched_buyer_id = recId;
   else if (type === 'transaction') patch.matched_transaction_id = recId;
   var r = await sb.from('calendar_suggestions').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveCalSugMatch');
   s.matched_listing_id = patch.matched_listing_id; s.matched_buyer_id = patch.matched_buyer_id;
   s.matched_transaction_id = patch.matched_transaction_id; s.match_confidence = 'manual';
   calSugEditing = null; delete calSugEditType[id];
@@ -1843,7 +1844,7 @@ async function confirmCalendarSuggestion(id) {
     notes: [s.title, txn ? ('Tied to transaction: ' + txn.address + (txn.client_name ? ' — ' + txn.client_name : '')) : null].filter(Boolean).join(' — ')
   };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'confirmCalendarSuggestion');
   var newShowing = r.data && r.data[0];
   if (newShowing) DATA.showings.push(newShowing);
   var r2 = await sb.from('calendar_suggestions').update({ status: 'confirmed', linked_showing_id: newShowing ? newShowing.id : null }).eq('id', id).select('id');
@@ -1868,7 +1869,7 @@ async function applySuggestionReschedule(id) {
   if (s.linked_showing_id) {
     var patch = { showing_ts: s.flag_new_start_ts };
     var r = await sb.from('showings').update(patch).eq('id', s.linked_showing_id).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'applySuggestionReschedule');
     var sh = showingById(s.linked_showing_id);
     if (sh) { sh.showing_ts = s.flag_new_start_ts; await scheduleShowingFollowup(sh); }
   }
@@ -1891,7 +1892,7 @@ async function cancelFlaggedShowing(id) {
     var sh = showingById(s.linked_showing_id);
     if (sh) sh.status = 'cancelled';
     var r = await sb.from('showings').update({ status: 'cancelled' }).eq('id', s.linked_showing_id).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'cancelFlaggedShowing');
   }
   var r2 = await sb.from('calendar_suggestions').update({ flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
   if (r2.error) { toast('Could not clear — try again'); return; }
@@ -1936,7 +1937,7 @@ function renderPricingPreviewCard() {
 function menuShowCoverage() {
   openPanel('coverage-card');
   var b = document.getElementById('coverage-body'), c = document.getElementById('coverage-caret');
-  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_coverage_open', '1'); } catch (e) {} }
+  if (b && b.style.display === 'none') { b.style.display = ''; if (c) c.innerHTML = '&#9662;'; try { localStorage.setItem('spiro_coverage_open', '1'); } catch (e) { reportError('menuShowCoverage', e, {toast:false}); } }
   renderCoverage(); /* card was hidden -> render() skips it (see the perf note there); force one fresh render now that it's visible */
 }
 /* AI ADOPT #1 (2026-07-27): dedicated "Ask Spiro" multi-turn query surface -- see the ask-card
@@ -2097,7 +2098,7 @@ function toggleShareLinksCard() {
   var open = b.style.display === 'none';
   b.style.display = open ? '' : 'none';
   c.innerHTML = open ? '&#9662;' : '&#9656;';
-  try { localStorage.setItem('spiro_sharelinks_open', open ? '1' : '0'); } catch (e) {}
+  try { localStorage.setItem('spiro_sharelinks_open', open ? '1' : '0'); } catch (e) { reportError('toggleShareLinksCard', e, {toast:false}); }
 }
 (function () {
   try {
@@ -2121,16 +2122,16 @@ function toggleShareLinksCard() {
       if (b4) { b4.style.display = ''; }
       if (c4) { c4.innerHTML = '&#9662;'; }
     }
-  } catch (e) {}
+  } catch (e) { reportError('init:theme', e, {toast:false}); }
 })();
 function toggleSpiroTheme() {
   var t = document.documentElement.classList.contains('night') ? 'light' : 'night';
-  try { localStorage.setItem('spiro_theme', t); } catch (e) {}
+  try { localStorage.setItem('spiro_theme', t); } catch (e) { reportError('toggleSpiroTheme', e, {toast:false}); }
   applySpiroTheme(t);
 }
 (function () {
   var t = null;
-  try { t = localStorage.getItem('spiro_theme'); } catch (e) {}
+  try { t = localStorage.getItem('spiro_theme'); } catch (e) { reportError('init:theme', e, {toast:false}); }
   applySpiroTheme(t === 'night' ? 'night' : 'light');
 })();
 var SUPABASE_URL = 'https://mtnkkeftmcfxeygkbkja.supabase.co';
@@ -2227,7 +2228,7 @@ async function reportUnconfirmedWrite() {
    app Nick actually uses all day did not.
    Insert-only by RLS — the app can write here and cannot read it back. Failures to report are
    swallowed on purpose: telemetry must never be able to cause the outage it is describing. */
-var _errSeen = {}, _errCount = 0;
+var _errSeen = {}, _errCount = 0, _toastSeen = {};
 /* AI FAILURES MUST BE LOUD, NOT SOOTHING (2026-07-30).
    The `ask` edge function had been returning 502 {"error":"API key is invalid."} since 2026-07-24 —
    six days — and NOTHING in the app said so. It powers the home-screen capture box, Ask Spiro, the
@@ -2248,6 +2249,17 @@ function askFailure(mode, r, fallback) {
   return fallback + ' (' + raw.slice(0, 80) + ')';
 }
 function reportError(source, err, page) {
+  /* P6 (2026-11-05): third arg may be an options object, {toast:true}, instead of the page string.
+     toast:true also tells the user; the telemetry path below is unchanged. Default is no toast so
+     background loops cannot spam. */
+  var opts = (page && typeof page === 'object') ? page : null;
+  if (opts) page = null;
+  console.error('[spiro]', source, err);
+  var tkey = source + '|' + String((err && err.message) || err).slice(0, 200);
+  if (opts && opts.toast && !_toastSeen[tkey]) {   /* once per distinct fault per session: a render loop must not strobe the toast */
+    _toastSeen[tkey] = 1;
+    try { toast('Something failed in ' + source + ' — ' + String((err && err.message) || err)); } catch (e0) { console.warn('[spiro] toast failed', e0); }
+  }
   try {
     if (_errCount >= 20) return;                  /* per-session cap: a render loop must not flood */
     var msg = String((err && (err.message || err.reason || err)) || 'unknown').slice(0, 500);
@@ -2263,10 +2275,16 @@ function reportError(source, err, page) {
       app_version: APP_VERSION,
       ua: String(navigator.userAgent || '').slice(0, 300)
     }).then(function () {}, function () {});
-  } catch (e) { /* never let the error reporter throw */ }
+  } catch (e) { console.warn('[spiro] reportError itself failed', e); /* never let the error reporter throw */ }
 }
-window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message); });
+window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message, e.error ? { toast: true } : null); });
 window.addEventListener('unhandledrejection', function (e) { reportError('unhandledrejection', e.reason); });
+/* One save-failure path (P6, 2026-11-05): same message and same return as the 34 inline copies it
+   replaced, plus the error now reaches console and client_errors. */
+function saveFailed(err, context) {
+  toast('Could not save — try again');
+  reportError('save:' + context, err);
+}
 function toast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg; t.className = 'show';
@@ -2312,7 +2330,7 @@ async function unlockApp() {
   var h = await sha256Hex(v);
   if (h === pinHash()) {
     /* silent-ok: private mode blocks sessionStorage; the unlock still works for this page view */
-    try { sessionStorage.setItem('spiro_unlocked', '1'); } catch (e) {}
+    try { sessionStorage.setItem('spiro_unlocked', '1'); } catch (e) { reportError('unlockApp', e, {toast:false}); }
     document.getElementById('pin-input').value = '';
     show('screen-app');
     loadAll(false);
@@ -2325,12 +2343,12 @@ async function setPinFlow() {
   if (v === null) return;
   v = String(v).trim();
   if (!v) {
-    try { localStorage.removeItem('spiro_pin_hash'); } catch (e) {}
+    try { localStorage.removeItem('spiro_pin_hash'); } catch (e) { reportError('setPinFlow', e, {toast:false}); }
     updatePinBtn(); toast('PIN removed'); return;
   }
   if (!/^[0-9]{4,8}$/.test(v)) { toast('PIN must be 4-8 digits'); return; }
   var h = await sha256Hex(v);
-  try { localStorage.setItem('spiro_pin_hash', h); sessionStorage.setItem('spiro_unlocked', '1'); } catch (e) {}
+  try { localStorage.setItem('spiro_pin_hash', h); sessionStorage.setItem('spiro_unlocked', '1'); } catch (e) { reportError('setPinFlow', e, {toast:false}); }
   updatePinBtn(); toast('PIN set — required next time the app opens');
   logEvent('system', null, 'security.pin.updated', 'App PIN changed');
 }
@@ -2393,7 +2411,7 @@ async function signOut() {
      so DATA and the rendered DOM go with it.
      Deliberate exception: spiro_offline_captures is KEPT if it still holds unsynced captures --
      clearing it would silently destroy work Nick typed offline that never reached Supabase. */
-  try { await sb.auth.signOut(); } catch (e) { /* still clear locally */ }
+  try { await sb.auth.signOut(); } catch (e) { reportError('signOut', e, {toast:false}); /* still clear locally */ }
   try {
     var pending = [];
     try { pending = JSON.parse(localStorage.getItem('spiro_offline_captures') || '[]'); } catch (e2) { pending = []; }
@@ -2403,10 +2421,10 @@ async function signOut() {
     if (pending && pending.length) alert('Signed out. ' + pending.length + ' unsynced capture(s) were kept on this device and will upload at next sign-in.');
     else localStorage.removeItem('spiro_offline_captures');
     sessionStorage.removeItem('spiro_unlocked');
-  } catch (e3) { /* storage unavailable -- nothing to clear */ }
+  } catch (e3) { reportError('signOut', e3, {toast:false}); /* storage unavailable -- nothing to clear */ }
   /* D5 (2026-07-30): the boot cache holds every buyer, deal and contact. Same reasoning as the
      keys above — it must not survive a sign-out on a shared or lost device. */
-  try { await clearBootCache(); } catch (e4) { /* best effort; the reload follows regardless */ }
+  try { await clearBootCache(); } catch (e4) { reportError('signOut', e4, {toast:false}); /* best effort; the reload follows regardless */ }
   location.reload();
 }
 
@@ -2491,7 +2509,7 @@ function saveBootCache(force) {
       } catch (e) { reportError('bootcache:serialise', e); }
     };
     if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 4000 }); else setTimeout(run, 0);
-  } catch (e) { /* caching must never break a load */ }
+  } catch (e) { reportError('saveBootCache', e, {toast:false}); /* caching must never break a load */ }
 }
 
 /* Hydrate at boot. Deliberately does nothing if the network already won the race. */
@@ -2701,10 +2719,10 @@ function nextEscrowDeadline(tx) {
 /* One card's crash must never blank the rest of the home screen (2026-07-31; the buildable-blob
    throw inside renderBrowse blanked the ENTIRE Records list on two builds). Each renderer runs
    isolated; a throw is reported to client_errors and the remaining cards still paint. */
-function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e); } }
+function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e, { toast: true }); } }
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
-  if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { /* */ } }
+  if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { reportError('render', e, {toast:true}); /* */ } }
   safeRender('stats', renderStats); safeRender('pulse', renderPulse);
   safeRender('syshealth', renderSystemLine);
   safeRender('tabsync', tabSync);
@@ -3756,7 +3774,7 @@ function logEvent(entityType, entityId, eventType, summary, meta) {
       event_type: eventType, actor: 'nick', source: 'pwa',
       summary: String(summary || '').slice(0, 200), meta: meta || {}
     }).then(function () {});
-  } catch (e) {}
+  } catch (e) { reportError('logEvent', e, {toast:false}); }
 }
 async function fuDone(btn) {
   var id = btn.getAttribute('data-id');
@@ -3914,7 +3932,7 @@ function dismissCapture(id) {
   if (DISMISSED_CAPTURES.indexOf(id) === -1) {
     DISMISSED_CAPTURES.push(id);
     if (DISMISSED_CAPTURES.length > 200) DISMISSED_CAPTURES = DISMISSED_CAPTURES.slice(-200); /* bound growth */
-    try { localStorage.setItem('spiro_dismissed_captures', JSON.stringify(DISMISSED_CAPTURES)); } catch (e) {}
+    try { localStorage.setItem('spiro_dismissed_captures', JSON.stringify(DISMISSED_CAPTURES)); } catch (e) { reportError('dismissCapture', e, {toast:false}); }
   }
   renderCaptures();
 }
@@ -4118,9 +4136,9 @@ function showFormErr(msg, focusKey) {
   err.textContent = msg || '';
   if (!msg) return;
   var el = focusKey ? document.getElementById('f_' + focusKey) : null;
-  try { (el || err).scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+  try { (el || err).scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { reportError('showFormErr', e, {toast:false}); }
   if (el) {
-    try { el.focus({ preventScroll: true }); } catch (e2) { }
+    try { el.focus({ preventScroll: true }); } catch (e2) { reportError('showFormErr', e2, {toast:false}); }
     el.style.borderBottomColor = 'var(--clay)';
     var clear = function () { el.style.borderBottomColor = ''; el.removeEventListener('input', clear); };
     el.addEventListener('input', clear);
@@ -4701,7 +4719,7 @@ function omniMic() {
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var mic = document.getElementById('omni-mic');
   if (!SR) { toast('Voice isn’t supported here — use your keyboard’s mic'); return; }
-  if (OMNI_RECING && OMNI_REC) { try { OMNI_REC.stop(); } catch (e) {} return; }
+  if (OMNI_RECING && OMNI_REC) { try { OMNI_REC.stop(); } catch (e) { reportError('omniMic', e, {toast:false}); } return; }
   OMNI_REC = new SR();
   OMNI_REC.lang = 'en-US'; OMNI_REC.interimResults = true; OMNI_REC.continuous = true;
   var base = document.getElementById('omni-text').value;
@@ -4714,7 +4732,7 @@ function omniMic() {
     el.value = (base ? base.replace(/\s*$/, '') + ' ' : '') + s;
     omniGrow(el); omniHint();
   };
-  try { OMNI_REC.start(); } catch (e) {}
+  try { OMNI_REC.start(); } catch (e) { reportError('omniMic', e, {toast:false}); }
 }
 
 /* Offline capture queue — a note taken with no signal is held on-device and filed on reconnect. */
@@ -4723,7 +4741,7 @@ function offlineList() { try { return JSON.parse(localStorage.getItem(OFFLINE_KE
 function offlineCount() { return offlineList().length; }
 function queueOffline(text) {
   var q = offlineList(); q.push({ text: text, ts: Date.now() });
-  try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(q)); } catch (e) {}
+  try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(q)); } catch (e) { reportError('queueOffline', e, {toast:false}); }
   toast('No connection — saved on this device, will file when you’re back');
   renderCaptures(); omniHint();
 }
@@ -4737,7 +4755,7 @@ async function flushOfflineCaptures() {
     else { DATA.captures.unshift(r.data[0]); logEvent('capture', r.data[0].id, 'capture.synced', q[i].text.slice(0, 120)); }
   }
   /* silent-ok: if storage is unavailable the queue could never have persisted to begin with */
-  try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(remaining)); } catch (e) {}
+  try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(remaining)); } catch (e) { reportError('flushOfflineCaptures', e, {toast:false}); }
   var synced = q.length - remaining.length;
   if (synced) { renderCaptures(); omniHint(); toast(synced + ' offline note' + (synced === 1 ? '' : 's') + ' synced ✓'); }
 }
@@ -4801,13 +4819,13 @@ async function geocodeForPersist(address) {
     if (census && census.status === 'OK' && census.lat != null && census.lng != null) {
       return { lat: census.lat, lng: census.lng, formatted: census.formatted || address, source: 'census' };
     }
-  } catch (e) {} /* silent-ok: fallback chain — transport failures are already reported inside edgeJson() */
+  } catch (e) { reportError('geocodeForPersist', e, {toast:false}); } /* silent-ok: fallback chain — transport failures are already reported inside edgeJson() */
   try {
     var mb = await mapboxGeocodeCall({ address: address });
     if (mb && !mb.error && mb.lat != null && mb.lng != null) {
       return { lat: mb.lat, lng: mb.lng, formatted: mb.formatted_address || address, source: 'mapbox' };
     }
-  } catch (e) {} /* silent-ok: end of the fallback chain — edgeJson() reported any transport failure; null = genuinely no match */
+  } catch (e) { reportError('geocodeForPersist', e, {toast:false}); } /* silent-ok: end of the fallback chain — edgeJson() reported any transport failure; null = genuinely no match */
   return null;
 }
 /* Fire-and-forget: geocode a just-saved offmarket/listings row and merge lat/lng into its extra
@@ -4832,7 +4850,7 @@ async function omniPhoto(file) {
   if (ph) ph.innerHTML = ''; if (note) note.textContent = 'Reading the photo…';
   if (!window.exifr) { if (note) note.textContent = 'Photo tools didn’t load — check your connection and try again, or type the address in the box.'; return; }
   var gps = null;
-  try { gps = await exifr.gps(file); } catch (e) {}
+  try { gps = await exifr.gps(file); } catch (e) { reportError('omniPhoto', e, {toast:false}); }
   if (!gps || gps.latitude == null) { if (note) note.textContent = 'No location found in that photo. Use the original at full size with location on, or type the address in the box.'; return; }
   if (note) note.textContent = 'Location found — resolving the street…';
   var rev = await revgeoCall({ lat: gps.latitude, lng: gps.longitude });
@@ -4840,7 +4858,7 @@ async function omniPhoto(file) {
   OMNI_PHOTO = { lat: gps.latitude, lng: gps.longitude, street: rev.route || '', city: rev.city || '', state: rev.state || 'CA', zip: rev.zip || '' };
   if (note) note.textContent = '';
   var thumb = '';
-  try { thumb = '<img src="' + URL.createObjectURL(file) + '" style="max-width:110px;border:1px solid var(--line);border-radius:2px;margin-right:10px;">'; } catch (e) {}
+  try { thumb = '<img src="' + URL.createObjectURL(file) + '" style="max-width:110px;border:1px solid var(--line);border-radius:2px;margin-right:10px;">'; } catch (e) { reportError('omniPhoto', e, {toast:false}); }
   ph.innerHTML = '<div class="qi" style="align-items:flex-start;">' + thumb + '<div class="txt"><div class="t1">' + esc([OMNI_PHOTO.street, OMNI_PHOTO.city, OMNI_PHOTO.zip].filter(Boolean).join(', ') || 'Location found') + '</div>'
     + '<div class="t2">Read the number off your photo and enter it:</div>'
     + '<input type="text" id="omni-hnum" inputmode="numeric" placeholder="e.g. 1100" style="margin-top:6px;max-width:150px;">'
@@ -4885,7 +4903,7 @@ function _scaledCanvas(file, maxDim) {
         var scale = Math.min(1, maxDim / Math.max(w, h));
         var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
         var c = document.createElement('canvas'); c.width = cw; c.height = ch;
-        try { c.getContext('2d').drawImage(img, 0, 0, cw, ch); } catch (e) {}
+        try { c.getContext('2d').drawImage(img, 0, 0, cw, ch); } catch (e) { reportError('img.onload', e, {toast:false}); }
         URL.revokeObjectURL(url);
         resolve({ canvas: c, w: cw, h: ch });
       };
@@ -4922,7 +4940,7 @@ async function omniImages(files) {
   if (files.length === 1) {
     var gps = null;
     /* silent-ok: unreadable EXIF = a photo without usable GPS; it falls through to the normal photo flow */
-    try { gps = window.exifr ? await exifr.gps(files[0]) : null; } catch (e) {}
+    try { gps = window.exifr ? await exifr.gps(files[0]) : null; } catch (e) { reportError('omniImages', e, {toast:false}); }
     if (gps && gps.latitude != null) return omniPhoto(files[0]); /* has location -> walk-by capture */
   }
   return omniRoutePhotos(files);
@@ -5138,7 +5156,7 @@ async function uploadPropertyPhotos(propertyId, files, opts) {
     if (opts.caption) row.caption = opts.caption;
     var ins = await sb.from('property_photos').insert(row).select('*');
     /* silent-ok: the remove() is best-effort cleanup of an orphaned upload; the insert failure itself is captured in firstErr and surfaced */
-    if (ins.error) { firstErr = firstErr || ins.error.message; try { await sb.storage.from('photos').remove([path]); } catch (e) {} continue; }
+    if (ins.error) { firstErr = firstErr || ins.error.message; try { await sb.storage.from('photos').remove([path]); } catch (e) { reportError('uploadPropertyPhotos', e, {toast:false}); } continue; }
     if (ins.data && ins.data[0]) { DATA.property_photos = DATA.property_photos || []; DATA.property_photos.push(ins.data[0]); }
     uploaded++;
   }
@@ -5210,7 +5228,7 @@ async function removePropertyPhoto(photoId, propertyId, elId) {
   if (!window.confirm('Remove this photo? This cannot be undone.')) return;
   var del = await sb.from('property_photos').delete().eq('id', photoId);
   if (del.error) { toast('Could not remove: ' + del.error.message); return; }
-  try { await sb.storage.from('photos').remove([row.storage_path]); } catch (e) {}
+  try { await sb.storage.from('photos').remove([row.storage_path]); } catch (e) { reportError('removePropertyPhoto', e, {toast:false}); }
   DATA.property_photos = (DATA.property_photos || []).filter(function (p) { return String(p.id) !== String(photoId); });
   logEvent('properties', propertyId, 'photo.removed', 'Removed a photo');
   renderPropertyGallery(propertyId, elId);
@@ -5304,7 +5322,7 @@ function captureHoldImages(files, roles) {
   CAPTURE_URLS = CAPTURE_IMAGES.map(function (f) { try { return URL.createObjectURL(f); } catch (e) { return ''; } });
 }
 function captureClearImages() {
-  (CAPTURE_URLS || []).forEach(function (u) { try { if (u) URL.revokeObjectURL(u); } catch (e) {} });
+  (CAPTURE_URLS || []).forEach(function (u) { try { if (u) URL.revokeObjectURL(u); } catch (e) { reportError('captureClearImages', e, {toast:false}); } });
   CAPTURE_IMAGES = []; CAPTURE_ROLES = []; CAPTURE_SEL = []; CAPTURE_URLS = []; CAPTURE_SCRAPED = [];
 }
 function captureToggleSel(i) {
@@ -5450,7 +5468,7 @@ function dsFileByHand(envelopeId) {
 }
 async function dsMarkNotPropertyRelated(envelopeId) {
   var r = await sb.from('esign_envelopes').update({ needs_property: false, updated_at: nowStamp() }).eq('id', envelopeId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'dsMarkNotPropertyRelated');
   logEvent('esign_envelopes', envelopeId, 'docusign.not_property', 'Marked not property-related — won’t resurface here');
   toast('Marked — won’t resurface here'); loadAll(false);
 }
@@ -5706,7 +5724,7 @@ async function pickTracerfyCandidate(prospectId, idx) {
   if (c.phone) patch.owner_contact = c.phone;
   var newExtra = Object.assign({}, p.extra, { tracerfy_needs_review: false, tracerfy_picked: cands[idx] });
   var r = await sb.from('prospects').update(Object.assign({}, patch, { extra: newExtra })).eq('id', prospectId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'pickTracerfyCandidate');
   p.owner_name = c.name; if (c.phone) p.owner_contact = c.phone; p.extra = newExtra;
   logEvent('prospects', prospectId, 'prospect.tracerfy_candidate_picked', (p.address || 'Prospect') + ' — picked ' + c.name + ' from ' + cands.length + ' Tracerfy candidates');
   toast('Saved ' + c.name + ' ✓');
@@ -5717,7 +5735,7 @@ async function tracerfyCandidatesSkip(prospectId) {
   if (!p) return;
   var newExtra = Object.assign({}, p.extra, { tracerfy_needs_review: false, tracerfy_review_skipped: true });
   var r = await sb.from('prospects').update({ extra: newExtra }).eq('id', prospectId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tracerfyCandidatesSkip');
   p.extra = newExtra;
   logEvent('prospects', prospectId, 'prospect.tracerfy_review_skipped', (p.address || 'Prospect') + ' — none of the Tracerfy candidates picked, won’t resurface here');
   toast('Skipped — won’t resurface here');
@@ -6194,7 +6212,7 @@ async function saveCommissionPct(sid, val) {
   var n = val === '' ? null : Number(val);
   if (val !== '' && (isNaN(n) || n < 0 || n > 100)) { toast('Enter a percent between 0 and 100'); render(); return; }
   var r = await sb.from('transactions').update({ commission_pct: val === '' ? null : val, updated_at: nowStamp() }).eq('id', sid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveCommissionPct');
   var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
   if (tx) tx.commission_pct = val === '' ? null : val;
   logEvent('transactions', sid, 'txn.commission_pct_set', val ? 'Commission % set to ' + val : 'Commission % cleared');
@@ -6242,7 +6260,7 @@ async function setCommissionItemStatus(id, status) {
   if (status === 'paid') patch.paid_date = nowStamp().slice(0, 10);
   else patch.paid_date = null;
   var r = await sb.from('transaction_commission_items').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setCommissionItemStatus');
   var it = null; (DATA.transaction_commission_items || []).forEach(function (x) { if (String(x.id) === id) it = x; });
   if (it) { it.status = status; it.paid_date = patch.paid_date; }
   render();
@@ -6419,7 +6437,7 @@ function tcTaskRowHtml(t) {
 }
 async function setDealKind(sid, kind) {
   var r = await sb.from('transactions').update({ deal_kind: kind, updated_at: nowStamp() }).eq('id', sid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setDealKind');
   var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
   if (tx) tx.deal_kind = kind;
   logEvent('transactions', sid, 'txn.deal_kind_set', 'Deal kind set to ' + kind);
@@ -6440,7 +6458,7 @@ async function generateTcTasks(sid, silent) {
 }
 async function setTcTaskStatus(id, status) {
   var r = await sb.from('transaction_tasks').update({ status: status, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setTcTaskStatus');
   var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
   if (t) t.status = status;
   render();
@@ -6460,7 +6478,7 @@ async function tcGateSubmit(id) {
   if (!method.trim()) { toast('Describe how it was verified — this record matters'); return; }
   var confirmation = { verified_by: by, method: method, verified_at: nowStamp() };
   var r = await sb.from('transaction_tasks').update({ status: 'done', confirmation: confirmation, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tcGateSubmit');
   var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
   if (t) { t.status = 'done'; t.confirmation = confirmation; }
   logEvent('transaction_tasks', id, 'tc_task.gated_complete', 'Gated task verified by ' + by + ': ' + method);
@@ -6591,7 +6609,7 @@ async function setTcDocStatus(id, status) {
   var patch = { status: status, updated_at: nowStamp() };
   if (status !== 'waived') patch.waived_reason = null;
   var r = await sb.from('transaction_documents').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setTcDocStatus');
   var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
   if (d) { d.status = status; if (status !== 'waived') d.waived_reason = null; }
   render();
@@ -6613,7 +6631,7 @@ async function tcWaiveSubmit(id) {
   reason = reason.trim();
   if (!reason) { toast('Enter a reason — required to waive'); return; }
   var r = await sb.from('transaction_documents').update({ status: 'waived', waived_reason: reason, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tcWaiveSubmit');
   var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
   if (d) { d.status = 'waived'; d.waived_reason = reason; }
   document.getElementById('tcdw-' + id).innerHTML = '';
@@ -6696,7 +6714,7 @@ async function setDeadlineStatus(id, status) {
   d.status = status;
   renderBrowse(); renderQueue();   /* optimistic */
   var r = await sb.from('transaction_deadlines').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setDeadlineStatus');
   logEvent('transactions', d.transaction_id, status === 'done' ? 'txn.deadline_done' : 'txn.deadline_reopen', d.kind);
 }
 /* E-sign staging: record the envelope + recipient. This does NOT send — sending is a
@@ -6722,7 +6740,7 @@ async function stageEnvelope(sid) {
   if (!em) { toast('Add a signer email'); return; }
   var recipients = [{ name: nm || em, email: em }];
   var r = await sb.rpc('fn_stage_envelope', { p_transaction_id: sid, p_doc_name: doc, p_recipients: recipients });
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'stageEnvelope');
   var ev = await sb.from('esign_envelopes').select('*').eq('transaction_id', sid);
   if (!ev.error && ev.data) {
     DATA.esign_envelopes = (DATA.esign_envelopes || []).filter(function (e) { return String(e.transaction_id) !== sid; }).concat(ev.data);
@@ -6743,7 +6761,7 @@ async function setEnvelopeStatus(id, status) {
   e.status = status;
   renderBrowse();   /* optimistic */
   var r = await sb.from('esign_envelopes').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setEnvelopeStatus');
   logEvent('transactions', e.transaction_id, 'esign.status', (e.doc_name || 'Document') + ' -> ' + status);
   /* trg_match_envelope_to_tc (2026-07-31) may have just linked+advanced a manifest document or a
      linked_doc task server-side by name match -- refetch both for this escrow so the UI reflects
@@ -6892,7 +6910,7 @@ async function saveShowingEdit(id) {
   var patch = { property_ref: prop || null, showing_ts: when ? new Date(when).toISOString() : null, notes: note || null };
   if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveShowingEdit');
   var s = showingById(id);
   if (s) { s.property_ref = patch.property_ref; s.showing_ts = patch.showing_ts; s.notes = patch.notes; }
   logEvent('buyers', s ? s.buyer_id : null, 'showing.edited', 'Showing updated: ' + (prop || 'property') + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
@@ -6919,7 +6937,7 @@ async function saveShowing(buyerId) {
   if (!confirmPastConflict(whenIso, null)) return;
   var row = { buyer_id: buyerId, property_ref: prop, showing_ts: whenIso, status: 'scheduled', notes: note || null };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveShowing');
   if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   var buyer = recOf('buyers', buyerId);
   logEvent('buyers', buyerId, 'showing.scheduled', 'Showing: ' + prop + (buyer ? ' for ' + buyer.name : ''));
@@ -6929,7 +6947,7 @@ async function setShowingStatus(id, status) {
   var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === id) s = x; });
   if (!s) return; s.status = status; renderBrowse();
   var r = await sb.from('showings').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setShowingStatus');
   logEvent('buyers', s.buyer_id, status === 'done' ? 'showing.done' : 'showing.cancelled', s.property_ref || 'showing');
   toast(status === 'done' ? 'Marked shown' : 'Cancelled');
 }
@@ -6966,7 +6984,7 @@ async function saveOpenHouse(listingId) {
   if (!start) { toast('Pick a start time'); return; }
   var row = { listing_key: String(listingId), start_ts: new Date(start).toISOString(), end_ts: end ? new Date(end).toISOString() : null, oh_type: typ, remarks: rem || null };
   var r = await sb.from('open_houses').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveOpenHouse');
   if (r.data && r.data[0]) DATA.open_houses.push(r.data[0]);
   var lst = recOf('listings', listingId);
   logEvent('listings', listingId, 'openhouse.scheduled', 'Open house: ' + (lst ? lst.address : ''));
@@ -7022,7 +7040,7 @@ async function saveListingShowingEdit(id, listingId) {
   var patch = { notes: who, showing_ts: when ? new Date(when).toISOString() : null };
   if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveListingShowingEdit');
   var s = showingById(id);
   if (s) { s.notes = patch.notes; s.showing_ts = patch.showing_ts; }
   logEvent('listings', listingId, 'showing.edited', 'Showing updated: ' + who + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
@@ -7052,7 +7070,7 @@ async function saveListingShowing(listingId) {
   var label = who + (note ? ' — ' + note : '');
   var row = { property_id: lst.property_id, property_ref: lst.address, buyer_id: null, showing_ts: whenIso, status: 'scheduled', notes: label };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveListingShowing');
   if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   logEvent('listings', listingId, 'showing.scheduled', 'Showing: ' + label);
   toast('Showing scheduled'); render();
@@ -7061,7 +7079,7 @@ async function setListingShowingStatus(id, status) {
   var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === id) s = x; });
   if (!s) return; s.status = status; renderBrowse();
   var r = await sb.from('showings').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setListingShowingStatus');
   toast(status === 'done' ? 'Marked shown' : 'Cancelled');
 }
 
@@ -8511,7 +8529,7 @@ async function fetchBrief(force) {
       var cached = localStorage.getItem('spiro_brief_text');
       if (cached) { body.textContent = cached; return; }
     }
-  } catch (e) {}
+  } catch (e) { reportError('fetchBrief', e, {toast:false}); }
   briefBusy = true;
   body.textContent = 'Putting your morning together…';
   try {
@@ -8520,7 +8538,7 @@ async function fetchBrief(force) {
       body.textContent = askFailure('brief', r, 'Brief unavailable right now — your Focus list below is live as always.');
     } else {
       body.textContent = r.data.brief;
-      try { localStorage.setItem('spiro_brief_date', today); localStorage.setItem('spiro_brief_text', r.data.brief); } catch (e) {}
+      try { localStorage.setItem('spiro_brief_date', today); localStorage.setItem('spiro_brief_text', r.data.brief); } catch (e) { reportError('fetchBrief', e, {toast:false}); }
       logEvent('system', null, 'brief.viewed', 'Morning brief generated');
     }
   } catch (e) { body.textContent = 'Brief unavailable — check your connection.'; }
@@ -8567,7 +8585,7 @@ async function fetchAiFocus(force) {
       var cached = localStorage.getItem('spiro_focus_text');
       if (cached) { el.textContent = cached; el.style.display = ''; return; }
     }
-  } catch (e) {}
+  } catch (e) { reportError('fetchAiFocus', e, {toast:false}); }
   var sections = intelFocusSummary();
   if (!sections.length) { el.style.display = 'none'; return; } /* nothing to triage -- skip the AI call entirely */
   aiFocusBusy = true;
@@ -8578,7 +8596,7 @@ async function fetchAiFocus(force) {
       el.textContent = askFailure('focus', r, 'AI triage unavailable right now — the sections below are still live as always.');
     } else {
       el.textContent = r.data.focus;
-      try { localStorage.setItem('spiro_focus_date', today); localStorage.setItem('spiro_focus_text', r.data.focus); } catch (e) {}
+      try { localStorage.setItem('spiro_focus_date', today); localStorage.setItem('spiro_focus_text', r.data.focus); } catch (e) { reportError('fetchAiFocus', e, {toast:false}); }
       logEvent('system', null, 'ai.focus_pass', 'AI focus triage generated');
     }
   } catch (e) { el.textContent = 'AI triage unavailable — check your connection.'; }
@@ -8912,7 +8930,7 @@ function phJobHtml(J, l) {
 }
 function phLbJob(i) { if (!PH_JOB || !PH_JOB.job) return; var job = PH_JOB.job, urls = PH_JOB.urls || {}; var list = [urls[job.source_path] || PHOTO_URLS[job.source_path] || ''].concat((job.variants || []).map(function (v) { return urls[v.path] || ''; })); phLbUrls(list, i); }
 function phLbUrls(urls, i) { urls = urls.filter(Boolean); if (!urls.length) return; var keys = urls.map(function (u, k) { var key = '__lb' + k; PHOTO_URLS[key] = u; return key; }); phLightbox(keys, Math.min(i, keys.length - 1)); }
-function phScrollTop() { try { var c = document.getElementById('photos-card'); if (c && window.scrollTo) window.scrollTo({ top: Math.max(0, c.offsetTop - 8), behavior: 'smooth' }); } catch (e) { /* */ } }
+function phScrollTop() { try { var c = document.getElementById('photos-card'); if (c && window.scrollTo) window.scrollTo({ top: Math.max(0, c.offsetTop - 8), behavior: 'smooth' }); } catch (e) { reportError('phScrollTop', e, {toast:false}); /* */ } }
 function phPollStop() { if (PH_POLL) { clearTimeout(PH_POLL); PH_POLL = null; } }
 /* Render driver (2026-09-09, v8): the engine renders ONE variant per call so nothing runs in the
    background where the platform can kill it. phDrive keeps calling render_next until the job has all
@@ -8922,7 +8940,7 @@ var PH_QUEUE = [];
    renders"). One tap per question, all optional, remembered per property (staging_prefs listing:<id>.brief). */
 function phMineCrm() { return (PHOTOS && PHOTOS.mine_crm || []).filter(function (m) { return !/^(sold|leased|closed|expired|cancell?ed|withdrawn)/i.test(String(m.crm_status || '')); }); }
 function phQ(label, key, opts, cur, ref) { return '<div class="phq"><div class="phq-l">' + esc(label) + '</div><div style="display:flex;flex-wrap:wrap;gap:6px;">' + opts.map(function (o) { var on = cur === o[0]; return '<button class="qbtn' + (on ? ' done' : '') + '" onclick="' + ref + '=' + (on ? "''" : "'" + escJs(o[0]) + "'") + ';renderPhotos()">' + esc(o[1]) + '</button>'; }).join('') + '</div></div>'; }
-async function phLoadBrief(listingId) { if (PH_BRIEF_LOADED === listingId) return; PH_BRIEF_LOADED = listingId; try { var jr = await photoCall({ action: 'prefs_get', key: 'listing:' + listingId }); if (jr.ok && jr.value && jr.value.brief) { PH_BRIEF = Object.assign({}, jr.value.brief); if (jr.value.brief.room && !PH_ROOM) PH_ROOM = jr.value.brief.room; renderPhotos(); } } catch (e) { /* */ } }
+async function phLoadBrief(listingId) { if (PH_BRIEF_LOADED === listingId) return; PH_BRIEF_LOADED = listingId; try { var jr = await photoCall({ action: 'prefs_get', key: 'listing:' + listingId }); if (jr.ok && jr.value && jr.value.brief) { PH_BRIEF = Object.assign({}, jr.value.brief); if (jr.value.brief.room && !PH_ROOM) PH_ROOM = jr.value.brief.room; renderPhotos(); } } catch (e) { reportError('phLoadBrief', e, {toast:false}); /* */ } }
 var PH_FRAME_MIN = 0.72;
 function phLoadImg(url) { return new Promise(function (res) { if (!url) return res(null); var im = new Image(); im.crossOrigin = 'anonymous'; im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = url; }); }
 function phGray(im, W, H) { var c = document.createElement('canvas'); c.width = W; c.height = H; var x = c.getContext('2d'); x.drawImage(im, 0, 0, W, H); var d = x.getImageData(0, 0, W, H).data, g = new Float32Array(W * H); for (var i = 0; i < W * H; i++) g[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; return g; }
@@ -8993,7 +9011,7 @@ async function phRefine(id, i) { var ins = prompt('What should change? (e.g. “
 async function phDiscardJob(id, reason, note) { var jr = await photoCall({ action: 'discard_job', job_id: id, reason: reason || null, note: note || null }); toast(jr.ok ? (note ? 'Discarded — it will avoid that here and remember it' : reason ? 'Discarded — noted: ' + reason.replace('_', ' ') : 'Discarded') : 'Failed'); PH_JOB = null; phPollStop(); photosAt = 0; fetchPhotos(true); }
 var PH_CHIPS = null;
 function phChips() { return (PH_CHIPS && PH_CHIPS.length) ? PH_CHIPS : [{ key: 'scale', label: 'scale off' }, { key: 'flow', label: 'blocks flow' }, { key: 'too_much', label: 'too much' }, { key: 'wrong_mood', label: 'wrong mood' }, { key: 'geometry', label: 'geometry wrong' }]; }
-async function phLoadChips() { try { var jr = await photoCall({ action: 'prefs_get', key: 'global' }); if (jr.ok && jr.value && Array.isArray(jr.value.discard_chips)) PH_CHIPS = jr.value.discard_chips; } catch (e) { /* */ } }
+async function phLoadChips() { try { var jr = await photoCall({ action: 'prefs_get', key: 'global' }); if (jr.ok && jr.value && Array.isArray(jr.value.discard_chips)) PH_CHIPS = jr.value.discard_chips; } catch (e) { reportError('phLoadChips', e, {toast:false}); /* */ } }
 function phDiscardWhy(id) { var v = prompt('What was wrong? One line — e.g. “sofa too big for the room”, “rug hides the floor”, “too much art on the fireplace wall”. It becomes an Avoid note for this property and steers the next renders.'); if (v === null) return; v = v.trim(); if (!v) return; phDiscardJob(id, 'other', v); }
 /* What Spiro's learned about staging (2026-09-09): visible + editable, never a black box. */
 var PH_LEARN_OPEN = false, PH_NOTES_OPEN = null, PH_NOTES_VAL = '';
@@ -10155,7 +10173,7 @@ async function saveAgentDeal(aid) {
   var priceTxt = (g('dl-price-') || '').trim();
   var row = { agent_id: aid, address: addr, price: priceTxt || null, price_num: priceTxt ? numFrom(priceTxt) : null, close_date: g('dl-date-') || null, agent_side: g('dl-side-') || null, notes: (g('dl-notes-') || '').trim() || null, source: 'memory' };
   var r = await sb.from('agent_deals').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveAgentDeal');
   if (r.data && r.data[0]) DATA.agent_deals.push(r.data[0]);
   logEvent('agents', aid, 'agent.deal_added', addr + (priceTxt ? ' · ' + priceTxt : ''));
   toast('Deal logged ✓'); renderBrowse();
@@ -10291,7 +10309,7 @@ async function addListingAgent(oid, agentId) {
   if (!agentId) { toast('Pick or type an agent'); return; }
   if (!o.list_agent_id) {
     var r = await sb.from('offmarket').update({ list_agent_id: agentId, updated_at: nowStamp() }).eq('id', oid).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'addListingAgent');
     o.list_agent_id = agentId;
     logEvent('offmarket', oid, 'lead.list_agent', 'Linked agent ' + (recLabel('agents', agentId) || ''));
     flagAgentContactIfMissing(agentId);
@@ -10317,7 +10335,7 @@ async function removeListingAgent(oid, agentId) {
     var remaining = pid ? (DATA.listing_agents || []).filter(function (r) { return String(r.property_id) === String(pid); }) : [];
     var promote = remaining[0] || null;
     var r = await sb.from('offmarket').update({ list_agent_id: promote ? promote.agent_id : null, updated_at: nowStamp() }).eq('id', oid).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'removeListingAgent');
     o.list_agent_id = promote ? promote.agent_id : null;
     if (promote) {
       await sb.from('property_listing_agents').delete().eq('property_id', pid).eq('agent_id', promote.agent_id);
@@ -10665,7 +10683,7 @@ async function agentPatchExtra(aid, patch) {
   a.extra = a.extra || {};
   Object.keys(patch).forEach(function (k) { if (patch[k] === null) delete a.extra[k]; else a.extra[k] = patch[k]; });
   var r = await sb.from('agents').update({ extra: a.extra, updated_at: nowStamp() }).eq('id', aid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'agentPatchExtra');
   renderBrowse();
 }
 function agentSetRole(aid, role) { var a = agentRec(aid); agentPatchExtra(aid, { role: (a && a.extra && a.extra.role === role) ? null : role }); }
@@ -11376,7 +11394,7 @@ async function fetchMarket(force) {
     var mCard = document.getElementById('market-card');
     if (mCard && mCard.style.display !== 'none') renderMarketReview();
     renderCoverage(); /* freshness half of the coverage card depends on MARKET, which lands after the initial render() */
-  } catch (e) {}
+  } catch (e) { reportError('fetchMarket', e, {toast:false}); }
 }
 
 /* Manual hotsheet paste (2026-08-01) -- fallback for when the automated TheMLS "Daily Hotsheet"
@@ -11953,7 +11971,7 @@ async function renderClimateCard(force) {
 async function fredSyncNow() {
   try {
     await withTimeout(fetch(FRED_SYNC_FN + '?series=MORTGAGE30US,MORTGAGE15US&sinceDays=45', { method: 'POST' }), 15000, { ok: false });
-  } catch (e) {} /* silent-ok: best-effort manual poke; the weekly cron + fred-sync feed-health watch this server-side */
+  } catch (e) { reportError('fredSyncNow', e, {toast:false}); } /* silent-ok: best-effort manual poke; the weekly cron + fred-sync feed-health watch this server-side */
   renderClimateCard(true);
 }
 function menuShowClimate() {
@@ -12596,7 +12614,7 @@ async function triageProspect(id, val) {
   if (val === 'new') delete x.extra.triage; else x.extra.triage = val;
   renderBrowse(); renderTabs(); renderIntel(); renderCoverage();  /* optimistic; instant feel — renderCoverage so the Leads/Farms panel drops this row right away */
   var r = await sb.from('prospects').update({ extra: x.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'triageProspect');
   logEvent('prospects', id, 'prospect.triage', (x.address || x.owner_name || '') + ' -> ' + val);
   toast(val === 'pursue' ? 'Added to Pursuing ✓' : val === 'pass' ? 'Passed' : 'Back to review');
 }
@@ -12958,7 +12976,7 @@ async function scanUnderbuilt() {
         p.extra.buildable_scan = { status: 'unavailable', at: new Date().toISOString() };   // marker so we don't re-hit it
         await sb.from('prospects').update({ extra: p.extra }).eq('id', p.id).select('id');
       }
-    } catch (e) { /* skip this one; it'll be retried next scan */ }
+    } catch (e) { reportError('scanUnderbuilt', e, {toast:false}); /* skip this one; it'll be retried next scan */ }
     done++;
   }
   scanBusy = false;
@@ -13013,7 +13031,7 @@ async function runBuildable(table, id) {
   var b = computeBuildable(inp);
   x.extra = x.extra || {}; x.extra.buildable = b;
   var r = await sb.from(table).update({ extra: x.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'runBuildable');
   logEvent(table, id, 'buildable.estimated', (x.address || '') + ' — ' + (b.upzone ? 'UPZONE ' : '') + (b.underbuilt ? 'UNDERBUILT ' : '') + b.untapped_sqft + ' sq ft untapped');
   toast(b.upzone ? 'Zoned above current use — flagged' : (b.underbuilt ? 'Underbuilt — flagged' : 'Buildable estimate saved'));
   render();
@@ -13344,7 +13362,7 @@ function fpPointerDown(evt) {
   var svg = document.getElementById('fp-svg'); if (!svg) return;
   var p = fpSvgPoint(svg, evt);
   FP.drag = { id: hit.room.id, mode: hit.handle === 'resize' ? 'resize' : 'move', startX: p.x, startY: p.y, orig: { x: hit.room.x, y: hit.room.y, w: hit.room.w, h: hit.room.h } };
-  try { svg.setPointerCapture(evt.pointerId); } catch (e) {}
+  try { svg.setPointerCapture(evt.pointerId); } catch (e) { reportError('fpPointerDown', e, {toast:false}); }
   fpRender();
 }
 
@@ -13782,7 +13800,7 @@ async function contactSetEngage(id, type) {
   var c = engageContact(id); if (!c) return;
   c.extra = c.extra || {}; c.extra.engage = { type: type, status: 'active', tagged_at: nowStamp() };
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactSetEngage');
   logEvent('contacts', id, 'engage.tagged', 'Added to Engage (' + type + '): ' + (c.display_name || ''));
   renderBrowse();
   toast('Added to Engage ✓');
@@ -13792,7 +13810,7 @@ async function contactClearEngage(id, reason) {
   if (!c.extra || !c.extra.engage) return;
   c.extra.engage.status = 'dismissed';
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactClearEngage');
   logEvent('contacts', id, 'engage.cleared', (reason || 'Removed from Engage') + ': ' + (c.display_name || ''));
   renderBrowse();
 }
@@ -13908,7 +13926,7 @@ async function contactSetReengage(id, status) {
   c.extra.reengage.status = status;
   if (status === 'active') c.extra.reengage.priority = 'warm';
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactSetReengage');
   logEvent('contacts', id, 'reengage.' + status, 'Re-engage ' + status + ': ' + (c.display_name || ''));
   renderTabs(); renderBrowse();
   toast(status === 'active' ? 'Added to re-engage ✓' : status === 'dismissed' ? 'Set aside' : 'Back to review');
@@ -14091,7 +14109,7 @@ async function addContactExternal(id) {
   c.extra = c.extra || {}; c.extra.external_context = c.extra.external_context || [];
   c.extra.external_context.push({ id: uid(), text: text, created_at: nowStamp() });
   var r = await sb.from('contacts').update({ extra: c.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'addContactExternal');
   logEvent('contacts', id, 'context.added', 'Noted: ' + text.slice(0, 120));
   toast('Saved'); renderBrowse();
 }
