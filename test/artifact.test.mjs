@@ -83,7 +83,10 @@ test('every FORM_SPECS field is fetched by its table’s select', () => {
   const block = app.slice(i, end + 1);
 
   // Virtual fields resolved after save, never columns on the row.
-  const VIRTUAL = new Set(['list_agent']);
+  const VIRTUAL = new Set([
+    'list_agent',
+    'buyer_links', // mirrors the 'buyerlinks' skip in buildPayload (junction-table field, no column); both names are intentional
+  ]);
 
   const specs = {};
   for (const m of block.matchAll(/(\w+):\s*\[/g)) {

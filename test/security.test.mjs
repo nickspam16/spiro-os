@@ -74,9 +74,11 @@ test('every inline script parses as valid JavaScript', async () => {
 // enforced for *Attr builders only; 201 inline sites still used esc(). All were converted, and
 // this pins the class at ZERO — the marker sequence  \'' + esc(  is the idiom's fingerprint.
 test('no esc() interpolated into inline handler JS strings', () => {
-  const marker = "\\'' + esc(";
-  let count = 0, idx = -1;
-  while ((idx = app.indexOf(marker, idx + 1)) !== -1) count++;
+  // Two spellings of the same bug: \'' + esc(x)  (value is the whole literal) and \'prefix-' + esc(x)
+  // (value appended to a literal prefix, e.g. getElementById(\'row-' + esc(id) ...). The first version of
+  // this ratchet matched only the first spelling and let the second through.
+  const marker = /\\'[^'"\n]*' \+ esc\(/g;
+  const count = (app.match(marker) || []).length;
   assert.equal(count, 0,
     `${count} inline on*-handler interpolation(s) use esc() where escJs() is required — ` +
     `the HTML parser decodes &#39; back to a live quote before the JS runs. Use escJs().`);

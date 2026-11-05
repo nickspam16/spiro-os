@@ -20,7 +20,7 @@
 // Skips cleanly when Playwright/Chromium is absent so the suite still runs anywhere.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, copyFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, copyFileSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -270,4 +270,31 @@ test('every home card opened as a panel lands on screen, goes home, and re-hides
     return out;
   }));
   assert.equal(failures.length, 0, 'panel round-trip failures:\n' + failures.join('\n'));
+});
+
+// The morning digest links to <app>#triage-deck, and from Nick's phone that is always a COLD load:
+// the hash is present before any data exists. The deep link must survive the first loadAll() and open
+// the deck once data is in (MT_DEEP_DONE / mtDeepLink at the end of a complete load). This needs a
+// SIGNED-IN session; with none the app stops at the email screen and never loads, which is exactly
+// how an earlier hand-check wrongly concluded the deep link was broken.
+test('a cold load of #triage-deck (signed in) lands in the triage deck', { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'spiro-deep-'));
+  copyFileSync(APP_PATH, join(dir, 'index.html'));
+  writeFileSync(join(dir, 'supabase.js'), STUB.replace(
+    'getSession: function () { return Promise.resolve({ data: { session: null } }); }',
+    "getSession: function () { return Promise.resolve({ data: { session: { access_token: 't', user: { email: 'a@b.c' } } } }); }"));
+  assert.ok(readFileSync(join(dir, 'supabase.js')).includes("access_token: 't'"), 'test stub did not apply a session');
+  const browser = await chromium.launch(launchOpts);
+  try {
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.route('**/rest/v1/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/functions/v1/**', r => r.fulfill({ status: 502, contentType: 'application/json', body: '{"error":"stub"}' }));
+    await page.goto('file://' + join(dir, 'index.html') + '#triage-deck');
+    await page.waitForFunction(() => typeof MT_VIEW !== 'undefined' && MT_VIEW === 'deck', null, { timeout: 8000 });
+    const r = await page.evaluate(() => ({ panel: PANEL_HOME && PANEL_HOME.id, view: MT_VIEW }));
+    assert.deepEqual(r, { panel: 'match-triage-card', view: 'deck' });
+    assert.deepEqual(errors, [], 'page errors during cold deep link: ' + errors.join(' | '));
+  } finally { await browser.close(); }
 });

@@ -7311,7 +7311,7 @@ function editShowingForm(id) {
     + '<input type="datetime-local" id="esh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
     + '<input type="text" id="esh-note-' + esc(id) + '" placeholder="Notes (optional)" value="' + esc(s.notes || '') + '" style="width:100%;margin:6px 0;">'
     + '<button class="qbtn done" onclick="event.stopPropagation();saveShowingEdit(\'' + escJs(id) + '\')">Save</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'esh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
+    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'esh-' + escJs(id) + '\').innerHTML=\'\'">Cancel</button></div>';
 }
 async function saveShowingEdit(id) {
   var prop = String((document.getElementById('esh-prop-' + id) || {}).value || '').trim();
@@ -7441,7 +7441,7 @@ function editListingShowingForm(id, listingId) {
     + '<input type="text" id="elsh-who-' + esc(id) + '" placeholder="Who (e.g. Jane Smith)" value="' + esc(s.notes || '') + '" style="width:100%;margin-bottom:6px;">'
     + '<label class="hint">When</label> <input type="datetime-local" id="elsh-when-' + esc(id) + '" value="' + isoToLocalInput(s.showing_ts) + '" style="margin:0 8px 6px 0;"> <span class="hint">(leave blank if time TBD)</span>'
     + '<button class="qbtn done" onclick="event.stopPropagation();saveListingShowingEdit(\'' + escJs(id) + '\',\'' + escJs(listingId) + '\')">Save</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'elsh-' + esc(id) + '\').innerHTML=\'\'">Cancel</button></div>';
+    + '<button class="qbtn" onclick="event.stopPropagation();document.getElementById(\'elsh-' + escJs(id) + '\').innerHTML=\'\'">Cancel</button></div>';
 }
 async function saveListingShowingEdit(id, listingId) {
   var who = String((document.getElementById('elsh-who-' + id) || {}).value || '').trim();
@@ -10354,7 +10354,7 @@ function criteriaForm(id) {
     + '<select id="crit-type-' + esc(id) + '" style="width:33%;"><option value="">Any type</option>'
     + ['single_family', 'condo', 'multifamily'].map(function (t) { return '<option value="' + t + '"' + (c.property_type === t ? ' selected' : '') + '>' + t.replace('_', ' ') + '</option>'; }).join('') + '</select>'
     + '<div style="margin-top:8px;"><button class="qbtn done" onclick="event.stopPropagation();saveCriteria(' + q_(id) + ')">Save</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();bldClear(\'crit-' + esc(id) + '\')">Cancel</button></div>'
+    + '<button class="qbtn" onclick="event.stopPropagation();bldClear(\'crit-' + escJs(id) + '\')">Cancel</button></div>'
     + '<div class="hint" style="margin-top:6px;">Used by the nightly matcher to surface new listings. Budget comes from the buyer&rsquo;s budget fields.</div></div>';
 }
 function q_(id) { return "'" + esc(String(id)) + "'"; }
@@ -10574,7 +10574,7 @@ function addAgentDeal(aid) {
     + '<select id="dl-side-' + esc(aid) + '" style="width:100%;box-sizing:border-box;margin-bottom:6px;"><option value="">Which side did they rep?</option><option value="buyer">They repped the buyer (brought a buyer to me)</option><option value="seller">They repped the seller (I brought the buyer)</option></select>'
     + '<input type="text" id="dl-notes-' + esc(aid) + '" placeholder="Notes (optional)" style="width:100%;box-sizing:border-box;margin-bottom:8px;">'
     + '<button class="qbtn done" onclick="event.stopPropagation();saveAgentDeal(\'' + escJs(aid) + '\')">Save deal</button> '
-    + '<button class="qbtn" onclick="event.stopPropagation();var b=document.getElementById(\'deal-' + esc(aid) + '\');if(b)b.innerHTML=\'\';">Cancel</button></div>';
+    + '<button class="qbtn" onclick="event.stopPropagation();var b=document.getElementById(\'deal-' + escJs(aid) + '\');if(b)b.innerHTML=\'\';">Cancel</button></div>';
 }
 async function saveAgentDeal(aid) {
   var g = function (p) { var el = document.getElementById(p + aid); return el ? el.value : ''; };
@@ -13410,7 +13410,7 @@ function buildableForm(table, id) {
        why: no public GIS layer publishes either restriction, so this has to be a human call. Suppresses
        the underbuilt claim without hiding the raw FAR numbers (see restricted/restricted_reasons). */
     + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-mills-' + esc(id) + '"' + (b.mills_act ? ' checked' : '') + '> Mills Act contract</label>'
-    + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-hoa-' + esc(id) + '" onchange="document.getElementById(\'bld-hoanote-' + esc(id) + '\').style.display=this.checked?\'block\':\'none\'"' + (b.hoa_restricted ? ' checked' : '') + '> HOA/covenant restricted</label>'
+    + '<label class="hint" style="display:inline-block;width:46%;"><input type="checkbox" id="bld-hoa-' + esc(id) + '" onchange="document.getElementById(\'bld-hoanote-' + escJs(id) + '\').style.display=this.checked?\'block\':\'none\'"' + (b.hoa_restricted ? ' checked' : '') + '> HOA/covenant restricted</label>'
     + '<input type="text" id="bld-hoanote-' + esc(id) + '" placeholder="Covenant note (optional)" value="' + esc(b.hoa_note || '') + '" style="width:100%;margin:0 0 6px;display:' + (b.hoa_restricted ? 'block' : 'none') + ';">'
     + '<datalist id="la-zones"><option value="R1"></option><option value="RE"></option><option value="RA"></option><option value="RS"></option><option value="R2"></option><option value="R3"></option></datalist>'
     + '<button class="qbtn done" onclick="event.stopPropagation();runBuildable(' + q + ')">Estimate</button> '
