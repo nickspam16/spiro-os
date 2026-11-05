@@ -1752,7 +1752,7 @@ async function saveCalSugMatch(id) {
   else if (type === 'buyer') patch.matched_buyer_id = recId;
   else if (type === 'transaction') patch.matched_transaction_id = recId;
   var r = await sb.from('calendar_suggestions').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveCalSugMatch');
   s.matched_listing_id = patch.matched_listing_id; s.matched_buyer_id = patch.matched_buyer_id;
   s.matched_transaction_id = patch.matched_transaction_id; s.match_confidence = 'manual';
   calSugEditing = null; delete calSugEditType[id];
@@ -1843,7 +1843,7 @@ async function confirmCalendarSuggestion(id) {
     notes: [s.title, txn ? ('Tied to transaction: ' + txn.address + (txn.client_name ? ' — ' + txn.client_name : '')) : null].filter(Boolean).join(' — ')
   };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'confirmCalendarSuggestion');
   var newShowing = r.data && r.data[0];
   if (newShowing) DATA.showings.push(newShowing);
   var r2 = await sb.from('calendar_suggestions').update({ status: 'confirmed', linked_showing_id: newShowing ? newShowing.id : null }).eq('id', id).select('id');
@@ -1868,7 +1868,7 @@ async function applySuggestionReschedule(id) {
   if (s.linked_showing_id) {
     var patch = { showing_ts: s.flag_new_start_ts };
     var r = await sb.from('showings').update(patch).eq('id', s.linked_showing_id).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'applySuggestionReschedule');
     var sh = showingById(s.linked_showing_id);
     if (sh) { sh.showing_ts = s.flag_new_start_ts; await scheduleShowingFollowup(sh); }
   }
@@ -1891,7 +1891,7 @@ async function cancelFlaggedShowing(id) {
     var sh = showingById(s.linked_showing_id);
     if (sh) sh.status = 'cancelled';
     var r = await sb.from('showings').update({ status: 'cancelled' }).eq('id', s.linked_showing_id).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'cancelFlaggedShowing');
   }
   var r2 = await sb.from('calendar_suggestions').update({ flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
   if (r2.error) { toast('Could not clear — try again'); return; }
@@ -2248,6 +2248,15 @@ function askFailure(mode, r, fallback) {
   return fallback + ' (' + raw.slice(0, 80) + ')';
 }
 function reportError(source, err, page) {
+  /* P6 (2026-11-05): third arg may be an options object, {toast:true}, instead of the page string.
+     toast:true also tells the user; the telemetry path below is unchanged. Default is no toast so
+     background loops cannot spam. */
+  var opts = (page && typeof page === 'object') ? page : null;
+  if (opts) page = null;
+  console.error('[spiro]', source, err);
+  if (opts && opts.toast) {
+    try { toast('Something failed in ' + source + ' — ' + String((err && err.message) || err)); } catch (e0) { /* toast element not ready */ }
+  }
   try {
     if (_errCount >= 20) return;                  /* per-session cap: a render loop must not flood */
     var msg = String((err && (err.message || err.reason || err)) || 'unknown').slice(0, 500);
@@ -2267,6 +2276,12 @@ function reportError(source, err, page) {
 }
 window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message); });
 window.addEventListener('unhandledrejection', function (e) { reportError('unhandledrejection', e.reason); });
+/* One save-failure path (P6, 2026-11-05): same message and same return as the 34 inline copies it
+   replaced, plus the error now reaches console and client_errors. */
+function saveFailed(err, context) {
+  toast('Could not save — try again');
+  reportError('save:' + context, err);
+}
 function toast(msg) {
   var t = document.getElementById('toast');
   t.textContent = msg; t.className = 'show';
@@ -5450,7 +5465,7 @@ function dsFileByHand(envelopeId) {
 }
 async function dsMarkNotPropertyRelated(envelopeId) {
   var r = await sb.from('esign_envelopes').update({ needs_property: false, updated_at: nowStamp() }).eq('id', envelopeId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'dsMarkNotPropertyRelated');
   logEvent('esign_envelopes', envelopeId, 'docusign.not_property', 'Marked not property-related — won’t resurface here');
   toast('Marked — won’t resurface here'); loadAll(false);
 }
@@ -5706,7 +5721,7 @@ async function pickTracerfyCandidate(prospectId, idx) {
   if (c.phone) patch.owner_contact = c.phone;
   var newExtra = Object.assign({}, p.extra, { tracerfy_needs_review: false, tracerfy_picked: cands[idx] });
   var r = await sb.from('prospects').update(Object.assign({}, patch, { extra: newExtra })).eq('id', prospectId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'pickTracerfyCandidate');
   p.owner_name = c.name; if (c.phone) p.owner_contact = c.phone; p.extra = newExtra;
   logEvent('prospects', prospectId, 'prospect.tracerfy_candidate_picked', (p.address || 'Prospect') + ' — picked ' + c.name + ' from ' + cands.length + ' Tracerfy candidates');
   toast('Saved ' + c.name + ' ✓');
@@ -5717,7 +5732,7 @@ async function tracerfyCandidatesSkip(prospectId) {
   if (!p) return;
   var newExtra = Object.assign({}, p.extra, { tracerfy_needs_review: false, tracerfy_review_skipped: true });
   var r = await sb.from('prospects').update({ extra: newExtra }).eq('id', prospectId).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tracerfyCandidatesSkip');
   p.extra = newExtra;
   logEvent('prospects', prospectId, 'prospect.tracerfy_review_skipped', (p.address || 'Prospect') + ' — none of the Tracerfy candidates picked, won’t resurface here');
   toast('Skipped — won’t resurface here');
@@ -6194,7 +6209,7 @@ async function saveCommissionPct(sid, val) {
   var n = val === '' ? null : Number(val);
   if (val !== '' && (isNaN(n) || n < 0 || n > 100)) { toast('Enter a percent between 0 and 100'); render(); return; }
   var r = await sb.from('transactions').update({ commission_pct: val === '' ? null : val, updated_at: nowStamp() }).eq('id', sid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveCommissionPct');
   var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
   if (tx) tx.commission_pct = val === '' ? null : val;
   logEvent('transactions', sid, 'txn.commission_pct_set', val ? 'Commission % set to ' + val : 'Commission % cleared');
@@ -6242,7 +6257,7 @@ async function setCommissionItemStatus(id, status) {
   if (status === 'paid') patch.paid_date = nowStamp().slice(0, 10);
   else patch.paid_date = null;
   var r = await sb.from('transaction_commission_items').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setCommissionItemStatus');
   var it = null; (DATA.transaction_commission_items || []).forEach(function (x) { if (String(x.id) === id) it = x; });
   if (it) { it.status = status; it.paid_date = patch.paid_date; }
   render();
@@ -6419,7 +6434,7 @@ function tcTaskRowHtml(t) {
 }
 async function setDealKind(sid, kind) {
   var r = await sb.from('transactions').update({ deal_kind: kind, updated_at: nowStamp() }).eq('id', sid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setDealKind');
   var tx = null; DATA.transactions.forEach(function (x) { if (String(x.id) === sid) tx = x; });
   if (tx) tx.deal_kind = kind;
   logEvent('transactions', sid, 'txn.deal_kind_set', 'Deal kind set to ' + kind);
@@ -6440,7 +6455,7 @@ async function generateTcTasks(sid, silent) {
 }
 async function setTcTaskStatus(id, status) {
   var r = await sb.from('transaction_tasks').update({ status: status, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setTcTaskStatus');
   var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
   if (t) t.status = status;
   render();
@@ -6460,7 +6475,7 @@ async function tcGateSubmit(id) {
   if (!method.trim()) { toast('Describe how it was verified — this record matters'); return; }
   var confirmation = { verified_by: by, method: method, verified_at: nowStamp() };
   var r = await sb.from('transaction_tasks').update({ status: 'done', confirmation: confirmation, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tcGateSubmit');
   var t = null; (DATA.transaction_tasks || []).forEach(function (x) { if (String(x.id) === id) t = x; });
   if (t) { t.status = 'done'; t.confirmation = confirmation; }
   logEvent('transaction_tasks', id, 'tc_task.gated_complete', 'Gated task verified by ' + by + ': ' + method);
@@ -6591,7 +6606,7 @@ async function setTcDocStatus(id, status) {
   var patch = { status: status, updated_at: nowStamp() };
   if (status !== 'waived') patch.waived_reason = null;
   var r = await sb.from('transaction_documents').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setTcDocStatus');
   var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
   if (d) { d.status = status; if (status !== 'waived') d.waived_reason = null; }
   render();
@@ -6613,7 +6628,7 @@ async function tcWaiveSubmit(id) {
   reason = reason.trim();
   if (!reason) { toast('Enter a reason — required to waive'); return; }
   var r = await sb.from('transaction_documents').update({ status: 'waived', waived_reason: reason, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'tcWaiveSubmit');
   var d = null; (DATA.transaction_documents || []).forEach(function (x) { if (String(x.id) === id) d = x; });
   if (d) { d.status = 'waived'; d.waived_reason = reason; }
   document.getElementById('tcdw-' + id).innerHTML = '';
@@ -6696,7 +6711,7 @@ async function setDeadlineStatus(id, status) {
   d.status = status;
   renderBrowse(); renderQueue();   /* optimistic */
   var r = await sb.from('transaction_deadlines').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setDeadlineStatus');
   logEvent('transactions', d.transaction_id, status === 'done' ? 'txn.deadline_done' : 'txn.deadline_reopen', d.kind);
 }
 /* E-sign staging: record the envelope + recipient. This does NOT send — sending is a
@@ -6722,7 +6737,7 @@ async function stageEnvelope(sid) {
   if (!em) { toast('Add a signer email'); return; }
   var recipients = [{ name: nm || em, email: em }];
   var r = await sb.rpc('fn_stage_envelope', { p_transaction_id: sid, p_doc_name: doc, p_recipients: recipients });
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'stageEnvelope');
   var ev = await sb.from('esign_envelopes').select('*').eq('transaction_id', sid);
   if (!ev.error && ev.data) {
     DATA.esign_envelopes = (DATA.esign_envelopes || []).filter(function (e) { return String(e.transaction_id) !== sid; }).concat(ev.data);
@@ -6743,7 +6758,7 @@ async function setEnvelopeStatus(id, status) {
   e.status = status;
   renderBrowse();   /* optimistic */
   var r = await sb.from('esign_envelopes').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setEnvelopeStatus');
   logEvent('transactions', e.transaction_id, 'esign.status', (e.doc_name || 'Document') + ' -> ' + status);
   /* trg_match_envelope_to_tc (2026-07-31) may have just linked+advanced a manifest document or a
      linked_doc task server-side by name match -- refetch both for this escrow so the UI reflects
@@ -6892,7 +6907,7 @@ async function saveShowingEdit(id) {
   var patch = { property_ref: prop || null, showing_ts: when ? new Date(when).toISOString() : null, notes: note || null };
   if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveShowingEdit');
   var s = showingById(id);
   if (s) { s.property_ref = patch.property_ref; s.showing_ts = patch.showing_ts; s.notes = patch.notes; }
   logEvent('buyers', s ? s.buyer_id : null, 'showing.edited', 'Showing updated: ' + (prop || 'property') + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
@@ -6919,7 +6934,7 @@ async function saveShowing(buyerId) {
   if (!confirmPastConflict(whenIso, null)) return;
   var row = { buyer_id: buyerId, property_ref: prop, showing_ts: whenIso, status: 'scheduled', notes: note || null };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveShowing');
   if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   var buyer = recOf('buyers', buyerId);
   logEvent('buyers', buyerId, 'showing.scheduled', 'Showing: ' + prop + (buyer ? ' for ' + buyer.name : ''));
@@ -6929,7 +6944,7 @@ async function setShowingStatus(id, status) {
   var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === id) s = x; });
   if (!s) return; s.status = status; renderBrowse();
   var r = await sb.from('showings').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setShowingStatus');
   logEvent('buyers', s.buyer_id, status === 'done' ? 'showing.done' : 'showing.cancelled', s.property_ref || 'showing');
   toast(status === 'done' ? 'Marked shown' : 'Cancelled');
 }
@@ -6966,7 +6981,7 @@ async function saveOpenHouse(listingId) {
   if (!start) { toast('Pick a start time'); return; }
   var row = { listing_key: String(listingId), start_ts: new Date(start).toISOString(), end_ts: end ? new Date(end).toISOString() : null, oh_type: typ, remarks: rem || null };
   var r = await sb.from('open_houses').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveOpenHouse');
   if (r.data && r.data[0]) DATA.open_houses.push(r.data[0]);
   var lst = recOf('listings', listingId);
   logEvent('listings', listingId, 'openhouse.scheduled', 'Open house: ' + (lst ? lst.address : ''));
@@ -7022,7 +7037,7 @@ async function saveListingShowingEdit(id, listingId) {
   var patch = { notes: who, showing_ts: when ? new Date(when).toISOString() : null };
   if (patch.showing_ts && !confirmPastConflict(patch.showing_ts, id)) return;
   var r = await sb.from('showings').update(patch).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveListingShowingEdit');
   var s = showingById(id);
   if (s) { s.notes = patch.notes; s.showing_ts = patch.showing_ts; }
   logEvent('listings', listingId, 'showing.edited', 'Showing updated: ' + who + (when ? ' — ' + whenShort(patch.showing_ts) : ' — time TBD'));
@@ -7052,7 +7067,7 @@ async function saveListingShowing(listingId) {
   var label = who + (note ? ' — ' + note : '');
   var row = { property_id: lst.property_id, property_ref: lst.address, buyer_id: null, showing_ts: whenIso, status: 'scheduled', notes: label };
   var r = await sb.from('showings').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveListingShowing');
   if (r.data && r.data[0]) { DATA.showings.push(r.data[0]); await scheduleShowingFollowup(r.data[0]); }
   logEvent('listings', listingId, 'showing.scheduled', 'Showing: ' + label);
   toast('Showing scheduled'); render();
@@ -7061,7 +7076,7 @@ async function setListingShowingStatus(id, status) {
   var s = null; (DATA.showings || []).forEach(function (x) { if (String(x.id) === id) s = x; });
   if (!s) return; s.status = status; renderBrowse();
   var r = await sb.from('showings').update({ status: status }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'setListingShowingStatus');
   toast(status === 'done' ? 'Marked shown' : 'Cancelled');
 }
 
@@ -10155,7 +10170,7 @@ async function saveAgentDeal(aid) {
   var priceTxt = (g('dl-price-') || '').trim();
   var row = { agent_id: aid, address: addr, price: priceTxt || null, price_num: priceTxt ? numFrom(priceTxt) : null, close_date: g('dl-date-') || null, agent_side: g('dl-side-') || null, notes: (g('dl-notes-') || '').trim() || null, source: 'memory' };
   var r = await sb.from('agent_deals').insert(row).select('*');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'saveAgentDeal');
   if (r.data && r.data[0]) DATA.agent_deals.push(r.data[0]);
   logEvent('agents', aid, 'agent.deal_added', addr + (priceTxt ? ' · ' + priceTxt : ''));
   toast('Deal logged ✓'); renderBrowse();
@@ -10291,7 +10306,7 @@ async function addListingAgent(oid, agentId) {
   if (!agentId) { toast('Pick or type an agent'); return; }
   if (!o.list_agent_id) {
     var r = await sb.from('offmarket').update({ list_agent_id: agentId, updated_at: nowStamp() }).eq('id', oid).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'addListingAgent');
     o.list_agent_id = agentId;
     logEvent('offmarket', oid, 'lead.list_agent', 'Linked agent ' + (recLabel('agents', agentId) || ''));
     flagAgentContactIfMissing(agentId);
@@ -10317,7 +10332,7 @@ async function removeListingAgent(oid, agentId) {
     var remaining = pid ? (DATA.listing_agents || []).filter(function (r) { return String(r.property_id) === String(pid); }) : [];
     var promote = remaining[0] || null;
     var r = await sb.from('offmarket').update({ list_agent_id: promote ? promote.agent_id : null, updated_at: nowStamp() }).eq('id', oid).select('id');
-    if (r.error) { toast('Could not save — try again'); return; }
+    if (r.error) return saveFailed(r.error, 'removeListingAgent');
     o.list_agent_id = promote ? promote.agent_id : null;
     if (promote) {
       await sb.from('property_listing_agents').delete().eq('property_id', pid).eq('agent_id', promote.agent_id);
@@ -10665,7 +10680,7 @@ async function agentPatchExtra(aid, patch) {
   a.extra = a.extra || {};
   Object.keys(patch).forEach(function (k) { if (patch[k] === null) delete a.extra[k]; else a.extra[k] = patch[k]; });
   var r = await sb.from('agents').update({ extra: a.extra, updated_at: nowStamp() }).eq('id', aid).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'agentPatchExtra');
   renderBrowse();
 }
 function agentSetRole(aid, role) { var a = agentRec(aid); agentPatchExtra(aid, { role: (a && a.extra && a.extra.role === role) ? null : role }); }
@@ -12596,7 +12611,7 @@ async function triageProspect(id, val) {
   if (val === 'new') delete x.extra.triage; else x.extra.triage = val;
   renderBrowse(); renderTabs(); renderIntel(); renderCoverage();  /* optimistic; instant feel — renderCoverage so the Leads/Farms panel drops this row right away */
   var r = await sb.from('prospects').update({ extra: x.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'triageProspect');
   logEvent('prospects', id, 'prospect.triage', (x.address || x.owner_name || '') + ' -> ' + val);
   toast(val === 'pursue' ? 'Added to Pursuing ✓' : val === 'pass' ? 'Passed' : 'Back to review');
 }
@@ -13013,7 +13028,7 @@ async function runBuildable(table, id) {
   var b = computeBuildable(inp);
   x.extra = x.extra || {}; x.extra.buildable = b;
   var r = await sb.from(table).update({ extra: x.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'runBuildable');
   logEvent(table, id, 'buildable.estimated', (x.address || '') + ' — ' + (b.upzone ? 'UPZONE ' : '') + (b.underbuilt ? 'UNDERBUILT ' : '') + b.untapped_sqft + ' sq ft untapped');
   toast(b.upzone ? 'Zoned above current use — flagged' : (b.underbuilt ? 'Underbuilt — flagged' : 'Buildable estimate saved'));
   render();
@@ -13782,7 +13797,7 @@ async function contactSetEngage(id, type) {
   var c = engageContact(id); if (!c) return;
   c.extra = c.extra || {}; c.extra.engage = { type: type, status: 'active', tagged_at: nowStamp() };
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactSetEngage');
   logEvent('contacts', id, 'engage.tagged', 'Added to Engage (' + type + '): ' + (c.display_name || ''));
   renderBrowse();
   toast('Added to Engage ✓');
@@ -13792,7 +13807,7 @@ async function contactClearEngage(id, reason) {
   if (!c.extra || !c.extra.engage) return;
   c.extra.engage.status = 'dismissed';
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactClearEngage');
   logEvent('contacts', id, 'engage.cleared', (reason || 'Removed from Engage') + ': ' + (c.display_name || ''));
   renderBrowse();
 }
@@ -13908,7 +13923,7 @@ async function contactSetReengage(id, status) {
   c.extra.reengage.status = status;
   if (status === 'active') c.extra.reengage.priority = 'warm';
   var r = await sb.from('contacts').update({ extra: c.extra, updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'contactSetReengage');
   logEvent('contacts', id, 'reengage.' + status, 'Re-engage ' + status + ': ' + (c.display_name || ''));
   renderTabs(); renderBrowse();
   toast(status === 'active' ? 'Added to re-engage ✓' : status === 'dismissed' ? 'Set aside' : 'Back to review');
@@ -14091,7 +14106,7 @@ async function addContactExternal(id) {
   c.extra = c.extra || {}; c.extra.external_context = c.extra.external_context || [];
   c.extra.external_context.push({ id: uid(), text: text, created_at: nowStamp() });
   var r = await sb.from('contacts').update({ extra: c.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); return; }
+  if (r.error) return saveFailed(r.error, 'addContactExternal');
   logEvent('contacts', id, 'context.added', 'Noted: ' + text.slice(0, 120));
   toast('Saved'); renderBrowse();
 }
