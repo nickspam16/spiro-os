@@ -410,6 +410,9 @@
   #tabbar .tb[aria-current="page"] {
     color: var(--green); border-top-color: var(--green); background: var(--panel2);
   }
+  /* Triage count: small, quiet, same face as the label. Hidden entirely at zero. */
+  #tabbar .tb-n { margin-left: 4px; font-size: 9.5px; letter-spacing: 0; white-space: nowrap; opacity: .85; }
+  #tabbar .tb-n:empty { display: none; }
   /* Content must not hide behind a fixed bar — the classic way a tab bar eats the last card. */
   #screen-app { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
 }
@@ -497,6 +500,8 @@
           <div class="dropdown" id="more-menu" style="display:none;position:absolute;top:46px;right:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);min-width:190px;box-shadow:0 8px 20px rgba(0,0,0,.10);z-index:50;padding:6px;">
             <a href="javascript:void(0)" onclick="goDashboard()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Dashboard</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
+            <a href="javascript:void(0)" onclick="menuGoBuyers()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyers <span id="more-menu-buyers-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoListings()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Listings <span id="more-menu-listings-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Relationships <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
@@ -726,6 +731,7 @@
     <div class="card" id="match-triage-card" style="display:none;">
       <h2>Match Triage</h2>
       <div class="hint" style="margin:-6px 0 10px;">Every suggested match in one list, oldest/strongest first. Select several and act on them together, or use the row actions one at a time -- same dismiss/confirm/shown as everywhere else in the app.</div>
+      <div id="mt-viewbar" style="display:flex;gap:8px;align-items:center;margin:0 0 10px;"></div>
       <div id="mt-bulkbar" style="display:none;position:sticky;top:0;background:var(--panel);z-index:5;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:8px;"></div>
       <div id="mt-body"><div class="empty">Loading&hellip;</div></div>
     </div>
@@ -891,21 +897,26 @@
     <div class="foot" id="ver"></div>
   </div>
 
-  <!-- Bottom tab bar (2026-11-05). The app already had full-page section navigation via
-       openPanel(), but it lived behind a 38px "⋮" in the top-right corner — on a phone, the
-       hardest place on the screen to reach and the easiest to miss. Fourteen destinations were
-       one unlabelled tap deep. These five surface the ones used daily; every button calls the
-       SAME menuShow*/menuGo* function the dropdown calls, so there is no second navigation
-       path to keep in sync. Text-only letterspaced caps rather than icons: this app is set in
-       EB Garamond throughout and a row of generic glyphs would read as borrowed. -->
+  <!-- Bottom tab bar (2026-11-05; rebuilt P11, 2026-11-05 evening). The app already had full-page
+       section navigation via openPanel(), but it lived behind a 38px "⋮" in the top-right corner —
+       on a phone, the hardest place on the screen to reach and the easiest to miss. These five
+       surface the destinations used daily; every button calls the SAME menuShow*/menuGo* function
+       the dropdown calls, so there is no second navigation path to keep in sync.
+       P11: the bar is now built around RECORDS, not queues. Nick, verbatim: "It seems sloppy if I'm
+       trying to check on a listing or a buyer that I am brought to a page where I'm passing through
+       potential matches in a triage of stuff that I don't need to access at that moment." Triage
+       held the #2 slot and neither Buyers nor Listings were reachable from the bar OR the menu. So:
+       Today / Buyers / Listings / Triage / More, with Triage at #4 carrying a count badge so it
+       informs rather than invites. The badge reads from the same number as the More menu's
+       #more-menu-triage-n (rqOpen in render()), not a second count.
+       Text-only letterspaced caps rather than icons: this app is set in EB Garamond throughout and
+       a row of generic glyphs would read as borrowed. Icons were rejected deliberately. -->
   <nav id="tabbar" aria-label="Main sections">
-    <button class="tb" data-tab="today"  onclick="tabGo('today')"  aria-current="page">Today</button>
-    <button class="tb" data-tab="triage" onclick="tabGo('triage')">Triage</button>
-    <button class="tb" data-tab="market" onclick="tabGo('market')">Market</button>
-    <!-- "Calls", not "Who to call": the full name wrapped to two lines and broke the row's
-         rhythm. The destination still titles itself "Who to call" when you get there. -->
-    <button class="tb" data-tab="calls"  onclick="tabGo('calls')">Calls</button>
-    <button class="tb" data-tab="more"   onclick="tabGo('more')">More</button>
+    <button class="tb" data-tab="today"    onclick="tabGo('today')"    aria-current="page">Today</button>
+    <button class="tb" data-tab="buyers"   onclick="tabGo('buyers')">Buyers</button>
+    <button class="tb" data-tab="listings" onclick="tabGo('listings')">Listings</button>
+    <button class="tb" data-tab="triage"   onclick="tabGo('triage')">Triage<span id="tab-triage-n" class="tb-n"></span></button>
+    <button class="tb" data-tab="more"     onclick="event.stopPropagation();tabGo('more')">More</button>
   </nav>
 
 </div>
@@ -975,7 +986,8 @@ function toggleMoreMenu() {
 
 /* Bottom tab bar (2026-11-05). Deliberately thin: every tab delegates to the function the "⋮"
    dropdown already calls, so there is exactly one navigation implementation. "More" opens that
-   dropdown rather than duplicating its fourteen entries. */
+   dropdown rather than duplicating its entries. Market and Who to call left the bar in P11 (they
+   stay in the menu, one tap deeper) to make room for Buyers and Listings. */
 var TAB_CUR = 'today';
 function tabMark(t) {
   var bar = document.getElementById('tabbar'); if (!bar) return;
@@ -987,11 +999,15 @@ function tabMark(t) {
 }
 function tabGo(t) {
   try {
-    if (t === 'more') { toggleMoreMenu(); return; }   /* a menu, not a destination */
+    /* A menu, not a destination. The More button stops propagation (see the markup): the document-level
+       outside-click handler below would otherwise close the menu in the same click that opened it, which
+       is exactly how this tab was dead on the phone until P11 tested it. Scrolled to the top first,
+       because the menu hangs off the page header. */
+    if (t === 'more') { var mm = document.getElementById('more-menu'); if (mm && mm.style.display === 'none') window.scrollTo(0, 0); toggleMoreMenu(); return; }
     if (t === 'today') { closePanel(); window.scrollTo(0, 0); }
-    else if (t === 'triage') { menuShowMatchTriage(); }
-    else if (t === 'market') { menuGoMarket(); }
-    else if (t === 'calls')  { menuShowIntel(); }
+    else if (t === 'buyers')   { menuGoBuyers(); }
+    else if (t === 'listings') { menuGoListings(); }
+    else if (t === 'triage')   { menuShowMatchTriage(); }
     TAB_CUR = t; tabMark(t);
   } catch (e) {
     /* Navigation must never be able to strand him on a blank screen. */
@@ -1004,8 +1020,11 @@ function tabGo(t) {
 function tabSync() {
   if (!document.getElementById('tabbar')) return;
   if (!PANEL_HOME) { TAB_CUR = 'today'; tabMark('today'); return; }
-  var byCard = { 'match-triage-card': 'triage', 'market-card': 'market', 'intel-card': 'calls' };
+  var byCard = { 'match-triage-card': 'triage' };
   var t = byCard[PANEL_HOME.id];
+  /* Records is one card behind two tabs: which one is lit follows browseTab. Any other Records
+     view (Contacts, Relationships, Leads...) lights nothing. */
+  if (!t && PANEL_HOME.id === 'records-card' && (browseTab === 'buyers' || browseTab === 'listings')) t = browseTab;
   if (t) { TAB_CUR = t; tabMark(t); } else { tabMark(''); }   /* some other panel: no tab is current */
 }
 function closeMoreMenu() {
@@ -1106,6 +1125,9 @@ function closePanel() {
 function menuGoReengage() { setTab('reengage'); openPanel('records-card'); }
 function menuGoMarket() { openPanel('market-card'); renderMarketReview(); }
 function menuGoPeople() { setTab('people'); openPanel('records-card'); }
+/* P11: the real browseTab keys are 'buyers' and 'listings' (the TABS array in the browse section). */
+function menuGoBuyers() { setTab('buyers'); openPanel('records-card'); }
+function menuGoListings() { setTab('listings'); openPanel('records-card'); }
 /* RENDER ON OPEN (2026-07-30, found driving every menu item).
    Both of these opened a card that had never been rendered and showed its literal initial markup —
    "Loading…" — forever. Nothing was loading. render() skips hidden cards, and these two cards are
@@ -1131,7 +1153,15 @@ function menuShowBrief() {
 }
 function menuShowFarming() { openPanel('farming-card'); renderFarming(); }
 function menuShowReviewQueue() { openPanel('review-queue-card'); renderReviewQueue(); }
-function menuShowMatchTriage() { openPanel('match-triage-card'); renderMatchTriage(); }
+/* P11: view is 'list' (default) or 'deck'. Re-tapping Triage while already inside the card keeps
+   whichever view he is in; a fresh open always starts on List. #triage-deck deep-links to Deck. */
+function menuShowMatchTriage(view) {
+  var already = !!(PANEL_HOME && PANEL_HOME.id === 'match-triage-card');
+  openPanel('match-triage-card');
+  if (view === 'deck') { mtSetView('deck'); return; }
+  if (!already) MT_VIEW = 'list';
+  renderMatchTriage();
+}
 function menuShowLearning() { openPanel('learning-card'); renderLearning(); }
 /* Architect Registry (2026-08-01) -- see the architect-registry-card comment above for the full
    rationale. Two independent text filters (architect / area) + a tier dropdown, all client-side
@@ -1661,6 +1691,7 @@ async function mtMovePick(btn, matchId, buyerId) {
     return;
   }
   DATA.matches = (DATA.matches || []).filter(function (x) { return String(x.id) !== String(matchId); });
+  mtdDrop(matchId);   /* if the Deck is showing this card, it moves on to the next */
   toast('Moved to ' + (r.data.to_buyer || recLabel('buyers', buyerId) || 'buyer'));
   renderMatchTriage();
   await loadAll(false);   /* pick up the new/reopened match on the other buyer */
@@ -1674,11 +1705,306 @@ function mtLogShown(ids) {
   var rows = fresh.map(function (id) { var m = null; (DATA.matches || []).forEach(function (x) { if (String(x.id) === String(id)) m = x; }); return m ? { actor: 'system', subject_type: 'buyers', subject_id: String(m.buyer_id), object_type: m.target_type, object_id: String(m.target_id), signal: 'match.shown', verdict: 'neutral', meta: { features: m.features || {}, batch: new Date().toISOString().slice(0, 10) }, source: 'app' } : null; }).filter(Boolean);
   if (rows.length) sb.from('signals').insert(rows).then(function () { /* fire and forget */ });
 }
+/* ===== Match Triage: Deck view (P11, 2026-11-05) =====
+   This is the former standalone triage page, folded in as a MODE of the card above instead of a second page with
+   a second auth model (PIN + token through the triage-api edge function). Nick opens the app from one
+   home-screen icon and wants everything behind it. One card at a time, five verdicts, a reason step,
+   yesterday's showings strip, and the needs-criteria flag: same behaviour, same server rules.
+   WHAT CHANGED UNDERNEATH. The page posted to triage-api with a device token. Here the signed-in
+   owner calls the same Postgres functions directly as `authenticated`, exactly as mtMovePick() does:
+     deck      sb.rpc('fn_triage_deck')          (granted; owner-asserting)
+     verdict   sb.rpc('fn_triage_apply_v2')       (granted; the very function triage-api's inbox path ends in)
+     showings  sb.from('showings') + sb.from('signals')   (RLS owner policies)
+   TWO THINGS THE PAGE HAD THAT THIS CANNOT, both because of grants, neither worked around:
+   * fn_triage_cap is not granted to authenticated, so the daily cap is the same fallback triage-api itself uses
+     when that call fails: 5.
+   * Typed free-text reasons. The page sent "new:<text>" codes and fn_triage_inbox_apply resolved them
+     through fn_triage_reason_resolve (also not granted) into learnable reason codes. Going through
+     the inbox is not possible from the app either: it quarantines any row without an enrolled
+     device. So typed words ride along as the verdict's NOTE (stored on the match and in the signal's
+     meta) and chips are sent as real reason codes. They are kept, but they do not become new codes.
+   Verdicts are held for 6s behind an Undo toast (Undo is real, not decorative), queued in
+   localStorage so a closed app loses nothing, and sent in order. */
+var MT_VIEW = 'list';
+var MT_DEEP_DONE = false;
+var MT_DECK = { loaded: false, loading: false, err: null, stopped: false, cards: [], i: 0, reasons: [], reasonsPos: [],
+  cap: 5, extra: false, waiting: 0, sheet: null, ft: '', session: { done: 0, newBuyers: {}, reasonsGiven: 0 },
+  last: null, flushing: false, flushTimer: null, shBusy: {}, shMsg: {}, shDone: {} };
+var MTD_QKEY = 'spiro.deck.queue.v1', MTD_DKEY = 'spiro.deck.day.v1', MTD_TOP_N = 8;
+function mtdLsGet(k) { try { return localStorage.getItem(k); } catch (e) { reportError('mtdLsGet', e, {toast:false}); return null; } }
+function mtdLsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { reportError('mtdLsSet', e, {toast:false}); } }
+function mtdQueue() { try { return JSON.parse(mtdLsGet(MTD_QKEY) || '[]'); } catch (e) { reportError('mtdQueue', e, {toast:false}); return []; } }
+function mtdSetQueue(q) { mtdLsSet(MTD_QKEY, JSON.stringify(q)); }
+function mtdToday() { var t = new Date(); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); }
+function mtdDayCount() { try { var o = JSON.parse(mtdLsGet(MTD_DKEY) || 'null'); return o && o.d === mtdToday() ? (o.n | 0) : 0; } catch (e) { reportError('mtdDayCount', e, {toast:false}); return 0; } }
+function mtdSetDayCount(n) { mtdLsSet(MTD_DKEY, JSON.stringify({ d: mtdToday(), n: Math.max(0, n) })); }
+function mtdStreet(a) { return String(a || '').split(',')[0].trim(); }
+function mtdLocality(a) { var p = String(a || '').split(','); return p.length > 1 ? p[1].trim() : ''; }
+function mtdMoney(n) { if (n == null || n === '') return 'Price not listed'; return '$' + Number(n).toLocaleString('en-US'); }
+function mtdPaused(buyerId) { var b = recOf('buyers', buyerId); return !!(b && b.matching_paused_reason); }
+function mtSetView(v) {
+  MT_VIEW = (v === 'deck') ? 'deck' : 'list';
+  if (MT_VIEW === 'deck') { MT_DECK.loaded = false; MT_DECK.err = null; MT_DECK.stopped = false; MT_DECK.sheet = null; MT_DECK.ft = ''; MT_DECK.extra = false; }
+  renderMatchTriage();
+}
+function mtDeepLink() {
+  if (String(location.hash).toLowerCase() === '#triage-deck') menuShowMatchTriage('deck');
+}
+window.addEventListener('hashchange', mtDeepLink);
+async function mtdLoad(n) {
+  if (MT_DECK.loading) return;
+  MT_DECK.loading = true; MT_DECK.err = null; MT_DECK.stopped = false; renderMatchTriage();
+  await mtdFlush();   /* anything decided earlier must reach the server first, or the new deck would deal it again */
+  /* All three parameters named on purpose: a 2-arg overload still exists and PostgREST cannot choose between them otherwise. */
+  var r = await withTimeout(sb.rpc('fn_triage_deck', { p_limit: n || 30, p_max_per_buyer: 2, p_snooze_days: 14 }), 25000, { timedOut: true });
+  MT_DECK.loading = false;
+  if (r && r.timedOut) { MT_DECK.err = 'It took too long to answer.'; reportError('deck-load', new Error('fn_triage_deck timed out')); renderMatchTriage(); return; }
+  if (!r || r.error || !r.data) { MT_DECK.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('deck-load', (r && r.error) || new Error('empty deck reply')); renderMatchTriage(); return; }
+  var d = r.data;
+  MT_DECK.cards = d.cards || []; MT_DECK.reasons = d.reasons || []; MT_DECK.reasonsPos = d.reasons_positive || [];
+  MT_DECK.waiting = Math.max(0, (Number(d.backlog_total) || MT_DECK.cards.length) - (Number(d.snoozed) || 0));
+  MT_DECK.i = 0; MT_DECK.sheet = null; MT_DECK.ft = ''; MT_DECK.last = null;
+  MT_DECK.session = { done: 0, newBuyers: {}, reasonsGiven: 0 };
+  MT_DECK.loaded = true;
+  renderMatchTriage();
+}
+/* Yesterday's showings (the last 48h, buy-side, no outcome yet), from DATA.showings already on screen. */
+function mtdShowings() {
+  var now = Date.now(), since = now - 48 * 3600e3;
+  return (DATA.showings || []).filter(function (s) {
+    if (s.side !== 'buy' || s.outcome || MT_DECK.shDone[String(s.id)]) return false;
+    var st = String(s.status || '').toLowerCase(); if (st === 'cancelled' || st === 'canceled') return false;
+    var t = s.showing_ts ? new Date(s.showing_ts).getTime() : NaN;
+    return t >= since && t <= now;
+  }).sort(function (a, b) { return new Date(b.showing_ts) - new Date(a.showing_ts); }).slice(0, 10).map(function (s) {
+    return { id: String(s.id), row: s,
+      address: String(s.property_ref || '').split(/\\n|\n|,/)[0].trim() || 'that showing',
+      who: String(s.client_name || '').trim() || recLabel('buyers', s.buyer_id) || 'your client' };
+  });
+}
+var MTD_OUT = [['loved', 'Loved'], ['fine', 'Fine'], ['pass', 'Pass'], ['no_show', 'Didn’t happen']];
+var MTD_OUT_VERDICT = { loved: 'positive', fine: 'neutral', pass: 'negative', no_show: 'neutral' };
+async function mtdShowing(idx, outcome) {
+  var sh = mtdShowings()[idx];
+  if (!sh || MT_DECK.shBusy[sh.id] || !MTD_OUT_VERDICT[outcome]) return;
+  MT_DECK.shBusy[sh.id] = 1; MT_DECK.shMsg[sh.id] = ''; renderMatchTriage();
+  /* Claim only a buy-side row with no outcome yet, so a retry can never double-count. */
+  var u = await withTimeout(sb.from('showings').update({ outcome: outcome, outcome_at: nowStamp() }).eq('id', sh.id).is('outcome', null).eq('side', 'buy').select('id,buyer_id,property_ref,showing_ts'), 20000, { timedOut: true });
+  if (u && u.timedOut) { delete MT_DECK.shBusy[sh.id]; MT_DECK.shMsg[sh.id] = 'Couldn’t confirm that saved. Tap again.'; renderMatchTriage(); await reportUnconfirmedWrite(); return; }
+  if (!u || u.error) { delete MT_DECK.shBusy[sh.id]; MT_DECK.shMsg[sh.id] = 'Couldn’t save. Tap again to retry.'; renderMatchTriage(); saveFailed((u && u.error) || 'showing outcome returned nothing', 'deck-showing'); return; }
+  if ((u.data || []).length) {
+    var claimed = u.data[0];
+    var sg = await sb.from('signals').insert({ actor: 'nick', subject_type: 'buyers', subject_id: claimed.buyer_id ? String(claimed.buyer_id) : null,
+      object_type: 'showings', object_id: sh.id, signal: 'showing.outcome', verdict: MTD_OUT_VERDICT[outcome], source: 'showing-followup',
+      meta: { outcome: outcome, property_ref: sh.address, showing_ts: claimed.showing_ts } });
+    if (sg.error) {
+      /* Undo the claim so a retry can write both halves, rather than leaving an outcome with no signal. */
+      var undoClaim = await sb.from('showings').update({ outcome: null, outcome_at: null }).eq('id', sh.id);
+      if (undoClaim.error) reportError('deck-showing-undo', undoClaim.error);
+      delete MT_DECK.shBusy[sh.id]; MT_DECK.shMsg[sh.id] = 'Couldn’t save. Tap again to retry.'; renderMatchTriage();
+      saveFailed(sg.error, 'deck-showing-signal'); return;
+    }
+  }
+  sh.row.outcome = outcome; MT_DECK.shDone[sh.id] = 1; delete MT_DECK.shBusy[sh.id];
+  toast('Noted'); renderMatchTriage();
+}
+function mtdShowingsHtml() {
+  var list = mtdShowings();
+  if (!list.length) return '';
+  return '<div style="margin:0 0 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2);">' + list.map(function (sh, idx) {
+    var busy = MT_DECK.shBusy[sh.id], msg = MT_DECK.shMsg[sh.id];
+    return '<div style="padding:10px 12px;' + (idx ? 'border-top:1px solid var(--line);' : '') + '">'
+      + '<div style="margin:0 0 8px;font-size:15px;">How was ' + esc(sh.address) + ' with ' + esc(sh.who) + '?</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">' + MTD_OUT.map(function (o) {
+        return '<button class="qbtn" style="padding:9px 2px;"' + (busy ? ' disabled' : '') + ' onclick="mtdShowing(' + idx + ',\'' + o[0] + '\')">' + esc(o[1]) + '</button>';
+      }).join('') + '</div>'
+      + (msg ? '<div style="color:var(--clay);font-size:13px;margin-top:7px;">' + esc(msg) + '</div>' : '') + '</div>';
+  }).join('') + '</div>';
+}
+function mtdChipList() {
+  var S = MT_DECK.sheet; if (!S) return [];
+  var src = S.positive ? MT_DECK.reasonsPos : MT_DECK.reasons;
+  return S.showAll ? src : src.slice(0, MTD_TOP_N);
+}
+function mtdSheetHtml(c) {
+  var S = MT_DECK.sheet, HEADS = { never: 'Why never?', pass: 'Why a pass?', love: 'What makes it a love?', show: 'Why show it?' };
+  var src = S.positive ? MT_DECK.reasonsPos : MT_DECK.reasons, list = mtdChipList(), hidden = src.length - list.length;
+  return '<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:14px;">'
+    + '<div style="font-family:var(--serif);font-size:20px;">' + esc(HEADS[S.verdict] || 'Why?') + '</div>'
+    + '<div class="hint" style="margin:2px 0 10px;">' + esc(mtdStreet(c.address) || 'This one') + ' for ' + esc(c.buyer || 'this client') + '</div>'
+    + '<input id="mtd-ft" type="text" autocomplete="off" enterkeyhint="done" placeholder="Say it in your own words" aria-label="Type your own reason" value="' + esc(MT_DECK.ft) + '" style="width:100%;box-sizing:border-box;" oninput="MT_DECK.ft=this.value" onkeydown="mtdFtKey(event)">'
+    + '<div class="hint" style="margin:6px 0 12px;">Press return to add. Typed words are saved with this verdict as your note.</div>'
+    + (list.length ? '<div class="hint" style="margin:0 0 8px;">Or tap one you use often</div>' : '')
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px;">'
+    + list.map(function (r, idx) {
+      return '<button class="qbtn' + (S.picked[r.code] ? ' done' : '') + '" style="padding:10px 14px;" aria-pressed="' + (S.picked[r.code] ? 'true' : 'false') + '" onclick="mtdChip(' + idx + ')">' + esc(String(r.code).replace(/_/g, ' ')) + '</button>';
+    }).join('')
+    + S.typed.map(function (t, idx) { return '<button class="qbtn done" style="padding:10px 14px;border-style:dashed;" onclick="mtdUntype(' + idx + ')">' + esc(t) + ' &times;</button>'; }).join('')
+    + '</div>'
+    + (hidden > 0 || S.showAll ? '<button class="qbtn" style="border:0;padding:8px 0;" onclick="mtdMoreReasons()">' + (S.showAll ? 'Show fewer' : hidden + ' more reasons') + '</button>' : '')
+    + '<div style="display:flex;gap:8px;margin-top:12px;">'
+    + '<button class="qbtn" style="flex:1;padding:13px 0;" onclick="mtdCancel()">Back</button>'
+    + '<button class="qbtn" style="flex:1;padding:13px 0;" onclick="mtdSkip()">Skip</button>'
+    + '<button class="qbtn done" style="flex:1;padding:13px 0;" onclick="mtdSave()">Save</button></div></div>';
+}
+function mtdHtml() {
+  var D = MT_DECK;
+  if (D.loading || (!D.loaded && !D.err)) return '<div class="empty">Loading the deck&hellip;</div>';
+  if (D.err) return '<div class="empty" role="alert">Couldn&rsquo;t load the deck. ' + esc(D.err) + ' Anything you already decided is saved on this phone and will send itself.</div><button class="qbtn" onclick="mtdLoad(30)">Retry</button>';
+  var pend = mtdQueue().length;
+  var pendHtml = pend ? '<div class="hint" style="text-align:right;margin:0 0 6px;color:var(--clay);">' + pend + ' waiting to send</div>' : '';
+  var sh = mtdShowingsHtml();
+  if (!D.cards.length) return pendHtml + sh + '<div class="empty">All clear. Nothing is waiting; the queue refills itself as new listings come in.</div>';
+  var c = D.cards[D.i], capHit = !D.extra && mtdDayCount() >= D.cap;
+  if (!c || capHit) {
+    var left = Math.max(0, D.waiting), head, sum;
+    if (D.stopped) { head = 'Closed.'; sum = 'Open the Deck again whenever you have two minutes.'; }
+    else if (capHit) { head = 'Done for today.'; sum = left ? left + ' more waiting if you want them.' : 'Nothing else is waiting. The queue refills itself as new listings come in.'; }
+    else {
+      head = 'That’s the deck.';
+      var firsts = Object.keys(D.session.newBuyers).length, parts = [D.session.done + (D.session.done === 1 ? ' verdict' : ' verdicts') + ' recorded.'];
+      if (firsts) parts.push('First read ever on ' + firsts + (firsts === 1 ? ' client.' : ' clients.'));
+      if (D.session.reasonsGiven) parts.push(D.session.reasonsGiven + ' carried a reason, which is what actually teaches it.');
+      sum = parts.join(' ');
+    }
+    return pendHtml + sh + '<div style="padding:18px 0;"><div style="font-family:var(--serif);font-size:26px;">' + esc(head) + '</div>'
+      + '<div class="hint" style="margin:6px 0 14px;">' + esc(sum) + '</div>'
+      + (D.stopped ? '' : '<div style="display:flex;gap:8px;">' + ((capHit && !left) ? '' : '<button class="qbtn done" style="padding:13px 20px;" onclick="mtdMore()">' + (capHit ? 'Show more' : 'Next 10') + '</button>') + '<button class="qbtn" style="padding:13px 20px;" onclick="mtdStop()">Stop here</button></div>') + '</div>';
+  }
+  var k = D.extra ? D.i + 1 : Math.min(mtdDayCount() + 1, D.cap), of = D.extra ? D.cards.length : D.cap;
+  var pct = D.extra ? D.i / D.cards.length * 100 : mtdDayCount() / D.cap * 100;
+  var bits = [];
+  if (c.beds) bits.push('<span>' + esc(c.beds) + ' <b style="font-weight:400;color:var(--muted);">bed</b></span>');
+  if (c.baths) bits.push('<span>' + esc(c.baths) + ' <b style="font-weight:400;color:var(--muted);">bath</b></span>');
+  if (c.sqft) bits.push('<span>' + esc(Number(c.sqft).toLocaleString('en-US')) + ' <b style="font-weight:400;color:var(--muted);">sq ft</b></span>');
+  if (c.year_built) bits.push('<span>' + esc(c.year_built) + ' <b style="font-weight:400;color:var(--muted);">built</b></span>');
+  var V = [['never', 'Never'], ['pass', 'Pass'], ['maybe', 'Maybe'], ['show', 'Show'], ['love', 'Love']];
+  return pendHtml + sh
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;">'
+    + '<a href="javascript:void(0)" class="mtgrp-name" onclick="mtdMove()" title="Move this card to a different client" style="font-family:var(--serif);font-size:19px;">' + esc(c.buyer || '—') + ' &#9662;</a>'
+    + '<span class="hint" style="margin:0;white-space:nowrap;">' + (D.extra ? 'More: ' : 'Today: ') + k + ' of ' + of + '</span></div>'
+    + '<div style="height:2px;background:var(--line);margin:8px 0 12px;"><i style="display:block;height:100%;width:' + Math.max(0, Math.min(100, pct)) + '%;background:var(--green);"></i></div>'
+    + (mtdPaused(c.buyer_id) ? '<div role="note" style="margin:0 0 12px;padding:8px 11px;border:1px solid var(--clay);border-radius:var(--radius);color:var(--clay);font-size:13px;line-height:1.35;"><b>Needs criteria.</b> Matching is paused for this client, so treat this card as a rough guess.</div>' : '')
+    + (c.photo ? '<img src="' + esc(c.photo) + '" alt="' + esc(mtdStreet(c.address) || 'Listing photo') + '" decoding="async" style="display:block;width:100%;max-height:340px;object-fit:cover;border-radius:var(--radius);background:var(--panel2);" onerror="this.style.display=\'none\'">'
+      : '<div style="padding:16px 0;text-align:center;background:var(--panel2);border-radius:var(--radius);color:var(--muted);font-size:14px;">No photo on this listing yet</div>')
+    + '<div style="font-family:var(--serif);font-size:30px;margin:14px 0 2px;font-variant-numeric:tabular-nums;">' + esc(mtdMoney(c.price)) + '</div>'
+    + '<div style="font-family:var(--serif);font-size:19px;line-height:1.3;">' + esc(mtdStreet(c.address)) + '</div>'
+    + '<div class="hint" style="margin:3px 0 0;">' + esc(c.hood || mtdLocality(c.address)) + '</div>'
+    + (bits.length ? '<div style="margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px 20px;font-size:15px;">' + bits.join('') + '</div>' : '')
+    + (c.why ? '<div class="hint" style="margin:14px 0 0;padding:10px 12px;background:var(--panel2);border-left:2px solid var(--green);border-radius:0 var(--radius) var(--radius) 0;">' + esc(c.why) + '</div>' : '')
+    + (c.mls ? '<div class="hint" style="margin:10px 0 0;font-variant-numeric:tabular-nums;">MLS ' + esc(c.mls) + '</div>' : '')
+    + '<div id="dismiss-' + esc(c.match_id) + '"></div>'
+    + (D.sheet ? mtdSheetHtml(c)
+      : '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:16px;">' + V.map(function (v) {
+        return '<button class="qbtn' + (v[0] === 'love' ? ' done' : '') + '" style="padding:15px 0;font-weight:600;" onclick="mtdVerdict(\'' + v[0] + '\')">' + v[1] + '</button>';
+      }).join('') + '</div>');
+}
+function mtdVerdict(v) {
+  if (!MT_DECK.cards[MT_DECK.i]) return;
+  if (v === 'maybe') { mtdCommit('maybe', [], null); return; }
+  MT_DECK.sheet = { verdict: v, positive: (v === 'love' || v === 'show'), picked: {}, typed: [], showAll: false };
+  MT_DECK.ft = ''; renderMatchTriage();   /* deliberately no autofocus: the keyboard would cover the chips and Save */
+}
+function mtdChip(idx) { var S = MT_DECK.sheet, r = mtdChipList()[idx]; if (!S || !r) return; if (S.picked[r.code]) delete S.picked[r.code]; else S.picked[r.code] = true; renderMatchTriage(); }
+function mtdUntype(idx) { var S = MT_DECK.sheet; if (!S) return; S.typed.splice(idx, 1); renderMatchTriage(); }
+function mtdMoreReasons() { var S = MT_DECK.sheet; if (!S) return; S.showAll = !S.showAll; renderMatchTriage(); }
+function mtdAddTyped() {
+  var S = MT_DECK.sheet, v = String(MT_DECK.ft || '').trim(); if (!S || !v) return;
+  if (S.typed.indexOf(v) === -1 && S.typed.length < 6) S.typed.push(v);
+  MT_DECK.ft = ''; renderMatchTriage();
+  var el = document.getElementById('mtd-ft'); if (el) el.focus();
+}
+function mtdFtKey(e) { if (e.key === 'Enter') { e.preventDefault(); mtdAddTyped(); } }
+function mtdCancel() { MT_DECK.sheet = null; MT_DECK.ft = ''; renderMatchTriage(); }
+function mtdSkip() { var S = MT_DECK.sheet; if (!S) return; MT_DECK.sheet = null; MT_DECK.ft = ''; mtdCommit(S.verdict, [], null); }
+function mtdSave() {
+  var S = MT_DECK.sheet; if (!S) return;
+  mtdAddTyped();
+  var codes = Object.keys(S.picked), note = S.typed.length ? S.typed.join('; ') : null, v = S.verdict;
+  MT_DECK.sheet = null; MT_DECK.ft = '';
+  mtdCommit(v, codes, note);
+}
+function mtdCommit(verdict, codes, note) {
+  var D = MT_DECK, c = D.cards[D.i]; if (!c) return;
+  var row = { cid: c.match_id + ':' + Date.now(), match_id: c.match_id, verdict: verdict, reason_codes: codes || [], note: note || null, client_ts: new Date().toISOString() };
+  var q = mtdQueue(); q.push(row); mtdSetQueue(q);
+  D.session.done++; mtdSetDayCount(mtdDayCount() + 1); D.waiting = Math.max(0, D.waiting - 1);
+  if (/^First verdict for/.test(c.why || '')) D.session.newBuyers[c.buyer] = 1;
+  if ((codes || []).length || note) D.session.reasonsGiven++;
+  D.last = { row: row, index: D.i, hadReason: !!((codes || []).length || note), newBuyer: /^First verdict for/.test(c.why || '') ? c.buyer : null };
+  D.i++; D.sheet = null;
+  toastUndo(verdict === 'never' ? 'Marked never' : verdict === 'pass' ? 'Passed' : verdict === 'maybe' ? 'Left as maybe' : verdict === 'show' ? 'Queued to show' : 'Loved', mtdUndo);
+  renderMatchTriage();
+  clearTimeout(D.flushTimer); D.flushTimer = setTimeout(mtdFlush, 6000);   /* just past the Undo toast, so Undo is real */
+}
+function mtdUndo() {
+  var D = MT_DECK, L = D.last; if (!L) return;
+  mtdSetQueue(mtdQueue().filter(function (x) { return x.cid !== L.row.cid; }));
+  D.session.done = Math.max(0, D.session.done - 1); mtdSetDayCount(mtdDayCount() - 1); D.waiting += 1;
+  if (L.hadReason) D.session.reasonsGiven = Math.max(0, D.session.reasonsGiven - 1);
+  if (L.newBuyer) delete D.session.newBuyers[L.newBuyer];
+  D.i = L.index; D.last = null; clearTimeout(D.flushTimer);
+  renderMatchTriage();
+}
+/* Send queued verdicts oldest-first, one at a time. A row leaves the queue only after the server
+   answered ok, or said it already has a verdict for that card (the unique index; a repeat, not a
+   failure). Anything else stays queued and is reported, never dropped. */
+async function mtdFlush() {
+  var D = MT_DECK; if (D.flushing) return;
+  D.flushing = true; var applied = 0, q = mtdQueue();
+  while (q.length) {
+    var row = q[0];
+    var r = await withTimeout(sb.rpc('fn_triage_apply_v2', { p_match_id: row.match_id, p_verdict: row.verdict, p_reason_codes: row.reason_codes || [],
+      p_attributed: [], p_whose: 'nick', p_note: row.note || null, p_primary: null }), 20000, { timedOut: true });
+    if (r && r.timedOut) { reportError('deck-verdict', new Error('fn_triage_apply_v2 timed out; kept for retry')); break; }
+    if (r && r.error) {
+      if (!/signals_triage_once/.test(String(r.error.message || ''))) { saveFailed(r.error, 'deck-verdict'); break; }
+    } else if (!r || !r.data || r.data.ok !== true) {
+      var why = r && r.data && r.data.error;
+      if (why === 'unknown reason_code' && (row.reason_codes || []).length) {
+        /* A code the server does not know: keep the words as the note rather than lose the verdict. */
+        var fixed = mtdQueue().map(function (x) { return x.cid === row.cid ? Object.assign({}, x, { note: [x.note, (x.reason_codes || []).join(', ')].filter(Boolean).join('; ').slice(0, 500), reason_codes: [] }) : x; });
+        mtdSetQueue(fixed); q = mtdQueue(); continue;
+      }
+      saveFailed(why || 'verdict returned not-ok', 'deck-verdict'); break;
+    } else applied++;
+    mtdSetQueue(mtdQueue().filter(function (x) { return x.cid !== row.cid; }));   /* re-read: a verdict queued mid-flight must survive */
+    q = mtdQueue();
+  }
+  D.flushing = false;
+  if (applied) await loadAll(false);   /* matches changed server-side: refresh counts and the List view */
+  else if (MT_VIEW === 'deck') renderMatchTriage();
+}
+async function mtdMore() {
+  var D = MT_DECK; D.extra = true; D.stopped = false;
+  if (D.i < D.cards.length) { renderMatchTriage(); return; }
+  D.loaded = false; await mtdLoad(30);   /* mtdLoad sends what is queued first, so the next deck excludes it */
+}
+function mtdStop() { MT_DECK.stopped = true; renderMatchTriage(); }
+function mtdMove() { var c = MT_DECK.cards[MT_DECK.i]; if (c && !MT_DECK.sheet) mtMove(String(c.match_id)); }
+function mtdDrop(matchId) {
+  var D = MT_DECK, at = -1;
+  D.cards.forEach(function (c, idx) { if (String(c.match_id) === String(matchId)) at = idx; });
+  if (at < 0) return;
+  D.cards.splice(at, 1); if (at < D.i) D.i--;
+  D.waiting = Math.max(0, D.waiting - 1); D.last = null; D.sheet = null;
+}
+window.addEventListener('online', function () { if (mtdQueue().length) mtdFlush(); });
 function mtGateHtml() { var g = BELIEFS_G && BELIEFS_G.ai_autonomy_ready; if (!g || !g.value) return ''; var v = g.value; return '<div class="hint" style="margin:0 0 8px;">AI pre-flag agrees with you ' + Math.round((v.agreement || 0) * 100) + '% over ' + (v.decisions_21d || 0) + ' decisions (21d) · ' + (v.ready ? '<b>ready to act on its own</b>' : 'needs 85% over 50 to act alone') + '</div>'; }
 function renderMatchTriage() {
   mtSeedAi();
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
   if (!body || !bar) return;
+  var vb = document.getElementById('mt-viewbar');
+  if (vb) vb.innerHTML = '<span class="hint" style="margin:0;">View</span>'
+    + '<button class="qbtn' + (MT_VIEW === 'list' ? ' done' : '') + '" onclick="mtSetView(\'list\')" aria-pressed="' + (MT_VIEW === 'list') + '">List</button>'
+    + '<button class="qbtn' + (MT_VIEW === 'deck' ? ' done' : '') + '" onclick="mtSetView(\'deck\')" aria-pressed="' + (MT_VIEW === 'deck') + '">Deck</button>';
+  if (MT_VIEW === 'deck') {
+    bar.style.display = 'none';
+    body.innerHTML = mtdHtml();
+    if (!MT_DECK.loaded && !MT_DECK.loading && !MT_DECK.err) mtdLoad(30);
+    return;
+  }
   var allSuggested = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; });
   setTimeout(function () { mtLogShown(allSuggested.slice(0, 120).map(function (m) { return String(m.id); })); }, 800);
   var now = Date.now();
@@ -2609,7 +2935,7 @@ async function loadAll(manual) {
      a timed-out query resolves as an error and is simply skipped by okCount below. */
   var res = await Promise.all([
     sb.from('followups').select('*').in('status', ['open', 'snoozed']),
-    sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
+    sb.from('buyers').select('id,name,contact,status,budget_min,budget_max,budget_min_num,budget_max_num,areas,must_haves,timeline,notes,contact_id,extra,matching_paused_reason').not('archived', 'is', true).order('created_at', { ascending: false }),
     sb.from('listings').select('id,address,status,listing_type,price,price_num,beds,baths,sqft,seller_name,seller_contact,notes,property_id,seller_contact_id,updated_at,extra').not('archived', 'is', true).order('created_at', { ascending: false }),
     /* beds/baths/sqft/lot_sqft are in FORM_SPECS.offmarket, so buildPayload writes all four on
        every save. They were NOT selected here, so the edit form rendered them blank and saving
@@ -2733,6 +3059,7 @@ async function loadAll(manual) {
   lastLoadPartial = okCount < res.length; /* some tables refreshed, some didn't */
   bootedFromCache = false;   /* live data on screen now; the staleness banner stands down */
   render();
+  if (!MT_DEEP_DONE) { MT_DEEP_DONE = true; mtDeepLink(); }   /* #triage-deck: first complete load only */
   /* Only a COMPLETE load is worth caching. Persisting a partial one would mean a future cold
      open silently presents a snapshot with some tables missing as though it were whole. */
   if (!lastLoadPartial) saveBootCache(false);
@@ -2827,6 +3154,12 @@ function render() {
   if (moreRqN) { var rqOpen = (DATA.matches || []).filter(function (m) { return m.status === 'suggested'; }).length; moreRqN.textContent = rqOpen ? String(rqOpen) : ''; }
   var moreTriageN = document.getElementById('more-menu-triage-n');
   if (moreTriageN) moreTriageN.textContent = rqOpen ? String(rqOpen) : '';
+  var tabTriageN = document.getElementById('tab-triage-n');   /* P11: same number, not a second count */
+  if (tabTriageN) tabTriageN.textContent = rqOpen ? String(rqOpen) : '';
+  var moreBuyersN = document.getElementById('more-menu-buyers-n');
+  if (moreBuyersN) moreBuyersN.textContent = (DATA.buyers || []).length ? String((DATA.buyers || []).length) : '';
+  var moreListingsN = document.getElementById('more-menu-listings-n');
+  if (moreListingsN) moreListingsN.textContent = (DATA.listings || []).length ? String((DATA.listings || []).length) : '';
   var mtCard = document.getElementById('match-triage-card');
   if (mtCard && mtCard.style.display !== 'none') safeRender('matchtriage', renderMatchTriage);
   var moreCalSugN = document.getElementById('more-menu-calsug-n');
