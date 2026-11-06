@@ -1,0 +1,182 @@
+# CRM Supabase project. The project id is public, not a secret.
+# verify_jwt below is copied from what is live today (read 2026-11-05).
+# The deploy tool applies these values every time, so they must stay accurate:
+# a function set to false here is open to the internet.
+project_id = "mtnkkeftmcfxeygkbkja"
+
+[functions.ask]
+verify_jwt = true
+
+[functions.ask-selftest]
+verify_jwt = true
+
+[functions.assessor-sync]
+verify_jwt = false
+
+[functions.backfill-listings-upsert]
+verify_jwt = true
+
+[functions.backup]
+verify_jwt = false
+
+[functions.bridge-sync]
+verify_jwt = false
+
+[functions.buildable_lookup]
+verify_jwt = true
+
+[functions.buyer_onboard]
+verify_jwt = true
+
+[functions.caldav-showing-sync]
+verify_jwt = false
+
+[functions.caravan-route]
+verify_jwt = false
+
+[functions.card-extract]
+verify_jwt = true
+
+[functions.census_geocode]
+verify_jwt = true
+
+[functions.daily-digest]
+verify_jwt = false
+
+[functions.deploy-app]
+verify_jwt = false
+
+[functions.docusign-sync]
+verify_jwt = true
+
+[functions.enrich]
+verify_jwt = true
+
+[functions.fema-flood-lookup]
+verify_jwt = true
+
+[functions.fred-sync]
+verify_jwt = false
+
+[functions.geo-backfill]
+verify_jwt = false
+
+[functions.hero-research]
+verify_jwt = false
+
+[functions.hotsheet-auto-ingest]
+verify_jwt = false
+
+[functions.hotsheet-manual-ingest]
+verify_jwt = true
+
+[functions.hotsheet-probe]
+verify_jwt = false
+
+[functions.ics-feed]
+verify_jwt = false
+
+[functions.ladbs-sync]
+verify_jwt = false
+
+[functions.listings-geo-backfill]
+verify_jwt = false
+
+[functions.mapbox-geocode]
+verify_jwt = true
+
+[functions.mls-csv-ingest]
+verify_jwt = false
+
+[functions.mls-extract]
+verify_jwt = true
+
+[functions.parcel-terrain]
+verify_jwt = true
+
+[functions.parcel_overlays]
+verify_jwt = true
+
+[functions.permit_history]
+verify_jwt = true
+
+[functions.photo-anonymize]
+verify_jwt = false
+
+[functions.photo-cache]
+verify_jwt = false
+
+[functions.photo-import]
+verify_jwt = false
+
+[functions.photo-intake]
+verify_jwt = true
+
+[functions.photo-stage]
+verify_jwt = true
+
+[functions.pocket-listings-ingest]
+verify_jwt = false
+
+[functions.pocket-photo-mirror]
+verify_jwt = false
+
+[functions.portal-bridge]
+verify_jwt = true
+
+[functions.portal-feed-sync]
+verify_jwt = false
+
+[functions.portal-selftest]
+verify_jwt = true
+
+[functions.reso-ingest]
+verify_jwt = false
+
+[functions.revgeo]
+verify_jwt = true
+
+[functions.share]
+verify_jwt = false
+
+[functions.spiro-connector]
+verify_jwt = false
+
+[functions.spiro-os]
+verify_jwt = false
+
+[functions.street_parcels]
+verify_jwt = true
+
+[functions.tan-probe]
+verify_jwt = false
+
+[functions.tcl-mockup-fetch]
+verify_jwt = false
+
+[functions.tracker-reads]
+verify_jwt = false
+
+[functions.triage-api]
+verify_jwt = false
+
+[functions.usps_validate]
+verify_jwt = true
+
+[functions.webp-restrip]
+verify_jwt = false
+
+[functions.weekly-drive-backup]
+verify_jwt = false
+
+[functions.zillow-city-zhvi-sync]
+verify_jwt = false
+
+[functions.zillow-inventory-sync]
+verify_jwt = false
+
+[functions.zillow-research-sync]
+verify_jwt = false
+
+[functions.zoning-sync]
+verify_jwt = false

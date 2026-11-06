@@ -1,0 +1,14 @@
+# Portal Supabase project. The project id is public, not a secret.
+# verify_jwt below is copied from what is live today (read 2026-11-05).
+# The deploy tool applies these values every time, so they must stay accurate:
+# a function set to false here is open to the internet.
+project_id = "bnrkcndpwfvuvtyrpivf"
+
+[functions.admin-users]
+verify_jwt = false
+
+[functions.notify]
+verify_jwt = false
+
+[functions.photo-links]
+verify_jwt = false
