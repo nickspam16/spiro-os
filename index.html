@@ -3777,7 +3777,7 @@ function neighborhoodVelocityHtml() {
 function buyersToCallRows() {
   var byBuyer = {};
   (DATA.matches || []).forEach(function (m) {
-    if (m.status !== 'suggested') return;   /* open queue only (= fn_open_slots): parked/confirmed/new must not make a buyer look callable */
+    if (m.status === 'dismissed' || m.status === 'parked') return;   /* parked = explicitly 'not now' (over the open-match ceiling); confirmed still counts as a reason to call */
     var x = byBuyer[m.buyer_id] || (byBuyer[m.buyer_id] = { count: 0, best: 0, bestOnMarket: 0, urgency: 4 });
     x.count++; if ((m.score || 0) > x.best) x.best = (m.score || 0);
     if (m.target_type !== 'prospects' && (m.score || 0) > x.bestOnMarket) x.bestOnMarket = (m.score || 0);
