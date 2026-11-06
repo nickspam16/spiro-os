@@ -212,6 +212,44 @@
 #match-triage-card .hint,#mt-list .hint{font-size:12.5px;line-height:1.5}
 #listing-card > h2{display:none}
 #listing-card{padding-top:8px}
+/* Off-market browser (2026-11-05). Phone-first: no hover-only affordances, 44px targets, wraps instead of scrolls. */
+.om-row{cursor:pointer}
+.om-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap}
+.om-price{font-family:var(--serif);font-size:20px;color:var(--ink);line-height:1.2}
+.om-price.lease{color:var(--clay)}
+.om-badges{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
+.om-b{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);color:var(--muted);border-radius:4px;padding:2px 6px;white-space:nowrap}
+.om-b.src{color:var(--green);border-color:var(--green)}
+.om-b.lease{color:var(--clay);border-color:var(--clay)}
+.om-b.soon{color:var(--clay);border-color:var(--clay);background:var(--clay-soft)}
+.om-b.dead{color:var(--faint);background:var(--panel2)}
+.om-title{font-size:16px;font-weight:500;color:var(--ink);margin-top:6px;overflow-wrap:anywhere}
+.om-wh{display:inline-block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--muted);border:1px dashed var(--muted);border-radius:4px;padding:1px 6px;margin-left:4px;vertical-align:middle}
+.om-dim{opacity:.62}
+.om-dim .om-price{text-decoration:none}
+.om-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.om-acts .qbtn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;text-decoration:none;font-size:14px;color:var(--green);border-color:var(--green)}
+.om-det{display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13.5px;color:var(--ink-dim)}
+.om-row.open .om-det{display:block}
+.om-kv{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.om-kv span:last-child{text-align:right;overflow-wrap:anywhere}
+.om-fit{margin-top:8px;font-size:13px;color:var(--ink-dim);line-height:1.45}
+.om-note{margin-top:8px;font-size:12.5px;color:var(--muted);font-style:italic}
+.om-desc{margin-top:8px;line-height:1.5;overflow-wrap:anywhere}
+.om-img{display:block;max-width:100%;height:auto;border-radius:var(--radius);margin-top:10px}
+.om-filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.om-sel{flex:1 1 140px;min-width:0;min-height:44px;font-size:14px}
+.om-seg{min-height:34px;font-size:13px;padding:6px 12px}
+.om-seg.on{background:var(--green);border-color:var(--green);color:var(--paper)}
+.om-more{width:100%;min-height:44px;margin-top:10px}
+.om-dayh{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--ink-dim)}
+.om-dayh.soon{color:var(--clay);border-bottom-color:var(--clay)}
+.om-dayh.hot{color:var(--paper);background:var(--clay);border-bottom:0;padding:8px 10px;border-radius:var(--radius)}
+.om-dayh.past{color:var(--muted);border-bottom-style:dashed}
+.om-date{font-size:11px;color:var(--muted)}
+.om-bar{display:flex;gap:8px;align-items:center}
+.om-bar #om-q{flex:1 1 auto;min-width:0;margin:0}
+.om-fbtn{flex:0 0 auto;min-height:44px;padding:0 14px}
 .mtgrp{margin:18px 0 6px}
 .mtgrp-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:0 0 8px;border-bottom:1px solid var(--line);margin-bottom:2px}
 .mtgrp-name{font-family:var(--serif);font-size:18px;color:var(--ink);text-decoration:none}
@@ -501,6 +539,7 @@
             <a href="javascript:void(0)" onclick="goDashboard()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Dashboard</a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
             <a href="javascript:void(0)" onclick="menuGoReengage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Relationships <span id="more-menu-reengage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuGoOffMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Off-market <span id="more-menu-om-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoMarket()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Market <span id="more-menu-market-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuGoPeople()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Contacts <span id="more-menu-people-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowIntel()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Who to call <span id="more-menu-intel-n" style="color:var(--muted);font-size:12.5px;"></span></a>
@@ -823,6 +862,13 @@
       <div id="market-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
+    <!-- Off-market browser (2026-11-05): the 548 rows in off_market_listings (Rebingy pockets + TAN) had no
+         face in the app. A panel, not a sixth tab: reached from the Listings tab's "Off-market" chip. -->
+    <div class="card" id="offmkt-card" style="display:none;">
+      <h2>Off-market <button class="hbtn" onclick="event.stopPropagation();fetchOffMarket(true)" title="Refresh">&#8635;</button></h2>
+      <div id="om-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
     <div class="card" id="coverage-card" style="display:none;">
       <h2 onclick="toggleCoverage()" style="cursor:pointer;">Data Coverage <span id="coverage-caret" style="float:right;opacity:.55;">&#9656;</span> <button class="hbtn" onclick="event.stopPropagation();renderCoverage()" title="Refresh">&#8635;</button></h2>
       <div id="coverage-body" style="display:none;"><div class="empty">Loading&hellip;</div></div>
@@ -1018,7 +1064,7 @@ function tabGo(t) {
 function tabSync() {
   if (!document.getElementById('tabbar')) return;
   if (!PANEL_HOME) { TAB_CUR = 'today'; tabMark('today'); return; }
-  var byCard = { 'match-triage-card': 'triage' };
+  var byCard = { 'match-triage-card': 'triage', 'offmkt-card': 'listings' };
   var t = byCard[PANEL_HOME.id];
   /* Records is one card behind two tabs: which one is lit follows browseTab. Any other Records
      view (Contacts, Relationships, Leads...) lights nothing. */
@@ -3082,6 +3128,7 @@ async function loadAll(manual) {
   fetchBrief(false);       /* cached per-day; only calls AI once each morning */
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
+  fetchOffMarket(false);   /* read-only; cached 30 min; fills the Off-market chip count */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
   fetchFeedHealth(); fetchAddressCandidates(); fetchDuplicateContacts();       /* scheduled-job health; renders as an alert atop Today's Focus */
   flushOfflineCaptures();  /* file any notes captured while offline */
@@ -7538,6 +7585,7 @@ function recordExtras(table, id) {
       var bsid = 'sugg-buyers-' + sid;
       h += secToggleHtml(bsid, bsug.count + ' suggested match' + (bsug.count === 1 ? '' : 'es')) + secBodyOpen(bsid) + bsug.html + '</div>';
     }
+    h += buyerOffMarketHtml(sid);
     h += buyerPortalHtml(sid) + anchorChainHtml(sid);
     more += buyerCriteriaHtml(sid); /* Showings + Timeline deliberately dropped from the buyer card per Nick's call — not useful there; sharing now lives in the Share Links panel */
   }
@@ -11802,6 +11850,312 @@ function renderTabs() {
     : '';
 }
 
+/* ---------- off-market browser (2026-11-05) ----------
+   public.off_market_listings: 548 rows from two feeds -- Rebingy pocket listings (Carolwood's own
+   pocket-listing network: the agent to call is on the row) and TAN (an agent broadcast network: no
+   contact details, but a known MLS debut date on 47 rows). It is NOT the `offmarket` table behind the
+   Leads tab -- that is Nick's own hand-entered leads. Naming here is deliberately "om" / "OM" so the two
+   cannot be confused in code.
+   Loaded lazily and cached like fetchMarket (read-only; the matcher owns the writes). The card is a
+   panel reached from the Listings tab's "Off-market" chip or the More menu -- not a sixth tab.
+   Honesty rules, each from the brief: a withheld address says so (never blank); a lease is priced per
+   month and labelled; expired / on hold / already-on-MLS rows stay visible but are labelled and dimmed
+   so they cannot read as live pocket inventory. */
+var OM = { rows: [], at: 0, err: '', loading: false, seg: 'all', deal: 'all', stat: 'all', addr: 'all', sort: 'new', q: '', shown: 40 };
+var OM_COLS = 'id,source,deal_type,price_period,address,address_withheld,address_partial,property_id,city,neighborhood,zip,list_price,list_price_max,price_is_range,beds,baths,sqft,lot_sqft,property_type,status,status_raw,on_mls,expected_mls_date,list_agent,list_agent_phone,brokerage,list_date,listing_expires,description,image_count,first_image_url,parse_notes,first_seen_at';
+async function fetchOffMarket(force) {
+  if (OM.loading) return;
+  if (!force && OM.at && Date.now() - OM.at < 30 * 60 * 1000) return;
+  OM.loading = true;
+  try {
+    var all = [], from = 0, step = 1000;
+    for (var guard = 0; guard < 5; guard++) {
+      var r = await withTimeout(sb.from('off_market_listings').select(OM_COLS).order('id', { ascending: true }).range(from, from + step - 1), 20000, { error: { message: 'timeout' }, data: null });
+      if (r.error || !r.data) { OM.err = (r.error && r.error.message) || 'no data'; OM.loading = false; omRender(); return; }
+      all = all.concat(r.data);
+      if (r.data.length < step) break;
+      from += step;
+    }
+    OM.rows = all; OM.at = Date.now(); OM.err = '';
+  } catch (e) { OM.err = 'Couldn’t load'; reportError('fetchOffMarket', e, {toast:false}); }
+  OM.loading = false;
+  omRender();
+  try { var n = document.getElementById('more-menu-om-n'); if (n) n.textContent = OM.rows.length || ''; } catch (e2) { reportError('fetchOffMarket', e2, {toast:false}); }
+  try { if (browseTab === 'listings') renderBrowse(); } catch (e3) { reportError('fetchOffMarket', e3, {toast:false}); }
+}
+function menuGoOffMarket() { openPanel('offmkt-card'); omRender(); fetchOffMarket(false); }
+function menuGoOffMarketDebuts() { OM.seg = 'debut'; menuGoOffMarket(); }
+/* Status, collapsed to what Nick needs to know: is this something he can act on today? */
+function omState(r) {
+  if (r.status === 'expired') return 'expired';
+  if (r.status === 'hold') return 'hold';
+  if (r.on_mls || r.status === 'on_mls') return 'onmls';
+  return 'live';
+}
+function omIsLease(r) { return r.deal_type === 'lease' || r.price_period === 'month'; }
+function omIso(d) { return d ? String(d).slice(0, 10) : ''; }
+function omDays(iso) { /* whole days from today (device clock) to iso; negative = past */
+  if (!iso) return null;
+  var p = iso.split('-'), t = todayIso().split('-');
+  return Math.round((Date.UTC(+p[0], +p[1] - 1, +p[2]) - Date.UTC(+t[0], +t[1] - 1, +t[2])) / 86400000);
+}
+function omWhen(iso) {
+  var n = omDays(iso);
+  if (n === null) return '';
+  if (n === 0) return 'Today';
+  if (n === 1) return 'Tomorrow';
+  if (n === -1) return 'Yesterday';
+  if (n < 0) return Math.abs(n) + ' days ago';
+  return 'In ' + n + ' days';
+}
+var OM_DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function omDow(iso) { var p = iso.split('-'); return OM_DOW[new Date(+p[0], +p[1] - 1, +p[2]).getDay()]; }
+function omShort(n) {
+  n = Number(n);
+  if (n >= 1e6) return '$' + (Math.round(n / 1e5) / 10).toString().replace(/\.0$/, '') + 'M';
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+function omPrice(r) {
+  if (r.list_price == null) return 'Price not listed';
+  var lease = omIsLease(r);
+  if (lease) return '$' + Math.round(Number(r.list_price)).toLocaleString('en-US') + '/mo' + (r.price_is_range && r.list_price_max && Number(r.list_price_max) !== Number(r.list_price) ? ' – $' + Math.round(Number(r.list_price_max)).toLocaleString('en-US') : '');
+  if (r.price_is_range && r.list_price_max && Number(r.list_price_max) !== Number(r.list_price)) return omShort(r.list_price) + ' – ' + omShort(r.list_price_max);
+  return omShort(r.list_price);
+}
+function omPhoneDigits(p) { var d = String(p || '').replace(/\D/g, ''); if (d.length === 11 && d.charAt(0) === '1') d = d.slice(1); return d.length === 10 ? d : ''; }
+function omPhoneFmt(d) { return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6); }
+function omEmail(r) { var a = String(r.list_agent || ''); return /^[^\s@<>"']+@[^\s@<>"']+$/.test(a) ? a : ''; }
+function omAgentLabel(r) { /* Rebingy rows carry the agent's EMAIL in list_agent (there is no name or email column) */
+  var e = omEmail(r);
+  if (e) { var loc = e.split('@')[0]; return loc; }
+  return r.list_agent || '';
+}
+function omHere(r) { return [r.neighborhood, r.city].filter(function (x, i, a) { return x && a.indexOf(x) === i; }).join(', '); }
+function omSrcLabel(r) { return r.source === 'rebingy' ? 'Pocket' : r.source === 'tan' ? 'TAN' : (r.source || ''); }
+function omStatusLabel(r) {
+  var s = omState(r);
+  if (s === 'expired') return 'Expired';
+  if (s === 'hold') return 'On hold';
+  if (s === 'onmls') return 'Already on MLS';
+  if (r.status === 'coming_soon') return 'Coming soon';
+  if (r.status === 'off_mls_dated' && r.expected_mls_date) return 'MLS ' + omWhen(omIso(r.expected_mls_date)).toLowerCase();
+  return 'Off-market';
+}
+function omMatches(r) {
+  if (OM.deal !== 'all' && (OM.deal === 'lease') !== omIsLease(r)) return false;
+  if (OM.q) {
+    var hay = [r.address, r.neighborhood, r.city, r.zip, r.brokerage, r.list_agent, r.property_type, r.description].join(' ').toLowerCase();
+    var ws = OM.q.split(/\s+/);
+    for (var i = 0; i < ws.length; i++) if (ws[i] && hay.indexOf(ws[i]) === -1) return false;
+  }
+  return true;
+}
+function omRows() {
+  var rows = OM.rows.filter(omMatches);
+  if (OM.seg === 'pocket') rows = rows.filter(function (r) { return r.source === 'rebingy'; });
+  else if (OM.seg === 'tan') rows = rows.filter(function (r) { return r.source === 'tan'; });
+  if (OM.stat === 'live') rows = rows.filter(function (r) { return omState(r) === 'live'; });
+  else if (OM.stat === 'notlive') rows = rows.filter(function (r) { return omState(r) !== 'live'; });
+  if (OM.addr === 'known') rows = rows.filter(function (r) { return !r.address_withheld; });
+  else if (OM.addr === 'withheld') rows = rows.filter(function (r) { return r.address_withheld; });
+  var rank = { live: 0, hold: 1, onmls: 2, expired: 3 };
+  function newest(a, b) { return String(omIso(b.list_date) || omIso(b.first_seen_at)).localeCompare(String(omIso(a.list_date) || omIso(a.first_seen_at))); }
+  function priceOf(r) { return r.list_price == null ? -1 : Number(r.list_price); }
+  rows = rows.slice().sort(function (a, b) {
+    if (OM.sort === 'hi') return priceOf(b) - priceOf(a);
+    if (OM.sort === 'lo') return (priceOf(a) < 0 ? 1e12 : priceOf(a)) - (priceOf(b) < 0 ? 1e12 : priceOf(b));
+    return (rank[omState(a)] - rank[omState(b)]) || newest(a, b);
+  });
+  return rows;
+}
+function omBadge(txt, kind) {
+  return '<span class="om-b' + (kind ? ' ' + kind : '') + '">' + esc(txt) + '</span>';
+}
+function omRowHtml(r, opts) {
+  opts = opts || {};
+  var domId = opts.dom || ('omr-' + r.id);
+  var st = omState(r), lease = omIsLease(r);
+  var wh = !!r.address_withheld;
+  var title, sub = '';
+  if (wh) { title = omHere(r) || 'Location not given'; }
+  else { title = r.address || omHere(r) || 'Location not given'; sub = omHere(r); if (r.address_partial && r.address) sub = (sub ? sub + ' · ' : '') + 'street only'; }
+  var facts = [];
+  if (r.beds != null) facts.push(Number(r.beds) + ' bd');
+  if (r.baths != null) facts.push(Number(r.baths) + ' ba');
+  if (r.sqft != null) facts.push(Math.round(Number(r.sqft)).toLocaleString('en-US') + ' sf');
+  if (r.lot_sqft != null) facts.push(Math.round(Number(r.lot_sqft)).toLocaleString('en-US') + ' sf lot');
+  if (r.property_type) facts.push(r.property_type);
+  var badges = omBadge(omSrcLabel(r), 'src') + (lease ? omBadge('Lease', 'lease') : '')
+    + (st === 'live' ? ((r.status === 'off_mls_dated' || r.status === 'coming_soon') && !opts.inDebut ? omBadge(omStatusLabel(r), 'soon') : '') : omBadge(omStatusLabel(r), 'dead'));
+  var ph = omPhoneDigits(r.list_agent_phone), em = omEmail(r);
+  var acts = '';
+  if (ph) acts += '<a class="qbtn om-call" href="tel:' + ph + '" onclick="event.stopPropagation()">Call ' + esc(omPhoneFmt(ph)) + '</a>';
+  if (em) acts += '<a class="qbtn om-mail" href="mailto:' + esc(em) + '" onclick="event.stopPropagation()">Email</a>';
+  var agent = omAgentLabel(r);
+  var agentLine = [agent, r.brokerage].filter(Boolean).join(' · ');
+  var det = '';
+  function line(k, v) { return v ? '<div class="om-kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>' : ''; }
+  det += line('Source', r.source === 'rebingy' ? 'Rebingy pocket listing' : r.source === 'tan' ? 'TAN broadcast' : r.source);
+  det += line('Status', (r.status_raw || r.status || '') + (st !== 'live' ? '' : ''));
+  det += line('Listed', r.list_date ? fmtDate(omIso(r.list_date)) : '');
+  det += line('Expires', r.listing_expires ? fmtDate(omIso(r.listing_expires)) : '');
+  det += line('MLS debut', r.expected_mls_date ? (omDow(omIso(r.expected_mls_date)) + ' ' + fmtDate(omIso(r.expected_mls_date)) + ' (' + omWhen(omIso(r.expected_mls_date)).toLowerCase() + ')') : '');
+  det += line('ZIP', r.zip);
+  det += line('Agent', agent);
+  det += line('Brokerage', r.brokerage);
+  det += line('Photos', r.image_count ? String(r.image_count) : '');
+  if (wh) det += '<div class="om-note">The listing agent withheld the address. Call for it.</div>';
+  if (r.description) det += '<div class="om-desc">' + esc(r.description) + '</div>';
+  /* parse_notes are deliberately NOT shown: they are ingest diagnostics Nick cannot act on. */
+  if (r.first_image_url) det += '<img class="om-img" loading="lazy" alt="" src="' + esc(r.first_image_url) + '" onerror="this.style.display=\'none\'">';
+  var dateTag = opts.dateTag ? '<span class="om-date">' + esc(opts.dateTag) + '</span>' : '';
+  return '<div class="row om-row' + (st !== 'live' ? ' om-dim' : '') + (OM.open && OM.open[domId] ? ' open' : '') + '" id="' + esc(domId) + '" onclick="omToggle(\'' + escJs(domId) + '\')">'
+    + '<div class="om-top"><span class="om-price' + (lease ? ' lease' : '') + '">' + esc(omPrice(r)) + '</span><span class="om-badges">' + dateTag + badges + '</span></div>'
+    + '<div class="om-title">' + esc(title) + (wh ? ' <span class="om-wh">Address withheld</span>' : '') + '</div>'
+    + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
+    + (facts.length ? '<div class="r2">' + esc(facts.join(' · ')) + '</div>' : '')
+    + (agentLine ? '<div class="r2">' + esc(agentLine) + '</div>' : '')
+    + (opts.extra || '')
+    + (acts ? '<div class="om-acts">' + acts + '</div>' : '')
+    + '<div class="om-det">' + det + '</div></div>';
+}
+function omToggle(domId) {
+  OM.open = OM.open || {};
+  OM.open[domId] = !OM.open[domId];
+  var el = document.getElementById(domId);
+  if (el) el.classList.toggle('open', !!OM.open[domId]);
+}
+/* The debut calendar: soonest first, grouped by day, imminent (within a week) called out. A date that has
+   already passed is NOT dropped -- the listing should be public by now, so it goes first as "check MLS". */
+function omDebutHtml() {
+  var rows = OM.rows.filter(function (r) { return r.expected_mls_date && omMatches(r); });
+  if (!rows.length) return '<div class="empty">No MLS debut dates match.</div>';
+  rows.sort(function (a, b) { return omIso(a.expected_mls_date).localeCompare(omIso(b.expected_mls_date)) || (Number(b.list_price) || 0) - (Number(a.list_price) || 0); });
+  var h = '', last = '', soon = rows.filter(function (r) { var n = omDays(omIso(r.expected_mls_date)); return n !== null && n >= 0 && n <= 7; }).length;
+  h += '<div class="hint" style="margin:0 0 12px;">' + rows.length + ' off-market listings with a known MLS debut date' + (soon ? ' &mdash; <b>' + soon + ' within a week</b>' : '') + '. Soonest first.</div>';
+  rows.forEach(function (r) {
+    var d = omIso(r.expected_mls_date), n = omDays(d);
+    if (d !== last) {
+      last = d;
+      var cls = n < 0 ? ' past' : n <= 1 ? ' hot' : n <= 7 ? ' soon' : '';
+      h += '<div class="om-dayh' + cls + '"><span>' + esc(omDow(d) + ' ' + fmtDate(d)) + '</span><span>' + esc(n < 0 ? 'Date passed — check MLS' : omWhen(d)) + '</span></div>';
+    }
+    h += omRowHtml(r, { inDebut: true });
+  });
+  return h;
+}
+function omRender() {
+  var card = document.getElementById('offmkt-card'); if (!card) return;
+  var body = document.getElementById('om-body'); if (!body) return;
+  if (card.style.display === 'none' && !PANEL_HOME) return;
+  if (!OM.rows.length) {
+    body.innerHTML = OM.err ? '<div class="empty">Off-market listings didn’t load. Check your connection, then <button class="qbtn" onclick="fetchOffMarket(true)">tap to retry</button></div>' : '<div class="empty">Loading&hellip;</div>';
+    return;
+  }
+  function seg(k, lab, n) { return '<span class="filter-chip om-seg' + (OM.seg === k ? ' on' : '') + '" onclick="omSet(\'seg\',\'' + k + '\')">' + lab + (n != null ? ' ' + n : '') + '</span>'; }
+  var pocketN = OM.rows.filter(function (r) { return r.source === 'rebingy'; }).length;
+  var tanN = OM.rows.length - pocketN;
+  var dateN = OM.rows.filter(function (r) { return r.expected_mls_date; }).length;
+  var h = '<div class="chip-row">' + seg('all', 'All', OM.rows.length) + seg('pocket', 'Pockets', pocketN) + seg('tan', 'TAN', tanN) + seg('debut', 'MLS debuts', dateN) + '</div>';
+  h += '<div class="om-bar"><input type="search" id="om-q" placeholder="Search area, street, agent&hellip;" value="' + esc(OM.q) + '" oninput="omQ(this.value)" autocomplete="off">';
+  function sel(key, opts) {
+    return '<select class="om-sel" aria-label="' + key + '" onchange="omSet(\'' + key + '\',this.value)">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (OM[key] === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
+  }
+  var nAct = (OM.deal !== 'all' ? 1 : 0) + (OM.seg !== 'debut' ? (OM.stat !== 'all' ? 1 : 0) + (OM.addr !== 'all' ? 1 : 0) + (OM.sort !== 'new' ? 1 : 0) : 0);
+  h += '<button class="qbtn om-fbtn" onclick="OM.fopen=!OM.fopen;omRender()">Filters' + (nAct ? ' &middot; ' + nAct : '') + (OM.fopen ? ' &#9652;' : ' &#9662;') + '</button></div>';
+  if (OM.fopen) {
+    h += '<div class="om-filters">' + sel('deal', [['all', 'Sales + leases'], ['sale', 'Sales only'], ['lease', 'Leases only']]);
+    if (OM.seg !== 'debut') h += sel('stat', [['all', 'Any status'], ['live', 'Live off-market'], ['notlive', 'Expired / hold / on MLS']])
+      + sel('addr', [['all', 'Any address'], ['known', 'Address known'], ['withheld', 'Address withheld']])
+      + sel('sort', [['new', 'Newest first'], ['hi', 'Price high to low'], ['lo', 'Price low to high']]);
+    h += '</div>';
+  }
+  if (OM.seg === 'debut') { h += omDebutHtml(); }
+  else {
+    var rows = omRows();
+    var live = rows.filter(function (r) { return omState(r) === 'live'; }).length;
+    h += '<div class="hint" style="margin:0 0 10px;">' + rows.length + ' shown' + (rows.length ? ' &middot; ' + live + ' live off-market' : '') + '. Expired, on-hold and already-on-MLS rows are dimmed.</div>';
+    if (!rows.length) h += '<div class="empty">Nothing matches those filters.</div>';
+    rows.slice(0, OM.shown).forEach(function (r) { h += omRowHtml(r, {}); });
+    if (rows.length > OM.shown) h += '<button class="qbtn om-more" onclick="OM.shown+=40;omRender()">Show 40 more (' + (rows.length - OM.shown) + ' left)</button>';
+  }
+  /* Keep the search box focused across re-renders while typing. */
+  var hadFocus = document.activeElement && document.activeElement.id === 'om-q', pos = hadFocus ? document.activeElement.selectionStart : 0;
+  body.innerHTML = h;
+  if (hadFocus) { var q = document.getElementById('om-q'); if (q) { q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) { /* range unsupported on search inputs in some engines */ } } }
+}
+function omSet(k, v) { OM[k] = v; OM.shown = 40; omRender(); }
+var OM_QT = null;
+function omQ(v) { OM.q = String(v || '').toLowerCase().trim(); OM.shown = 40; clearTimeout(OM_QT); OM_QT = setTimeout(omRender, 120); }
+
+/* ---------- off-market that fits a buyer (2026-11-05) ----------
+   READ-ONLY against the matcher: fn_match_gate (NULL = passes, text = the reason it is blocked) and
+   fn_match_score (jsonb: score, why, known, confidence). Nothing here writes to `matches`, and nothing
+   runs until Nick taps -- the matcher has no bulk form, so one buyer costs one gate call per candidate
+   (up to ~230), run 10 at a time and cached for 10 minutes. A proper fn_offmarket_for_buyer(p_buyer)
+   RPC would make this one call; until it exists this is the honest cheap way.
+   KNOWN LIMIT, not a bug: off-market property_facts rows carry no flags, so a buyer's dealbreakers
+   can never block them, and the gate passes whatever it cannot see. A pass therefore means "nothing
+   we know rules it out", and the score is shown as a rough read with the facts it rests on. */
+var BOM = {};
+var BOM_KNOWN_LABEL = { price: 'price', beds: 'beds', baths: 'baths', sqft: 'size', lot: 'lot', year: 'year built', remarks: 'description' };
+function buyerOffMarketHtml(bid) {
+  var st = BOM[bid];
+  var h = '<div class="flabel">Off-market that fits</div>';
+  if (!OM.rows.length) return h + '<div class="hint">Off-market listings are still loading.</div>';
+  if (!st || (st.state === 'done' && Date.now() - st.at > 10 * 60 * 1000)) {
+    return h + '<button class="qbtn om-fbtn" onclick="event.stopPropagation();buyerOmCheck(\'' + escJs(String(bid)) + '\')">Check ' + OM.rows.length + ' off-market listings for this buyer</button>';
+  }
+  if (st.state === 'loading') return h + '<div class="hint">Checking ' + st.total + ' listings&hellip; ' + st.done + ' done</div>';
+  if (st.state === 'err') return h + '<div class="hint">Couldn’t finish checking. <button class="qbtn" onclick="event.stopPropagation();buyerOmCheck(\'' + escJs(String(bid)) + '\')">Try again</button></div>';
+  var hits = st.hits;
+  var head = '<div class="hint" style="margin:0 0 8px;"><b>' + hits.length + '</b> off-market listing' + (hits.length === 1 ? '' : 's') + ' pass their criteria'
+    + (st.noAddr ? ' &middot; ' + st.noAddr + ' more can&rsquo;t be judged without an address' : '') + '.</div>';
+  var cap = st.all ? hits.length : 8;
+  var rows = hits.slice(0, cap).map(function (x) {
+    var sc = x.sc || {}, known = (sc.known || []).map(function (k) { return BOM_KNOWN_LABEL[k] || k; });
+    var fit = (sc.score != null) ? ('Rough fit ~' + sc.score + '/10' + (sc.confidence === 'low' ? ' (little to go on)' : '')) : 'Fit not scored';
+    var basis = known.length ? 'Based on ' + known.join(', ') + '. Style and condition unknown.' : 'Nothing known beyond the listing itself.';
+    return omRowHtml(x.r, { dom: 'bom-' + bid + '-' + x.r.id, extra: '<div class="om-fit"><b>' + esc(fit) + '</b><br>' + esc(basis) + '</div>' });
+  }).join('');
+  var more = hits.length > cap ? '<button class="qbtn om-more" onclick="event.stopPropagation();BOM[\'' + escJs(String(bid)) + '\'].all=true;render()">Show all ' + hits.length + '</button>' : '';
+  return h + head + (hits.length ? rows + more : '<div class="hint">Nothing off-market passes right now.</div>')
+    + '<div class="hint" style="margin-top:8px;">A pass means nothing known rules it out &mdash; dealbreakers can&rsquo;t be checked on off-market homes yet.</div>';
+}
+async function buyerOmCheck(bid) {
+  var b = recOf('buyers', bid); if (!b) return;
+  var max = b.budget_max_num != null ? Number(b.budget_max_num) : null, min = b.budget_min_num != null ? Number(b.budget_min_num) : null;
+  var live = OM.rows.filter(function (r) { return omState(r) === 'live'; });
+  var noAddr = live.filter(function (r) { return !r.property_id; }).length;
+  /* Same price bounds the gate itself applies (>115% of max, <60% of min), used only to skip calls it would reject anyway. */
+  var cands = live.filter(function (r) {
+    var p = (r.list_price != null && !omIsLease(r)) ? Number(r.list_price) : null;
+    var tooHigh = !!(max && p !== null && p > max * 1.15), tooLow = !!(min && p !== null && p < min * 0.6);
+    return !!r.property_id && !tooHigh && !tooLow;
+  });
+  var st = BOM[bid] = { state: 'loading', total: cands.length, done: 0, hits: [], noAddr: noAddr, at: Date.now(), errs: 0 };
+  render();
+  var i = 0;
+  async function worker() {
+    while (i < cands.length) {
+      var r = cands[i++];
+      try {
+        var g = await withTimeout(sb.rpc('fn_match_gate', { p_buyer: bid, p_property: r.property_id }), 15000, { error: { message: 'timeout' } });
+        if (g.error) { st.errs++; }
+        else if (g.data === null || g.data === undefined) {
+          var s = await withTimeout(sb.rpc('fn_match_score', { p_buyer: bid, p_property: r.property_id }), 15000, { error: { message: 'timeout' } });
+          st.hits.push({ r: r, sc: s.error ? null : s.data });
+        }
+      } catch (e) { st.errs++; reportError('buyerOmCheck', e, {toast:false}); }
+      st.done++;
+    }
+  }
+  await Promise.all([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(worker));
+  st.hits.sort(function (a, b2) { return ((b2.sc && b2.sc.score) || 0) - ((a.sc && a.sc.score) || 0) || (Number(b2.r.list_price) || 0) - (Number(a.r.list_price) || 0); });
+  st.state = (cands.length && st.errs > cands.length * 0.3) ? 'err' : 'done';
+  st.at = Date.now();
+  render();
+}
 /* ---------- market tab (S2): the Mon/Thu MLS monitor's home ---------- */
 var MARKET = { config: [], events: [], snaps: [], at: 0 };
 async function fetchMarket(force) {
@@ -12458,6 +12812,7 @@ function propNav() {
      five statuses already use). */
   return '<div class="chip-row" style="margin-bottom:8px;"><span class="chip-label">View</span> '
     + seg('prep', 'Prep', prepN) + seg('active', 'Listings', activeN) + seg('escrow', 'Escrows', escN) + seg('past', 'Past sales', pastN)
+    + '<span class="filter-chip" onclick="menuGoOffMarket()" style="cursor:pointer;">Off-market' + (OM.rows.length ? ' ' + OM.rows.length : '') + ' &rsaquo;</span>'
     /* Only rendered when the bucket is non-empty — once Nick has triaged them the chip disappears
        on its own rather than sitting there forever as an empty fifth tab. */
     + (docN ? seg('docs', 'Unconfirmed', docN) : '') + '</div>';
