@@ -247,6 +247,19 @@
 .om-dayh.hot{color:var(--paper);background:var(--clay);border-bottom:0;padding:8px 10px;border-radius:var(--radius)}
 .om-dayh.past{color:var(--muted);border-bottom-style:dashed}
 .om-date{font-size:11px;color:var(--muted)}
+.om-assigned{margin-top:6px;font-size:13.5px;color:var(--green);line-height:1.4;overflow-wrap:anywhere}
+.om-assign{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;font-size:14px;color:var(--green);border-color:var(--green)}
+.om-pick{display:none;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);cursor:default}
+.om-pick.on{display:block}
+.om-pk-h{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink-dim);margin:12px 0 4px}
+.om-pk{display:flex;align-items:center;gap:12px;min-height:44px;padding:4px 2px;border-bottom:1px solid var(--line);font-size:15px;color:var(--ink);cursor:pointer}
+.om-pk input{width:22px;height:22px;flex:0 0 auto;margin:0}
+.om-pk span{min-width:0;overflow-wrap:anywhere}
+.om-pk small{color:var(--muted);font-size:12.5px;margin-left:6px}
+.om-pick #omp-q{width:100%;box-sizing:border-box;min-height:44px}
+.om-pick-go{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.om-pick-go .qbtn{min-height:44px;padding:0 16px;font-size:14px}
+.om-soon{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;box-sizing:border-box;min-height:48px;margin:0 0 10px;padding:8px 14px;border:1px solid var(--clay);border-radius:var(--radius);background:var(--clay-soft);color:var(--clay);font-size:15px;font-weight:500;text-align:left;cursor:pointer}
 .om-bar{display:flex;gap:8px;align-items:center}
 .om-bar #om-q{flex:1 1 auto;min-width:0;margin:0}
 .om-fbtn{flex:0 0 auto;min-height:44px;padding:0 14px}
@@ -585,6 +598,7 @@
       <div id="gsearch-results" style="margin-top:4px;"></div>
     </div>
 
+    <div id="om-soon"></div>
     <div class="stat-row" id="stats" style="display:none;"></div>
     <div id="pulse"></div>
     <!-- "Needs fixing": infrastructure that has actually stopped working. Empty and invisible
@@ -1585,6 +1599,7 @@ var MT_AI_FILTER = null; // null | 'confirm' | 'dismiss' | 'unsure' -- narrows t
 function mtAiItem(m) {
   var buyer = recOf('buyers', m.buyer_id) || {};
   var target = recOf(m.target_type, m.target_id) || {};
+  if (m.target_type === 'off_market_listings') { target = (OM.rows || []).filter(function (x) { return String(x.id) === String(m.target_id); })[0] || {}; target = { address: target.address, status: omState(target), price: target.list_price }; }
   var status = target.status || (m.target_type === 'offmarket' ? (target.converted ? 'converted' : 'available') : '');
   var price = target.price_num || target.price || null;
   return {
@@ -3128,6 +3143,7 @@ async function loadAll(manual) {
   fetchBrief(false);       /* cached per-day; only calls AI once each morning */
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
+  fetchOmSoon(false);      /* Today's "N off-market listings hit MLS this week" line; renders nothing unless something is imminent */
   fetchOffMarket(false);   /* read-only; cached 30 min; fills the Off-market chip count */
   fetchPortal(manual);     /* read-only buyer-portal overview via portal-bridge (server-side portal key) */
   fetchFeedHealth(); fetchAddressCandidates(); fetchDuplicateContacts();       /* scheduled-job health; renders as an alert atop Today's Focus */
@@ -9983,9 +9999,10 @@ async function announceToBuyer(buyerId, count) {
 }
 
 /* ---------- buyer ↔ property links (junction for leads, matches for the rest) ---------- */
-var LINK_KIND = { offmarket: 'Lead', listings: 'Listing', prospects: 'Prospect', listings_live: 'Active (backfill)' };
+var LINK_KIND = { offmarket: 'Lead', listings: 'Listing', prospects: 'Prospect', listings_live: 'Active (backfill)', off_market_listings: 'Off-market' };
 var LINK_GROUPS = [['offmarket', 'Off-market leads'], ['listings', 'Listings'], ['prospects', 'Prospects']];
 function recLabel(t, id) {
+  if (t === 'off_market_listings') return omLabelById(id); /* no DATA table: lives in OM.rows, loaded on demand */
   var r = null;
   (DATA[t] || []).forEach(function (x) { if (String(x.id) === String(id)) r = x; });
   return r ? (r.address || r.address_area || r.name || r.owner_name || '') : null;
@@ -10055,10 +10072,11 @@ function buyerLinkRows(bid) {
        the first would ever render), and the label comes straight from target_address/target_ref
        since there's no record to look up via recLabel(). */
     var isListingsLive = (t === 'listings_live');
+    var isOml = (t === 'off_market_listings'); /* 2026-11-05: browser assigns; label comes from OM.rows or the row's own target_address */
     var k = isListingsLive ? (t + ':' + (m.target_ref || m.id)) : (t + ':' + m.target_id);
     if (seen[k]) return;
-    if (!isListingsLive && !DATA[t]) return;
-    var lab = isListingsLive ? (m.target_address || m.target_ref || 'Active listing (backfill)') : recLabel(t, m.target_id);
+    if (!isListingsLive && !isOml && !DATA[t]) return;
+    var lab = isListingsLive ? (m.target_address || m.target_ref || 'Active listing (backfill)') : isOml ? omLabelById(m.target_id, m) : recLabel(t, m.target_id);
     if (!lab) return;
     if (m.status === 'confirmed') { seen[k] = 1; linked.push({ type: t, id: String(m.target_id), label: lab, via: 'match', matchId: m.id,
       sent_at: m.sent_at, response: m.response, response_at: m.response_at, response_notes: m.response_notes }); }
@@ -10156,7 +10174,7 @@ function linkChip(bid, l) {
   /* listings_live has no browsable record to jump to (jumpToRecord no-ops safely on it either
      way, via its own !DATA[t] guard, but a plain label reads better than a dead-looking click
      target). Everything else keeps the existing jump-to-record behavior. */
-  var labelSpan = (l.type === 'listings_live')
+  var labelSpan = (l.type === 'listings_live' || l.type === 'off_market_listings')
     ? '<span>' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>'
     : '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(' + "'" + l.type + "','" + l.id + "'" + ')">' + esc((LINK_KIND[l.type] || '') + ': ' + l.label) + '</span>';
   var pushLbl = portalPushLabel(bid, l.type, l.id);
@@ -11961,7 +11979,11 @@ function omRows() {
   var rank = { live: 0, hold: 1, onmls: 2, expired: 3 };
   function newest(a, b) { return String(omIso(b.list_date) || omIso(b.first_seen_at)).localeCompare(String(omIso(a.list_date) || omIso(a.first_seen_at))); }
   function priceOf(r) { return r.list_price == null ? -1 : Number(r.list_price); }
+  /* Soonest to MLS: upcoming debuts of live listings first (nearest date first), then dated rows that are past or no
+     longer live, then everything undated in the usual order. */
+  function mlsGroup(r) { var n = r.expected_mls_date ? omDays(omIso(r.expected_mls_date)) : null; return n === null ? 2 : (n >= 0 && omState(r) === 'live') ? 0 : 1; }
   rows = rows.slice().sort(function (a, b) {
+    if (OM.sort === 'mls') return (mlsGroup(a) - mlsGroup(b)) || (mlsGroup(a) === 0 ? omIso(a.expected_mls_date).localeCompare(omIso(b.expected_mls_date)) : mlsGroup(a) === 1 ? omIso(b.expected_mls_date).localeCompare(omIso(a.expected_mls_date)) : newest(a, b));
     if (OM.sort === 'hi') return priceOf(b) - priceOf(a);
     if (OM.sort === 'lo') return (priceOf(a) < 0 ? 1e12 : priceOf(a)) - (priceOf(b) < 0 ? 1e12 : priceOf(b));
     return (rank[omState(a)] - rank[omState(b)]) || newest(a, b);
@@ -11988,7 +12010,7 @@ function omRowHtml(r, opts) {
   var badges = omBadge(omSrcLabel(r), 'src') + (lease ? omBadge('Lease', 'lease') : '')
     + (st === 'live' ? ((r.status === 'off_mls_dated' || r.status === 'coming_soon') && !opts.inDebut ? omBadge(omStatusLabel(r), 'soon') : '') : omBadge(omStatusLabel(r), 'dead'));
   var ph = omPhoneDigits(r.list_agent_phone), em = omEmail(r);
-  var acts = '';
+  var acts = '<button class="qbtn om-assign" onclick="event.stopPropagation();omPickOpen(\'' + escJs(String(r.id)) + '\',\'' + escJs(domId) + '\',\'' + escJs(String(opts.bid || '')) + '\')">Assign to buyer</button>';
   if (ph) acts += '<a class="qbtn om-call" href="tel:' + ph + '" onclick="event.stopPropagation()">Call ' + esc(omPhoneFmt(ph)) + '</a>';
   if (em) acts += '<a class="qbtn om-mail" href="mailto:' + esc(em) + '" onclick="event.stopPropagation()">Email</a>';
   var agent = omAgentLabel(r);
@@ -12015,8 +12037,10 @@ function omRowHtml(r, opts) {
     + (sub ? '<div class="r2">' + esc(sub) + '</div>' : '')
     + (facts.length ? '<div class="r2">' + esc(facts.join(' · ')) + '</div>' : '')
     + (agentLine ? '<div class="r2">' + esc(agentLine) + '</div>' : '')
+    + omAssignedHtml(r)
     + (opts.extra || '')
     + (acts ? '<div class="om-acts">' + acts + '</div>' : '')
+    + '<div class="om-pick" id="omp-' + esc(domId) + '" onclick="event.stopPropagation()"></div>'
     + '<div class="om-det">' + det + '</div></div>';
 }
 function omToggle(domId) {
@@ -12067,7 +12091,7 @@ function omRender() {
     h += '<div class="om-filters">' + sel('deal', [['all', 'Sales + leases'], ['sale', 'Sales only'], ['lease', 'Leases only']]);
     if (OM.seg !== 'debut') h += sel('stat', [['all', 'Any status'], ['live', 'Live off-market'], ['notlive', 'Expired / hold / on MLS']])
       + sel('addr', [['all', 'Any address'], ['known', 'Address known'], ['withheld', 'Address withheld']])
-      + sel('sort', [['new', 'Newest first'], ['hi', 'Price high to low'], ['lo', 'Price low to high']]);
+      + sel('sort', [['new', 'Newest first'], ['mls', 'Soonest to MLS'], ['hi', 'Price high to low'], ['lo', 'Price low to high']]);
     h += '</div>';
   }
   if (OM.seg === 'debut') { h += omDebutHtml(); }
@@ -12082,11 +12106,173 @@ function omRender() {
   /* Keep the search box focused across re-renders while typing. */
   var hadFocus = document.activeElement && document.activeElement.id === 'om-q', pos = hadFocus ? document.activeElement.selectionStart : 0;
   body.innerHTML = h;
+  omPickPaint(true);
   if (hadFocus) { var q = document.getElementById('om-q'); if (q) { q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) { /* range unsupported on search inputs in some engines */ } } }
 }
 function omSet(k, v) { OM[k] = v; OM.shown = 40; omRender(); }
 var OM_QT = null;
 function omQ(v) { OM.q = String(v || '').toLowerCase().trim(); OM.shown = 40; clearTimeout(OM_QT); OM_QT = setTimeout(omRender, 120); }
+
+/* ---------- assign an off-market listing to buyers (2026-11-05) ----------
+   N: "there's no way to assign any of them to potential buyers". A deliberate tap writes
+   public.matches (buyer_id, target_type='off_market_listings', target_id=<listing uuid>) with
+   status='confirmed' and match_source='manual_offmarket_assign' -- NEVER 'suggested', so it can't land in
+   the triage queue that gates feature work. Only a human tap creates a row; nothing here is bulk.
+   REQUIRES the matches_target_type_check CHECK to allow 'off_market_listings' (migration file shipped
+   with this branch; until it is applied the insert is refused and the picker says "tap to retry").
+   Idempotent: UNIQUE(buyer_id,target_type,target_id) in the DB, and we read the existing rows first so a
+   second assign is a no-op (and a previously dismissed row is reinstated instead of colliding). */
+var OM_T = 'off_market_listings', OM_SRC = 'manual_offmarket_assign';
+var OM_PICK = null;   /* { id, dom, sel:{buyerId:1}, state:'idle'|'checking'|'saving', q, err, token } */
+var OM_GATE = {};     /* 'buyerId|propertyId' -> 'pass' | 'block' | 'err'  (session cache of fn_match_gate) */
+var OM_MCOLS = 'id,buyer_id,target_type,target_id,score,rationale,status,sent_at,response,response_notes,response_at,target_ref,target_address,urgency,match_source,created_at,outcome,outcome_at';
+function omLabelById(id, m) {
+  var r = (OM.rows || []).filter(function (x) { return String(x.id) === String(id); })[0];
+  if (r) return (r.address_withheld ? '' : r.address) || omHere(r) || 'Off-market listing';
+  return (m && (m.target_address || m.target_ref)) || 'Off-market listing';
+}
+function omAssignments(r) {
+  return (DATA.matches || []).filter(function (m) { return m.target_type === OM_T && String(m.target_id) === String(r.id) && m.status !== 'dismissed'; });
+}
+function omAssignedHtml(r) {
+  var names = omAssignments(r).map(function (m) { return recLabel('buyers', m.buyer_id); }).filter(Boolean);
+  names = names.filter(function (n, i) { return names.indexOf(n) === i; });
+  return names.length ? '<div class="om-assigned">Assigned to ' + esc(names.join(', ')) + '</div>' : '';
+}
+function omBuyerList() {
+  return (DATA.buyers || []).filter(function (b) { return b && b.name; }).slice().sort(function (a, b) { return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase()); });
+}
+function omPickOpen(id, dom, preBuyer) {
+  if (OM_PICK && OM_PICK.dom === dom) { omPickClose(); return; }
+  omPickClose();
+  var r = (OM.rows || []).filter(function (x) { return String(x.id) === String(id); })[0]; if (!r) return;
+  OM_PICK = { id: String(id), dom: dom, sel: {}, state: 'idle', q: '', err: '', token: Date.now() };
+  if (preBuyer) OM_PICK.sel[preBuyer] = 1;
+  omPickPaint(false);
+  var host = document.getElementById('omp-' + dom);
+  if (host) { try { host.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { reportError('omPickOpen', e, {toast:false}); } }
+  if (r.property_id) omPickGate(r, OM_PICK.token);
+}
+function omPickClose() {
+  if (OM_PICK) { var h = document.getElementById('omp-' + OM_PICK.dom); if (h) { h.className = 'om-pick'; h.innerHTML = ''; } }
+  OM_PICK = null;
+}
+/* Who is a plausible buyer? fn_match_gate(buyer, property): NULL = passes, text = blocked. Only for listings tied to a
+   property; 8 at a time, cached for the session. The list is shown alphabetically straight away and re-ordered ONCE when
+   the checks finish, so rows never jump under a thumb. */
+async function omPickGate(r, token) {
+  var P = OM_PICK; if (!P || P.token !== token) return;
+  var todo = omBuyerList().filter(function (b) { return !OM_GATE[b.id + '|' + r.property_id]; });
+  if (!todo.length) { omPickPaint(false); return; }
+  P.state = 'checking'; omPickPaint(false);
+  var i = 0;
+  async function worker() {
+    while (i < todo.length) {
+      var b = todo[i++];
+      try {
+        var g = await withTimeout(sb.rpc('fn_match_gate', { p_buyer: b.id, p_property: r.property_id }), 15000, { error: { message: 'timeout' } });
+        OM_GATE[b.id + '|' + r.property_id] = g.error ? 'err' : (g.data === null || g.data === undefined) ? 'pass' : 'block';
+      } catch (e) { OM_GATE[b.id + '|' + r.property_id] = 'err'; reportError('omPickGate', e, {toast:false}); }
+    }
+  }
+  await Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map(worker));
+  if (OM_PICK && OM_PICK.token === token) { OM_PICK.state = 'idle'; omPickPaint(false); }
+}
+function omPickPaint(keepOpenOnly) {
+  var P = OM_PICK; if (!P) return;
+  var host = document.getElementById('omp-' + P.dom);
+  if (!host) return;
+  var r = (OM.rows || []).filter(function (x) { return String(x.id) === P.id; })[0]; if (!r) return;
+  host.className = 'om-pick on';
+  var q = host.querySelector('#omp-q');
+  if (keepOpenOnly || !q) {
+    host.innerHTML = '<input type="search" id="omp-q" placeholder="Find a buyer&hellip;" autocomplete="off" value="' + esc(P.q) + '" oninput="omPickQ(this.value)"><div id="omp-list"></div><div id="omp-go"></div>';
+  }
+  var done = {}; omAssignments(r).forEach(function (m) { done[String(m.buyer_id)] = 1; });
+  var words = P.q.split(/\s+/).filter(Boolean);
+  var all = omBuyerList().filter(function (b) { var n = String(b.name).toLowerCase(); return words.every(function (w) { return n.indexOf(w) !== -1; }); });
+  var gateOf = function (b) { return r.property_id ? OM_GATE[b.id + '|' + r.property_id] : null; };
+  var likely = P.state === 'checking' ? [] : all.filter(function (b) { return gateOf(b) === 'pass' && !done[String(b.id)]; });
+  var inLikely = {}; likely.forEach(function (b) { inLikely[b.id] = 1; });
+  function rowH(b) {
+    var isDone = !!done[String(b.id)];
+    return '<label class="om-pk"><input type="checkbox" ' + (isDone || P.sel[b.id] ? 'checked ' : '') + (isDone ? 'disabled ' : '') + 'onchange="omPickToggle(\'' + escJs(String(b.id)) + '\',this.checked)"><span>' + esc(b.name) + (isDone ? '<small>assigned</small>' : '') + '</span></label>';
+  }
+  var h = '';
+  if (r.property_id && P.state === 'checking') h += '<div class="hint" style="margin:8px 0 0;">Checking who fits&hellip;</div>';
+  if (likely.length) h += '<div class="om-pk-h">Likely fits</div>' + likely.map(rowH).join('');
+  var rest = all.filter(function (b) { return !inLikely[b.id]; });
+  if (rest.length) h += (likely.length ? '<div class="om-pk-h">All buyers</div>' : '') + rest.map(rowH).join('');
+  if (!all.length) h += '<div class="hint" style="margin:10px 0;">No buyers match that.</div>';
+  var list = host.querySelector('#omp-list'); if (list) list.innerHTML = h;
+  var n = Object.keys(P.sel).filter(function (k) { return !done[k]; }).length;
+  var go = host.querySelector('#omp-go');
+  if (go) go.innerHTML = (P.err ? '<div class="hint" style="margin-top:8px;color:var(--clay);">' + esc(P.err) + '</div>' : '')
+    + '<div class="om-pick-go"><button class="qbtn done" ' + (n && P.state !== 'saving' ? '' : 'disabled ') + 'onclick="event.stopPropagation();omPickSave()">' + (P.state === 'saving' ? 'Assigning&hellip;' : n ? 'Assign to ' + n + ' buyer' + (n === 1 ? '' : 's') : 'Pick a buyer') + '</button><button class="qbtn" onclick="event.stopPropagation();omPickClose()">Cancel</button></div>';
+}
+function omPickToggle(bid, on) { if (!OM_PICK) return; if (on) OM_PICK.sel[bid] = 1; else delete OM_PICK.sel[bid]; OM_PICK.err = ''; omPickPaint(false); }
+function omPickQ(v) { if (!OM_PICK) return; OM_PICK.q = String(v || '').toLowerCase().trim(); omPickPaint(false); }
+async function omPickSave() {
+  var P = OM_PICK; if (!P || P.state === 'saving') return; /* double-tap guard */
+  var r = (OM.rows || []).filter(function (x) { return String(x.id) === P.id; })[0]; if (!r) return;
+  var ids = Object.keys(P.sel);
+  if (!ids.length) return;
+  P.state = 'saving'; P.err = ''; omPickPaint(false);
+  try {
+    var ex = await sb.from('matches').select('id,buyer_id,status').eq('target_type', OM_T).eq('target_id', r.id).in('buyer_id', ids);
+    if (ex.error) throw new Error(ex.error.message || 'lookup failed');
+    var have = {}; (ex.data || []).forEach(function (m) { have[String(m.buyer_id)] = m; });
+    var revive = [], fresh = [];
+    ids.forEach(function (b) { if (!have[b]) fresh.push(b); else if (have[b].status !== 'confirmed') revive.push(have[b].id); });
+    if (revive.length) {
+      var up = await sb.from('matches').update({ status: 'confirmed', match_source: OM_SRC, updated_at: nowStamp() }).in('id', revive).select('id');
+      if (up.error) throw new Error(up.error.message || 'update failed');
+    }
+    if (fresh.length) {
+      var addr = r.address_withheld ? null : (r.address || null);
+      var rows = fresh.map(function (b) {
+        var row = { buyer_id: b, target_type: OM_T, target_id: r.id, score: null, rationale: 'Assigned by Nick from the off-market browser', status: 'confirmed', match_source: OM_SRC, target_ref: omHere(r) || null, target_address: addr };
+        if (r.property_id) row.property_id = r.property_id;
+        return row;
+      });
+      var ins = await sb.from('matches').insert(rows).select('id');
+      if (ins.error && String(ins.error.code) !== '23505') throw new Error(ins.error.message || 'insert failed');
+    }
+    var fr = await sb.from('matches').select(OM_MCOLS).eq('target_type', OM_T).eq('target_id', r.id).neq('status', 'dismissed');
+    if (fr.error) throw new Error(fr.error.message || 'reload failed');
+    DATA.matches = (DATA.matches || []).filter(function (m) { return !(m.target_type === OM_T && String(m.target_id) === String(r.id)); }).concat(fr.data || []);
+    ids.forEach(function (b) { logEvent('buyers', b, 'buyer.assigned', (recLabel('buyers', b) || 'Buyer') + ' ↔ ' + omLabelById(r.id)); });
+    var nNew = fresh.length + revive.length;
+    omPickClose();
+    omRender();
+    toast(nNew ? 'Assigned to ' + nNew + ' buyer' + (nNew === 1 ? '' : 's') + ' ✓' : 'Already assigned');
+  } catch (e) {
+    reportError('omPickSave', e, {toast:false});
+    if (OM_PICK === P) { P.state = 'idle'; P.err = 'Couldn’t assign. Tap Assign to retry.'; omPickPaint(false); }
+  }
+}
+
+/* ---------- Today: imminent MLS debuts (2026-11-05) ----------
+   One tappable line, rendered ONLY when something is actually within the next 7 days. Never a zero state, and a
+   failed load renders nothing (there is nothing to act on). Light query: 3 columns, 7-day window. */
+var OM_SOON = { n: 0, at: 0, busy: false };
+async function fetchOmSoon(force) {
+  if (OM_SOON.busy) return;
+  if (!force && OM_SOON.at && Date.now() - OM_SOON.at < 30 * 60 * 1000) return;
+  OM_SOON.busy = true;
+  try {
+    var t0 = todayIso(), d = new Date(); d.setDate(d.getDate() + 7);
+    var r = await withTimeout(sb.from('off_market_listings').select('id,status,on_mls,deal_type,price_period,expected_mls_date').gte('expected_mls_date', t0).lte('expected_mls_date', isoLocal(d)), 15000, { error: { message: 'timeout' }, data: null });
+    if (!r.error && r.data) { OM_SOON.n = r.data.filter(function (x) { return omState(x) === 'live'; }).length; OM_SOON.at = Date.now(); }
+  } catch (e) { reportError('fetchOmSoon', e, {toast:false}); }
+  OM_SOON.busy = false;
+  renderOmSoon();
+}
+function renderOmSoon() {
+  var el = document.getElementById('om-soon'); if (!el) return;
+  var n = OM_SOON.n;
+  el.innerHTML = n > 0 ? '<button class="om-soon" onclick="menuGoOffMarketDebuts()"><span>' + n + ' off-market listing' + (n === 1 ? '' : 's') + ' hit' + (n === 1 ? 's' : '') + ' MLS this week</span><span aria-hidden="true">&rsaquo;</span></button>' : '';
+}
 
 /* ---------- off-market that fits a buyer (2026-11-05) ----------
    READ-ONLY against the matcher: fn_match_gate (NULL = passes, text = the reason it is blocked) and
@@ -12116,7 +12302,7 @@ function buyerOffMarketHtml(bid) {
     var sc = x.sc || {}, known = (sc.known || []).map(function (k) { return BOM_KNOWN_LABEL[k] || k; });
     var fit = (sc.score != null) ? ('Rough fit ~' + sc.score + '/10' + (sc.confidence === 'low' ? ' (little to go on)' : '')) : 'Fit not scored';
     var basis = known.length ? 'Based on ' + known.join(', ') + '. Style and condition unknown.' : 'Nothing known beyond the listing itself.';
-    return omRowHtml(x.r, { dom: 'bom-' + bid + '-' + x.r.id, extra: '<div class="om-fit"><b>' + esc(fit) + '</b><br>' + esc(basis) + '</div>' });
+    return omRowHtml(x.r, { dom: 'bom-' + bid + '-' + x.r.id, bid: bid, extra: '<div class="om-fit"><b>' + esc(fit) + '</b><br>' + esc(basis) + '</div>' });
   }).join('');
   var more = hits.length > cap ? '<button class="qbtn om-more" onclick="event.stopPropagation();BOM[\'' + escJs(String(bid)) + '\'].all=true;render()">Show all ' + hits.length + '</button>' : '';
   return h + head + (hits.length ? rows + more : '<div class="hint">Nothing off-market passes right now.</div>')
