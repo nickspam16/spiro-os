@@ -1,0 +1,73 @@
+name: Undo last backend change
+
+# Puts the edge functions back the way they were before the most recent change to backend/.
+# GitHub > Actions > "Undo last backend change" > Run workflow.
+#
+# It does NOT undo database migrations. Those only move forward (see docs/HOW-DEPLOY-WORKS.md).
+# After using it, also press "Revert" on the pull request that caused the problem, so the
+# repository matches what is live and the next deploy does not bring the bad change back.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Which Supabase project'
+        type: choice
+        options: [ crm, portal ]
+        default: crm
+      commit:
+        description: 'Leave BLANK to undo the last change. (Advanced: paste a commit id to restore that exact version.)'
+        type: string
+        required: false
+
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: supabase/setup-cli@v3.2.0
+        with:
+          version: 3.0.0
+
+      - name: Work out which version to restore
+        id: target
+        env:
+          GIVEN: ${{ inputs.commit }}
+          PROJECT: ${{ inputs.project }}
+        run: |
+          set -euo pipefail
+          if [ -n "$GIVEN" ]; then
+            target="$GIVEN"
+          else
+            latest="$(git log -1 --format=%H -- "backend/$PROJECT")"
+            [ -n "$latest" ] || { echo "::error::No earlier backend change found for $PROJECT."; exit 1; }
+            target="$(git rev-parse "$latest^")"
+            echo "Latest change to $PROJECT: $(git log -1 --format='%h %s' "$latest")"
+          fi
+          git cat-file -e "$target^{commit}" || { echo "::error::That commit id does not exist."; exit 1; }
+          echo "Restoring $PROJECT functions to the version at: $(git log -1 --format='%h %s' "$target")"
+          echo "sha=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Put the old version of the backend folder in place (nothing is committed)
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          set -euo pipefail
+          rm -rf "backend/$PROJECT/supabase/functions" "backend/$PROJECT/supabase/config.toml"
+          git checkout "${{ steps.target.outputs.sha }}" -- "backend/$PROJECT/supabase/functions" "backend/$PROJECT/supabase/config.toml" \
+            || { echo "::error::That older version has no functions folder, so there is nothing to restore. Use the Revert button on the pull request instead."; exit 1; }
+
+      - name: Redeploy the restored functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: scripts/deploy-backend.sh "${{ inputs.project }}" all

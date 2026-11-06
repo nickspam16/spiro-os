@@ -1,0 +1,65 @@
+name: Deploy backend
+
+# Publishes Supabase edge functions and database migrations from the backend/ folder.
+# Runs by itself when a change to backend/ lands on main. Can also be started by hand:
+# GitHub > Actions > "Deploy backend" > Run workflow.
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'backend/**' ]
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Which Supabase project'
+        type: choice
+        options: [ crm, portal, both ]
+        default: both
+
+# One deploy at a time. A second one waits instead of racing the first.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [ crm, portal ]
+    steps:
+      - name: Skip projects that were not asked for
+        id: want
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.project }}" != "both" ] && [ "${{ inputs.project }}" != "${{ matrix.project }}" ]; then
+            echo "run=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.want.outputs.run == 'yes'
+        with:
+          fetch-depth: 0
+
+      - uses: supabase/setup-cli@v3.2.0
+        if: steps.want.outputs.run == 'yes'
+        with:
+          version: 3.0.0
+
+      - name: Deploy ${{ matrix.project }}
+        if: steps.want.outputs.run == 'yes'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_CRM_DB_URL: ${{ secrets.SUPABASE_CRM_DB_URL }}
+          SUPABASE_PORTAL_DB_URL: ${{ secrets.SUPABASE_PORTAL_DB_URL }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            scripts/deploy-backend.sh "${{ matrix.project }}" changed "${{ github.event.before }}"
+          else
+            scripts/deploy-backend.sh "${{ matrix.project }}" all
+          fi
