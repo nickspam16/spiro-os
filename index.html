@@ -467,6 +467,93 @@
   /* Content must not hide behind a fixed bar — the classic way a tab bar eats the last card. */
   #screen-app { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* ---- 2026-11-05 type and chrome pass ---------------------------------------------------------
+   Why it felt off, measured on the rendered page:
+   1. Buttons, tabs and chips had no font-family, so the browser painted them in Arial while the
+      rest of the app is Garamond. Two typefaces side by side read as unfinished.
+   2. Garamond has a small x-height (41 percent of the em, against 52 for Arial), so a 15px line of
+      content looked like 12px. The content sizes were set as if the face were a sans.
+   3. The masthead (36px mark, 23px wordmark, subtitle, three boxed buttons, double rule) took more
+      room than the first card on a phone, and the labels around the content were louder than it.
+   Palette, face and layout are unchanged. Only scale, weight and spacing move: content up, chrome down. */
+button, input, select, textarea { font-family: inherit; }
+
+/* Masthead recedes */
+.app { padding-top: 22px; }
+.hdr { padding-bottom: 14px; margin-bottom: 16px; box-shadow: none; }
+.brand { gap: 10px; }
+.brand .mono { width: 26px; height: 26px; opacity: .9; }
+.brand .wm .nm { font-size: 19px; }
+.brand .wm .tag { display: none; }
+.hdr-actions { border: 0; border-radius: 0; overflow: visible; gap: 2px; }
+.hdr-actions .refresh { border: 0; border-radius: var(--radius); padding: 9px 12px; font-size: 17px; color: var(--muted); }
+.hdr-actions .refresh + .refresh { border-left: 0; }
+#more-menu-btn { border: 0 !important; width: 44px; height: 44px; font-size: 20px; }
+.today-row { margin-bottom: 14px; }
+.today-row .sub { font-size: 14.5px; color: var(--faint); }
+#sync-age { font-size: 13px; opacity: .85; }
+
+/* Content leads */
+.sub { font-size: 16px; font-weight: 400; }
+.hint { font-size: 15px; line-height: 1.55; }
+.empty { font-size: 16px; font-weight: 400; }
+.qi .txt, .qi .t1 { font-size: 17px; }
+.qi .t2 { font-size: 14.5px; font-weight: 400; color: var(--ink-dim); }
+.row .r1 { font-size: 18px; }
+.row .r2 { font-size: 15px; }
+.row .det { font-size: 15.5px; }
+.cap-item { font-size: 15.5px; }
+.qbtn { font-size: 14.5px; padding: 8px 13px; }
+.pill { font-size: 12.5px; }
+.tab { font-size: 15.5px; }
+.filter-chip { font-size: 13.5px; }
+.chip-row .filter-chip { font-size: 13.5px; }
+.hbtn { font-size: 13px; }
+.card { padding: 20px 18px; }
+#panel-slot .card { font-size: 16.5px; }
+#panel-slot .hint { font-size: 14.5px; }
+#panel-slot .card > .hint:first-of-type { font-size: 14.5px; color: var(--ink-dim); }
+#match-triage-card .hint, #mt-list .hint { font-size: 14.5px; }
+.lpsub { font-size: 15.5px; }
+.lpnotes { font-size: 16.5px; }
+#listing-page-body .det { font-size: 16.5px; }
+#listing-page-body .det .hint { font-size: 15px; }
+#listing-page-body .det .qbtn, .lpactions .qbtn, .lpactions label.qbtn { font-size: 14px; }
+.lptab { font-size: 13.5px; }
+input::placeholder, textarea::placeholder { font-size: 16px; }
+
+/* Small caps labels: still quiet, no longer unreadable */
+.card h2 { font-size: 11.5px; letter-spacing: .16em; margin-bottom: 16px; padding-bottom: 12px; }
+.flabel, #panel-slot .flabel { font-size: 11.5px; letter-spacing: .12em; }
+#panel-slot .flabel span { font-size: 14px; }
+.bucket { font-size: 11.5px; letter-spacing: .14em; }
+.stat .lbl { font-size: 11px; letter-spacing: .06em; }
+.chip-label { font-size: 11.5px; }
+.foot { font-size: 11px; letter-spacing: .1em; }
+#panel-slot .card > h2 .hbtn { font-size: 13px; }
+
+/* Primary action: a sentence, not a shout */
+button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; font-weight: 500; min-height: 46px; }
+
+/* Toast: readable, calm */
+#toast { font-size: 15px; padding: 12px 20px; border-radius: 10px; line-height: 1.4; }
+
+/* Sign-in screens: the mark is an introduction, not a banner */
+.auth-hero img { width: 72px; margin-bottom: 14px; }
+.auth-hero .nm { font-size: 28px; }
+
+@media (pointer: coarse) {
+  button.primary { font-size: 16px; min-height: 48px; }
+  .hbtn { font-size: 13.5px; }
+  #tabbar .tb { font-size: 13px; letter-spacing: .01em; text-transform: none; padding: 12px 2px 10px; }
+  #tabbar .tb[aria-current="page"] { font-weight: 600; }
+  #tabbar .tb-n { font-size: 12px; }
+  #omni-text { min-height: 86px; }
+}
+@media (max-width: 600px) {
+  .app { padding-left: 18px; padding-right: 18px; }
+}
 </style>
 </head>
 <body>
@@ -1144,7 +1231,7 @@ function openPanel(cardId) {
   try {
     if (history.state && history.state.spiroPanel) history.replaceState({ spiroPanel: cardId }, '', '');
     else history.pushState({ spiroPanel: cardId }, '', '');
-  } catch (e) { reportError('openPanel', e, {toast:true}); }
+  } catch (e) { reportError('openPanel', e); }
 }
 /* The visible Back button routes through history when we own the top entry, so the browser's
    own Back and ours stay in step; popstate below does the actual close. */
@@ -2710,17 +2797,16 @@ function askFailure(mode, r, fallback) {
   return fallback + ' (' + raw.slice(0, 80) + ')';
 }
 function reportError(source, err, page) {
-  /* P6 (2026-11-05): third arg may be an options object, {toast:true}, instead of the page string.
-     toast:true also tells the user; the telemetry path below is unchanged. Default is no toast so
-     background loops cannot spam. */
+  /* Third arg is the page name, or an options object. Internal failures go to the console and to
+     client_errors and nowhere else: a toast saying "something failed in onerror" gave him nothing
+     to do (UX pass, 2026-11-05, his words: "notifications about something in the code that failed
+     popping up first as if i can do anything about it"). The options object is still accepted so
+     existing call sites keep working; its toast flag is ignored on purpose. When a failure is one
+     he can act on (a save that did not go through), the call site says so in plain words with
+     toast() or failToast(). */
   var opts = (page && typeof page === 'object') ? page : null;
   if (opts) page = null;
   console.error('[spiro]', source, err);
-  var tkey = source + '|' + String((err && err.message) || err).slice(0, 200);
-  if (opts && opts.toast && !_toastSeen[tkey]) {   /* once per distinct fault per session: a render loop must not strobe the toast */
-    _toastSeen[tkey] = 1;
-    try { toast('Something failed in ' + source + ' — ' + String((err && err.message) || err)); } catch (e0) { console.warn('[spiro] toast failed', e0); }
-  }
   try {
     if (_errCount >= 20) return;                  /* per-session cap: a render loop must not flood */
     var msg = String((err && (err.message || err.reason || err)) || 'unknown').slice(0, 500);
@@ -2738,13 +2824,18 @@ function reportError(source, err, page) {
     }).then(function () {}, function () {});
   } catch (e) { console.warn('[spiro] reportError itself failed', e); /* never let the error reporter throw */ }
 }
-window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message, e.error ? { toast: true } : null); });
+window.addEventListener('error', function (e) { reportError('onerror', e.error || e.message); });
 window.addEventListener('unhandledrejection', function (e) { reportError('unhandledrejection', e.reason); });
 /* One save-failure path (P6, 2026-11-05): same message and same return as the 34 inline copies it
    replaced, plus the error now reaches console and client_errors. */
 function saveFailed(err, context) {
   toast('Could not save — try again');
   reportError('save:' + context, err);
+}
+/* A failure he can act on: say it in his words, keep the technical detail where the developer looks. */
+function failToast(source, err, plain) {
+  reportError(source, (err instanceof Error) ? err : new Error(String(err)));
+  toast(plain);
 }
 function toast(msg) {
   var t = document.getElementById('toast');
@@ -3183,10 +3274,10 @@ function nextEscrowDeadline(tx) {
 /* One card's crash must never blank the rest of the home screen (2026-07-31; the buildable-blob
    throw inside renderBrowse blanked the ENTIRE Records list on two builds). Each renderer runs
    isolated; a throw is reported to client_errors and the remaining cards still paint. */
-function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e, { toast: true }); } }
+function safeRender(label, fn) { try { fn(); } catch (e) { reportError('render:' + label, e); } }
 function render() {
   var sy = window.scrollY || window.pageYOffset || 0;
-  if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { reportError('render', e, {toast:true}); /* */ } }
+  if (LISTING_PAGE_ID && PANEL_HOME && PANEL_HOME.id === 'listing-card') { try { setTimeout(renderListingPage, 0); } catch (e) { reportError('render', e); } }
   safeRender('stats', renderStats); safeRender('pulse', renderPulse);
   safeRender('syshealth', renderSystemLine);
   safeRender('tabsync', tabSync);
@@ -4137,7 +4228,7 @@ async function mergeContacts(keepId, dropId) {
   var r = await sb.rpc('fn_merge_contacts', { p_keep: keepId, p_drop: dropId, p_commit: true });
   if (r && r.error) { toast('Could not merge'); return; }
   var out = r && r.data ? r.data : null;
-  if (!out || !out.merged) { toast((out && out.error) ? String(out.error) : 'Could not merge'); return; }
+  if (!out || !out.merged) { failToast('merge', (out && out.error) || 'merge returned nothing', 'Could not merge — try again'); return; }
   var mid = out.merge_id;
   toastUndo(out.dropped + ' merged into ' + out.kept + ' (' + out.rows_repointed + ' records moved)',
     function () { undoMerge(mid); });
@@ -5692,7 +5783,7 @@ async function movePropertyPhoto(photoId, propertyId, elId, dir) {
   var el = document.getElementById(elId); if (el) el.innerHTML = '<div class="hint">Reordering…</div>';
   for (var k = 0; k < updates.length; k++) {
     var up = await sb.from('property_photos').update({ sort_order: updates[k].sort_order, updated_at: nowStamp() }).eq('id', updates[k].id);
-    if (up.error) { toast('Could not reorder: ' + up.error.message); break; }
+    if (up.error) { failToast('photo.reorder', up.error, 'Could not reorder — try again'); break; }
   }
   logEvent('properties', propertyId, 'photo.reordered', 'Reordered photos');
   renderPropertyGallery(propertyId, elId);
@@ -5702,7 +5793,7 @@ async function pickPropertyPhotos(propertyId, elId, input) {
   var el = document.getElementById(elId); if (el) el.innerHTML = '<div class="hint">Uploading…</div>';
   var r = await uploadPropertyPhotos(propertyId, files);
   if (input) input.value = '';
-  if (r.error && !r.uploaded) toast('Upload failed: ' + r.error);
+  if (r.error && !r.uploaded) failToast('photo.upload', r.error, 'Upload failed — try again');
   else if (r.uploaded) toast('Added ' + r.uploaded + ' photo' + (r.uploaded > 1 ? 's' : '') + ' ✓');
   renderPropertyGallery(propertyId, elId);
 }
@@ -5712,7 +5803,7 @@ async function removePropertyPhoto(photoId, propertyId, elId) {
   if (!row) return;
   if (!window.confirm('Remove this photo? This cannot be undone.')) return;
   var del = await sb.from('property_photos').delete().eq('id', photoId);
-  if (del.error) { toast('Could not remove: ' + del.error.message); return; }
+  if (del.error) { failToast('photo.remove', del.error, 'Could not remove — try again'); return; }
   try { await sb.storage.from('photos').remove([row.storage_path]); } catch (e) { reportError('removePropertyPhoto', e, {toast:false}); }
   DATA.property_photos = (DATA.property_photos || []).filter(function (p) { return String(p.id) !== String(photoId); });
   logEvent('properties', propertyId, 'photo.removed', 'Removed a photo');
@@ -5858,7 +5949,7 @@ async function captureAttachPhotos(pid) {
   }
   var r = await uploadPropertyPhotos(pid, sel);
   if (r.uploaded) { toast('Saved ' + r.uploaded + ' photo' + (r.uploaded > 1 ? 's' : '') + ' ✓'); captureClearImages(); if (ph) ph.innerHTML = ''; loadAll(false); }
-  else { toast('Could not save: ' + (r.error || 'unknown')); if (ph) { ph.innerHTML = captureKeepControlHtml(); captureKeepRender(); } }
+  else { failToast('capture.keep', r.error || 'unknown', 'Could not save — try again'); if (ph) { ph.innerHTML = captureKeepControlHtml(); captureKeepRender(); } }
 }
 function captureDiscardPhotos() { captureClearImages(); var ph = document.getElementById('omni-photo'); if (ph) ph.innerHTML = ''; }
 
@@ -5921,7 +6012,7 @@ async function dsApprove(envelopeId, propertyId, addr) {
   if (!pid && addr) {
     var ak = String(addr).toLowerCase().replace(/\s+/g, ' ').trim();
     var np = await sb.from('properties').insert({ address_key: ak, display_address: addr }).select('id,address_key,display_address');
-    if (np.error) { toast('Could not create property: ' + np.error.message); return; }
+    if (np.error) { failToast('deal.property', np.error, 'Could not create the property — try again'); return; }
     pid = np.data[0].id; DATA.properties.push(np.data[0]);
   }
   if (!pid) { toast('Pick a property first'); return; }
@@ -5932,11 +6023,11 @@ async function dsApprove(envelopeId, propertyId, addr) {
     var ins = await sb.from('transactions').insert({ address: (prop && (prop.display_address || prop.address_key)) || addr || 'Unknown',
       property_id: pid, notes: 'Reconstructed from DocuSign document history. Price, dates, and side pending review.',
       extra: { source: 'docusign', reconstructed: true }, activity: [], archived: false }).select('id');
-    if (ins.error) { toast('Could not create deal: ' + ins.error.message); return; }
+    if (ins.error) { failToast('deal.insert', ins.error, 'Could not create the deal — try again'); return; }
     txId = ins.data[0].id;
   }
   var up = await sb.from('esign_envelopes').update({ property_id: pid, transaction_id: txId, updated_at: nowStamp() }).eq('id', envelopeId).select('id');
-  if (up.error) { toast('Could not file: ' + up.error.message); return; }
+  if (up.error) { failToast('deal.file', up.error, 'Could not file that — try again'); return; }
   logEvent('esign_envelopes', envelopeId, 'docusign.anchored', 'Filed DocuSign doc to a property/deal (extract engine)');
   toast('Filed ✓'); loadAll(false);
 }
@@ -6932,7 +7023,7 @@ async function setDealKind(sid, kind) {
 async function generateTcTasks(sid, silent) {
   var r = await sb.rpc('fn_generate_transaction_tasks', { p_transaction_id: sid, p_commit: true });
   if (r.error) { toast('Could not generate tasks — try again'); return; }
-  if (r.data && r.data.error) { toast(r.data.error); return; }
+  if (r.data && r.data.error) { failToast('tasks.generate', r.data.error, 'Could not generate tasks — try again'); return; }
   var t = await sb.from('transaction_tasks').select('*').eq('transaction_id', sid);
   if (!t.error && t.data) {
     DATA.transaction_tasks = (DATA.transaction_tasks || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(t.data);
@@ -7081,7 +7172,7 @@ function tcDocRowHtml(d) {
 async function generateTcDocuments(sid, silent) {
   var r = await sb.rpc('fn_generate_transaction_documents', { p_transaction_id: sid, p_commit: true });
   if (r.error) { toast('Could not generate documents — try again'); return; }
-  if (r.data && r.data.error) { if (!silent) toast(r.data.error); return; }
+  if (r.data && r.data.error) { reportError('docs.generate', new Error(String(r.data.error))); if (!silent) toast('Could not generate documents — try again'); return; }
   var t = await sb.from('transaction_documents').select('*').eq('transaction_id', sid);
   if (!t.error && t.data) {
     DATA.transaction_documents = (DATA.transaction_documents || []).filter(function (x) { return String(x.transaction_id) !== sid; }).concat(t.data);
@@ -9208,7 +9299,7 @@ async function stageToPortal(table, id) {
     if (!tok) { toast('Sign in first'); return; }
     var r = await fetch(PORTAL_FN, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ stage: { ref: ref, text: stageText(table, row) } }) });
     var j = await r.json();
-    if (!r.ok || j.error) { toast('Could not stage: ' + (j.error || r.status)); return; }
+    if (!r.ok || j.error) { failToast('photo.stage', j.error || r.status, 'Could not stage that photo — try again'); return; }
     if (j.staged) {
       logEvent(table, id, 'portal.staged', 'Staged to portal queue: ' + (row.address_area || row.address || ''));
       PHOTOLINKS[ref] = { queued: true };
@@ -9277,7 +9368,7 @@ async function tclDraft(i) {
   var h = TCL_LAST[i]; if (!h) return;
   var pillar = h.hooks && h.hooks.indexOf('then/now') >= 0 ? 'then_now' : (h.market_status === 'active' ? 'curated' : 'architect');
   var r = await sb.rpc('fn_hero_post', { p_hero: h.id, p_pillar: pillar, p_status: 'draft' });
-  if (r.error || !(r.data && r.data.ok)) { toast('Could not draft: ' + esc((r.error && r.error.message) || (r.data && r.data.error) || '')); return; }
+  if (r.error || !(r.data && r.data.ok)) { failToast('draft', (r.error && r.error.message) || (r.data && r.data.error) || 'draft failed', 'Could not write that draft — try again'); return; }
   toast('Draft created · prospect linked'); logEvent('prospects', r.data.prospect_id, 'tcl.drafted', 'Drafted a ' + pillar + ' post for ' + (h.address || ''));
   if (typeof fetchAll === 'function') fetchAll();
 }
@@ -9366,7 +9457,7 @@ async function phOpenCrm(crmId) { var m = phMineCrm().filter(function (x) { retu
   if (m.portal_listing_id && phListing(m.portal_listing_id)) { phSelect(m.portal_listing_id); return; }
   phStatus('Setting up a private photo home for ' + (m.address || 'this listing') + '…');
   var jr = await photoCall({ action: 'ensure_portal_listing', crm_id: crmId }); phStatus('');
-  if (!jr.ok || !jr.listing_id) { toast(jr.error || 'Could not set up'); return; }
+  if (!jr.ok || !jr.listing_id) { failToast('photo.setup', jr.error || 'setup failed', 'Could not set up photos — try again'); return; }
   photosAt = 0; await fetchPhotos(true); phSelect(jr.listing_id); if (jr.created) toast('Created as a private draft — nothing is published'); }
 function phRow(l) { var hero = l.photos[0]; return '<div class="qi" onclick="phSelect(\'' + l.id + '\')" style="gap:10px;"><div class="phmini">' + (hero ? phImg(hero.path) : '<div class="phph"></div>') + '</div><div class="txt">' + esc(phLabel(l)) + '<div class="hint" style="margin:2px 0 0;">' + esc(l.status) + (l.mine ? ' · mine' : '') + '</div></div><span class="pill' + (l.n === 0 ? ' warn' : '') + '">' + l.n + '</span></div>'; }
 function phBig(path) { var u = PHOTO_URLS[path]; if (!u) return; var l = PHOTOS_SEL ? phListing(PHOTOS_SEL) : null; var paths = l ? l.photos.map(function (p) { return p.path; }) : [path]; var i = Math.max(0, paths.indexOf(path)); phLightbox(paths, i); }
@@ -9388,7 +9479,7 @@ async function phUpload(listingId, files) {
   phStatus('Uploading ' + payload.length + '…');
   var jr = await photoCall({ action: 'upload', listing_id: listingId, files: payload }, 120000);
   phStatus('');
-  if (!jr.ok) { toast(jr.error || (jr.errors && jr.errors[0]) || 'Upload failed'); return; }
+  if (!jr.ok) { failToast('photo.upload', jr.error || (jr.errors && jr.errors[0]) || 'upload failed', 'Upload failed — try again'); return; }
   toast('Added ' + jr.added + ' photo' + (jr.added === 1 ? '' : 's')); photosAt = 0; await fetchPhotos(true);
 }
 async function phAttach(inboxId, listingId) { if (!listingId) return; phStatus('Attaching…'); var jr = await photoCall({ action: 'attach_inbox', inbox_id: inboxId, listing_id: listingId }); phStatus(''); toast(jr.ok ? 'Attached ' + jr.moved + ' photo' + (jr.moved === 1 ? '' : 's') : 'Could not attach'); photosAt = 0; fetchPhotos(true); }
@@ -9447,7 +9538,7 @@ async function phDrive(jobId) {
     var job = PH_JOB.job; var have = (job.variants || []).length, want = Number(job.target_n || 3);
     if (job.status === 'picked' || job.status === 'discarded' || job.status === 'failed' || have >= want) break;
     var r = await photoCall({ action: 'render_next', job_id: jobId }, 170000);
-    if (!r.ok) { toast(r.error || 'Render call failed — tap the job to resume'); break; }
+    if (!r.ok) { failToast('photo.render', r.error || 'render call failed', 'That render stopped — tap the job to resume'); break; }
     PH_JOB = { job: r.job, urls: r.urls || {} }; renderPhotos();
     /* Frame check (client, v5.237): the model sometimes re-angles or mirrors the room. Compare the new
        variant's ceiling band + frame edges to the original; if it moved, tell the engine to reject and
@@ -9464,7 +9555,7 @@ async function phDrive(jobId) {
     }
     if (r.job.error && (r.job.variants || []).length === have) {
       if (/timeout|hung|did not answer|not enough time/i.test(r.job.error) && !PH_JOB._retried) { PH_JOB._retried = true; phStatus('Model timed out — retrying once (not charged)…'); continue; }
-      toast(r.job.error); phStatus(''); break;
+      failToast('photo.job', r.job.error, 'That render did not finish — try again'); phStatus(''); break;
     }
     phStatus('');
   }
@@ -9482,7 +9573,7 @@ async function phStageRun() { if (phStaging || !PH_JOB || !PH_JOB.compose) retur
   PH_QUEUE = ids.slice(1); phDrive(ids[0]);
 }
 async function phOpenJob(id) { phPollStop(); phStatus('Loading…'); var jr = await photoCall({ action: 'job', job_id: id }); phStatus(''); if (!jr.ok) { toast('Could not load job'); return; } PH_JOB = { job: jr.job, urls: jr.urls || {} }; renderPhotos(); phScrollTop(); var owed = (jr.job.status === 'running' || jr.job.status === 'queued') && (jr.job.variants || []).length < Number(jr.job.target_n || 3); if (owed) phDrive(id); }
-async function phPick(id, i, replace) { phStatus('Saving…'); var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); phStatus(''); if (!jr.ok) { toast(jr.error || 'Could not save'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; phPollStop(); photosAt = 0; await fetchPhotos(true); }
+async function phPick(id, i, replace) { phStatus('Saving…'); var jr = await photoCall({ action: 'pick', job_id: id, variant: i, replace_original: !!replace }); phStatus(''); if (!jr.ok) { failToast('photo.pick', jr.error || 'pick failed', 'Could not save — try again'); return; } toast('Added to the listing — labeled “Virtually staged”'); PH_JOB = null; phPollStop(); photosAt = 0; await fetchPhotos(true); }
 /* Refine jobs (2026-09-09): the left image is the render being refined, not the room photo. Nick:
    "once it's refined, there's no option to choose the original rendering". Pick it via its parent job. */
 function phFileName(job, i) { var l = phListing(job.listing_id) || {}; var a = String(phLabel(l) || 'listing').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase(); return a + '-staged-' + (PH_STYLE_LABELS[job.style_resolved || job.style] || job.style || 'render').toLowerCase() + '-v' + (i + 1) + '.jpg'; }
@@ -9987,7 +10078,7 @@ async function announceToBuyer(buyerId, count) {
     var j = await r.json();
     var nf = (j && j.notify) || {};
     if (r.ok && nf.skipped) { toast('Nothing new to announce for ' + name); if (b) b.unnotified = 0; renderPortal(); return; }
-    if (!r.ok || !j.ok) { toast('Could not send: ' + (nf.error || (j && j.error) || r.status)); return; }
+    if (!r.ok || !j.ok) { failToast('portal.send', nf.error || (j && j.error) || r.status, 'Could not send — try again'); return; }
     var sent = nf.listings || count;
     toast('Announced ' + sent + ' listing' + (sent === 1 ? '' : 's') + ' to ' + name + ' ✓');
     logEvent('buyers', (b && b.crm_buyer_id) || buyerId, 'portal.announced', 'Announced ' + sent + ' new listing' + (sent === 1 ? '' : 's') + ' to ' + name + ' via the portal');
@@ -11401,7 +11492,7 @@ async function previewMarkInvited(listingId) {
   /* upsert on (listing_id, agent_id): re-marking the same agent is idempotent, never a duplicate row.
      invited_at is left to the column default on first insert and preserved on re-mark. */
   var r = await sb.from('listing_preview_agents').upsert(rows, { onConflict: 'listing_id,agent_id' }).select('agent_id');
-  if (r.error) { toast('Preview tracking turns on once the preview table is added — the draft still works'); return; }
+  if (r.error) { reportError('preview.track', r.error); /* tracking is optional; the draft itself still works, nothing for him to do */ return; }
   var laddr = (recOf('listings', listingId) || {}).address || 'a listing';
   ids.forEach(function (aid) { logEvent('agents', aid, 'preview.invited', 'Invited to preview ' + laddr); });
   toast('Marked ' + ids.length + ' invited ✓');
@@ -14102,7 +14193,7 @@ async function permitLedgerAutoFill(table, id) {
     if (!res) res = { error: 'Lookup failed — try again' };
   } catch (e) { res = { error: 'Lookup failed — try again' }; reportError('permitLedger.lookup', e); }
   if (btn) { btn.disabled = false; btn.textContent = 'Pull permit history'; }
-  if (res.error && !('permit_count' in res)) { toast(res.error); return; }
+  if (res.error && !('permit_count' in res)) { failToast('permits', res.error, 'Could not check permits — try again'); return; }
   res.pulled_at = new Date().toISOString();
   x.extra = x.extra || {}; x.extra.permit_ledger = res;
   var sv = await sb.from(table).update({ extra: x.extra }).eq('id', id).select('id');
