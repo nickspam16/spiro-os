@@ -1,0 +1,89 @@
+name: Copy backend from Supabase into the repo
+
+# Run this ONCE to fill the backend/ folder with what is live in Supabase today, and again any time
+# someone has changed Supabase by hand. It opens a pull request; it never changes Supabase itself.
+# GitHub > Actions > "Copy backend from Supabase into the repo" > Run workflow.
+#
+# Before anything is saved it scans every file for passwords and keys. If it finds one, it stops
+# and no pull request is created.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Which Supabase project'
+        type: choice
+        options: [ crm, portal ]
+        default: crm
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: backend-import-${{ inputs.project }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: supabase/setup-cli@v3.2.0
+        with:
+          version: 3.0.0
+
+      - name: Download the edge functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT: ${{ inputs.project }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || { echo "::error::The SUPABASE_ACCESS_TOKEN secret is missing. See docs/HOW-DEPLOY-WORKS.md, step 3."; exit 1; }
+          if [ "$PROJECT" = "crm" ]; then ref=mtnkkeftmcfxeygkbkja; else ref=bnrkcndpwfvuvtyrpivf; fi
+          supabase functions download --remote="$ref" --use-api --yes --workdir "backend/$PROJECT"
+
+      - name: Download the migration history (only if the database secret exists)
+        env:
+          PROJECT: ${{ inputs.project }}
+          DB_URL: ${{ inputs.project == 'crm' && secrets.SUPABASE_CRM_DB_URL || secrets.SUPABASE_PORTAL_DB_URL }}
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::warning::No database secret set for $PROJECT, so migrations were not copied. Functions only."
+            exit 0
+          fi
+          supabase migration fetch --remote="$DB_URL" --yes --workdir "backend/$PROJECT"
+
+      - name: Scan for passwords and keys (stops everything if one is found)
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: node scripts/scan-secrets.mjs "backend/$PROJECT"
+
+      - name: Open a pull request with the result
+        id: pr
+        uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          branch: backend-import/${{ inputs.project }}
+          base: main
+          add-paths: backend/${{ inputs.project }}
+          commit-message: 'Backend: copy ${{ inputs.project }} from Supabase'
+          title: 'Backend: copy ${{ inputs.project }} from Supabase'
+          body: |
+            This is a copy of what is live in Supabase right now. Nothing here changes Supabase.
+            The secret scan found no passwords or keys.
+
+            When this merges, the deploy tool re-publishes these same functions once. They are identical to what is live, so nothing should change for the app.
+          delete-branch: true
+
+      - name: Start the safety checks on that pull request
+        # Pull requests opened by a workflow do not start checks by themselves. This starts them.
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref "backend-import/${{ inputs.project }}"
