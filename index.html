@@ -1891,7 +1891,8 @@ function mtLogShown(ids) {
 var MT_VIEW = 'list';
 var MT_DEEP_DONE = false;
 var MT_DECK = { loaded: false, loading: false, err: null, stopped: false, cards: [], i: 0, reasons: [], reasonsPos: [],
-  cap: 5, extra: false, waiting: 0, sheet: null, ft: '', session: { done: 0, newBuyers: {}, reasonsGiven: 0 },
+  cap: 5, base: 0, slots: 5, groups: [], waitTotal: 0, open: {}, houses: {}, gBusy: {}, gErr: {}, relBusy: {}, wcard: null,
+  sheet: null, ft: '', session: { done: 0, newBuyers: {}, reasonsGiven: 0 },
   last: null, flushing: false, flushTimer: null, shBusy: {}, shMsg: {}, shDone: {} };
 var MTD_QKEY = 'spiro.deck.queue.v1', MTD_DKEY = 'spiro.deck.day.v1', MTD_TOP_N = 8;
 function mtdLsGet(k) { try { return localStorage.getItem(k); } catch (e) { reportError('mtdLsGet', e, {toast:false}); return null; } }
@@ -1907,7 +1908,7 @@ function mtdMoney(n) { if (n == null || n === '') return 'Price not listed'; ret
 function mtdPaused(buyerId) { var b = recOf('buyers', buyerId); return !!(b && b.matching_paused_reason); }
 function mtSetView(v) {
   MT_VIEW = (v === 'deck') ? 'deck' : 'list';
-  if (MT_VIEW === 'deck') { MT_DECK.loaded = false; MT_DECK.err = null; MT_DECK.stopped = false; MT_DECK.sheet = null; MT_DECK.ft = ''; MT_DECK.extra = false; }
+  if (MT_VIEW === 'deck') { MT_DECK.loaded = false; MT_DECK.err = null; MT_DECK.sheet = null; MT_DECK.wcard = null; MT_DECK.ft = ''; MT_DECK.open = {}; MT_DECK.houses = {}; MT_DECK.gErr = {}; }
   renderMatchTriage();
 }
 function mtDeepLink() {
@@ -1916,22 +1917,25 @@ function mtDeepLink() {
 window.addEventListener('hashchange', mtDeepLink);
 async function mtdLoad(n) {
   if (MT_DECK.loading) return;
-  MT_DECK.loading = true; MT_DECK.err = null; MT_DECK.stopped = false; renderMatchTriage();
+  MT_DECK.loading = true; MT_DECK.err = null; renderMatchTriage();
   await mtdFlush();   /* anything decided earlier must reach the server first, or the new deck would deal it again */
-  /* All three parameters named on purpose: a 2-arg overload still exists and PostgREST cannot choose between them otherwise. */
-  var r = await withTimeout(sb.rpc('fn_triage_deck', { p_limit: n || 30, p_max_per_buyer: 2, p_snooze_days: 14 }), 25000, { timedOut: true });
+  /* PULL MODEL (Packet E, 2026-11-07): no queue cap. fn_pull_deck returns what N released (never counted against the 5)
+     plus the best remaining picks for today's open slots, and the Waiting list as buyer groups. Nothing moves
+     from Waiting into the deck unless N taps Release. All four parameters named on purpose. */
+  var slots = Math.max(0, MT_DECK.cap - mtdDayCount());
+  var r = await withTimeout(sb.rpc('fn_pull_deck', { p_slots: slots, p_max_per_buyer: 2, p_snooze_days: 14 }), 25000, { timedOut: true });
   MT_DECK.loading = false;
-  if (r && r.timedOut) { MT_DECK.err = 'It took too long to answer.'; reportError('deck-load', new Error('fn_triage_deck timed out')); renderMatchTriage(); return; }
+  if (r && r.timedOut) { MT_DECK.err = 'It took too long to answer.'; reportError('deck-load', new Error('fn_pull_deck timed out')); renderMatchTriage(); return; }
   if (!r || r.error || !r.data) { MT_DECK.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('deck-load', (r && r.error) || new Error('empty deck reply')); renderMatchTriage(); return; }
   var d = r.data;
   MT_DECK.cards = d.cards || []; MT_DECK.reasons = d.reasons || []; MT_DECK.reasonsPos = d.reasons_positive || [];
-  MT_DECK.waiting = Math.max(0, (Number(d.backlog_total) || MT_DECK.cards.length) - (Number(d.snoozed) || 0));
+  MT_DECK.groups = d.groups || []; MT_DECK.waitTotal = Number(d.waiting_total) || 0; MT_DECK.slots = slots; MT_DECK.base = mtdDayCount();
+  MT_DECK.open = {}; MT_DECK.houses = {}; MT_DECK.gErr = {}; MT_DECK.gBusy = {}; MT_DECK.wcard = null;
   MT_DECK.i = 0; MT_DECK.sheet = null; MT_DECK.ft = ''; MT_DECK.last = null;
   MT_DECK.session = { done: 0, newBuyers: {}, reasonsGiven: 0 };
   MT_DECK.loaded = true;
   renderMatchTriage();
 }
-/* Yesterday's showings (the last 48h, buy-side, no outcome yet), from DATA.showings already on screen. */
 function mtdShowings() {
   var now = Date.now(), since = now - 48 * 3600e3;
   return (DATA.showings || []).filter(function (s) {
@@ -2017,25 +2021,24 @@ function mtdHtml() {
   var pend = mtdQueue().length;
   var pendHtml = pend ? '<div class="hint" style="text-align:right;margin:0 0 6px;color:var(--clay);">' + pend + ' waiting to send</div>' : '';
   var sh = mtdShowingsHtml();
-  if (!D.cards.length) return pendHtml + sh + '<div class="empty">All clear. Nothing is waiting; the queue refills itself as new listings come in.</div>';
-  var c = D.cards[D.i], capHit = !D.extra && mtdDayCount() >= D.cap;
-  if (!c || capHit) {
-    var left = Math.max(0, D.waiting), head, sum;
-    if (D.stopped) { head = 'Closed.'; sum = 'Open the Deck again whenever you have two minutes.'; }
-    else if (capHit) { head = 'Done for today.'; sum = left ? left + ' more waiting if you want them.' : 'Nothing else is waiting. The queue refills itself as new listings come in.'; }
-    else {
-      head = 'That’s the deck.';
-      var firsts = Object.keys(D.session.newBuyers).length, parts = [D.session.done + (D.session.done === 1 ? ' verdict' : ' verdicts') + ' recorded.'];
+  var c = D.cards[D.i];
+  if (!c) {
+    var head, sum;
+    if (D.session.done || D.cards.length) {
+      head = 'That’s today’s deck.';
+      var firsts = Object.keys(D.session.newBuyers).length, parts = [];
+      if (D.session.done) parts.push(D.session.done + (D.session.done === 1 ? ' verdict' : ' verdicts') + ' recorded.');
       if (firsts) parts.push('First read ever on ' + firsts + (firsts === 1 ? ' client.' : ' clients.'));
       if (D.session.reasonsGiven) parts.push(D.session.reasonsGiven + ' carried a reason, which is what actually teaches it.');
       sum = parts.join(' ');
-    }
-    return pendHtml + sh + '<div style="padding:18px 0;"><div style="font-family:var(--serif);font-size:26px;">' + esc(head) + '</div>'
-      + '<div class="hint" style="margin:6px 0 14px;">' + esc(sum) + '</div>'
-      + (D.stopped ? '' : '<div style="display:flex;gap:8px;">' + ((capHit && !left) ? '' : '<button class="qbtn done" style="padding:13px 20px;" onclick="mtdMore()">' + (capHit ? 'Show more' : 'Next 10') + '</button>') + '<button class="qbtn" style="padding:13px 20px;" onclick="mtdStop()">Stop here</button></div>') + '</div>';
+    } else if (D.base >= D.cap) { head = 'Done for today.'; sum = ''; }
+    else { head = 'Nothing for today.'; sum = ''; }
+    sum += (sum ? ' ' : '') + (D.waitTotal ? 'Release anything from Waiting below to add it to today.' : 'New matches land in Waiting as they come in.');
+    return pendHtml + sh + '<div style="padding:18px 0 8px;"><div style="font-family:var(--serif);font-size:26px;">' + esc(head) + '</div>'
+      + '<div class="hint" style="margin:6px 0 6px;">' + esc(sum) + '</div></div>' + mtdWaitingHtml();
   }
-  var k = D.extra ? D.i + 1 : Math.min(mtdDayCount() + 1, D.cap), of = D.extra ? D.cards.length : D.cap;
-  var pct = D.extra ? D.i / D.cards.length * 100 : mtdDayCount() / D.cap * 100;
+  var k = D.base + D.i + 1, of = D.base + D.cards.length;
+  var pct = (D.base + D.i) / Math.max(1, of) * 100;
   var bits = [];
   if (c.beds) bits.push('<span>' + esc(c.beds) + ' <b style="font-weight:400;color:var(--muted);">bed</b></span>');
   if (c.baths) bits.push('<span>' + esc(c.baths) + ' <b style="font-weight:400;color:var(--muted);">bath</b></span>');
@@ -2045,7 +2048,7 @@ function mtdHtml() {
   return pendHtml + sh
     + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;">'
     + '<a href="javascript:void(0)" class="mtgrp-name" onclick="mtdMove()" title="Move this card to a different client" style="font-family:var(--serif);font-size:19px;">' + esc(c.buyer || '—') + ' &#9662;</a>'
-    + '<span class="hint" style="margin:0;white-space:nowrap;">' + (D.extra ? 'More: ' : 'Today: ') + k + ' of ' + of + '</span></div>'
+    + '<span class="hint" style="margin:0;white-space:nowrap;">' + 'Today: ' + k + ' of ' + of + '</span></div>'
     + '<div style="height:2px;background:var(--line);margin:8px 0 12px;"><i style="display:block;height:100%;width:' + Math.max(0, Math.min(100, pct)) + '%;background:var(--green);"></i></div>'
     + (mtdPaused(c.buyer_id) ? '<div role="note" style="margin:0 0 12px;padding:8px 11px;border:1px solid var(--clay);border-radius:var(--radius);color:var(--clay);font-size:13px;line-height:1.35;"><b>Needs criteria.</b> Matching is paused for this client, so treat this card as a rough guess.</div>' : '')
     + (c.photo ? '<img src="' + esc(c.photo) + '" alt="' + esc(mtdStreet(c.address) || 'Listing photo') + '" decoding="async" style="display:block;width:100%;max-height:340px;object-fit:cover;border-radius:var(--radius);background:var(--panel2);" onerror="this.style.display=\'none\'">'
@@ -2057,13 +2060,110 @@ function mtdHtml() {
     + (c.why ? '<div class="hint" style="margin:14px 0 0;padding:10px 12px;background:var(--panel2);border-left:2px solid var(--green);border-radius:0 var(--radius) var(--radius) 0;">' + esc(c.why) + '</div>' : '')
     + (c.mls ? '<div class="hint" style="margin:10px 0 0;font-variant-numeric:tabular-nums;">MLS ' + esc(c.mls) + '</div>' : '')
     + '<div id="dismiss-' + esc(c.match_id) + '"></div>'
-    + (D.sheet ? mtdSheetHtml(c)
+    + (D.sheet && !D.wcard ? mtdSheetHtml(c)
       : '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:16px;">' + V.map(function (v) {
         return '<button class="qbtn' + (v[0] === 'love' ? ' done' : '') + '" style="padding:15px 0;font-weight:600;" onclick="mtdVerdict(\'' + v[0] + '\')">' + v[1] + '</button>';
-      }).join('') + '</div>');
+      }).join('') + '</div>')
+    + mtdWaitingHtml();
+}
+/* WAITING (Packet E): everything the matcher found and N has not pulled in. Collapsed buyer groups, ordered by the
+   server (0.5 buyer heat + 0.5 best-house score). Opening or closing a group is a read: it records nothing.
+   Release = "Added to today" (fn_pull_release); Pass = the normal pass path with the same reason sheet. */
+function mtdWaitingHtml() {
+  var D = MT_DECK;
+  var h = '<div style="margin:26px 0 0;padding-top:14px;border-top:1px solid var(--line);">'
+    + '<div style="font-family:var(--serif);font-size:22px;">Waiting</div>'
+    + '<div class="hint" style="margin:2px 0 8px;">' + esc(D.waitTotal + ' across ' + D.groups.length + (D.groups.length === 1 ? ' client' : ' clients')) + '. Tap a client to open.</div>';
+  if (!D.groups.length) return h + '<div class="empty">Nothing is waiting. New matches land here as they come in.</div></div>';
+  h += D.groups.map(function (g, gi) {
+    var bid = String(g.buyer_id), isOpen = !!D.open[bid];
+    var meta = g.count + (g.count === 1 ? ' house' : ' houses') + (g.best_score != null ? ' · best ' + g.best_score : '') + (g.timeline ? ' · ' + g.timeline : '');
+    return '<div style="border-top:1px solid var(--line);">'
+      + '<button type="button" aria-expanded="' + (isOpen ? 'true' : 'false') + '" onclick="mtdWaitToggle(' + gi + ')" style="display:flex;width:100%;box-sizing:border-box;min-height:48px;align-items:center;justify-content:space-between;gap:10px;background:none;border:0;padding:8px 2px;text-align:left;cursor:pointer;color:inherit;">'
+      + '<span style="font-family:var(--serif);font-size:18px;min-width:0;overflow-wrap:anywhere;">' + esc(g.buyer || '—') + '</span>'
+      + '<span class="hint" style="margin:0;text-align:right;font-size:13px;">' + esc(meta) + ' ' + (isOpen ? '&#9652;' : '&#9662;') + '</span></button>'
+      + (isOpen ? mtdGroupHtml(g, gi) : '') + '</div>';
+  }).join('');
+  return h + '</div>';
+}
+function mtdGroupHtml(g, gi) {
+  var D = MT_DECK, bid = String(g.buyer_id), list = D.houses[bid];
+  if (D.gBusy[bid]) return '<div class="empty">Loading&hellip;</div>';
+  if (D.gErr[bid]) return '<div class="empty" role="alert">Couldn’t load this client’s houses. ' + esc(D.gErr[bid]) + ' Close and open the client to retry.</div>';
+  if (!list) return '<div class="empty">Loading&hellip;</div>';
+  if (!list.length) return '<div class="empty">No houses left for this client.</div>';
+  return list.map(function (c, hi) {
+    var bits = [];
+    if (c.beds) bits.push(esc(c.beds) + ' bd');
+    if (c.baths) bits.push(esc(c.baths) + ' ba');
+    if (c.sqft) bits.push(esc(Number(c.sqft).toLocaleString('en-US')) + ' sq ft');
+    if (c.year_built) bits.push(esc(c.year_built) + ' built');
+    var busy = !!D.relBusy[String(c.match_id)], mine = D.wcard && String(D.wcard.match_id) === String(c.match_id);
+    return '<div style="padding:12px 0 14px;border-top:1px dashed var(--line);">'
+      + (c.photo ? '<img src="' + esc(c.photo) + '" alt="' + esc(mtdStreet(c.address) || 'Listing photo') + '" loading="lazy" decoding="async" style="display:block;width:100%;max-height:200px;object-fit:cover;border-radius:var(--radius);background:var(--panel2);" onerror="this.style.display=\'none\'">' : '')
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:8px;">'
+      + '<span style="font-family:var(--serif);font-size:22px;font-variant-numeric:tabular-nums;">' + esc(mtdMoney(c.price)) + '</span>'
+      + '<span class="hint" style="margin:0;white-space:nowrap;">Score ' + esc(c.score == null ? '—' : c.score) + '</span></div>'
+      + '<div style="font-family:var(--serif);font-size:17px;line-height:1.3;overflow-wrap:anywhere;">' + esc(mtdStreet(c.address)) + '</div>'
+      + '<div class="hint" style="margin:2px 0 0;">' + esc(c.hood || mtdLocality(c.address)) + (bits.length ? ' · ' + bits.join(' · ') : '') + '</div>'
+      + (c.note ? '<div class="hint" style="margin:8px 0 0;padding:8px 10px;background:var(--panel2);border-left:2px solid var(--green);border-radius:0 var(--radius) var(--radius) 0;overflow-wrap:anywhere;">' + esc(c.note) + '</div>' : '')
+      + (mine ? mtdSheetHtml(c)
+        : '<div style="display:flex;gap:8px;margin-top:10px;">'
+        + '<button class="qbtn done" style="flex:1;min-height:44px;font-weight:600;"' + (busy ? ' disabled' : '') + ' onclick="mtdRelease(' + gi + ',' + hi + ')">' + (busy ? 'Adding&hellip;' : 'Release') + '</button>'
+        + '<button class="qbtn" style="flex:1;min-height:44px;font-weight:600;"' + (busy ? ' disabled' : '') + ' onclick="mtdWaitPass(' + gi + ',' + hi + ')">Pass</button></div>')
+      + '</div>';
+  }).join('');
+}
+async function mtdWaitToggle(gi) {
+  var D = MT_DECK, g = D.groups[gi]; if (!g) { reportError('waiting-toggle', new Error('no group at ' + gi), { toast: false }); return; }
+  var bid = String(g.buyer_id);
+  if (D.open[bid]) { delete D.open[bid]; if (D.wcard && String(D.wcard.buyer_id) === bid) { D.wcard = null; D.sheet = null; D.ft = ''; } renderMatchTriage(); return; }
+  D.open[bid] = true; delete D.gErr[bid];
+  if (D.houses[bid]) { renderMatchTriage(); return; }
+  D.gBusy[bid] = true; renderMatchTriage();
+  var r = await withTimeout(sb.rpc('fn_pull_waiting', { p_buyer: g.buyer_id, p_slots: D.slots, p_max_per_buyer: 2, p_snooze_days: 14 }), 25000, { timedOut: true });
+  delete D.gBusy[bid];
+  if (r && r.timedOut) { D.gErr[bid] = 'It took too long to answer.'; reportError('waiting-load', new Error('fn_pull_waiting timed out')); }
+  else if (!r || r.error || !r.data) { D.gErr[bid] = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('waiting-load', (r && r.error) || new Error('empty waiting reply')); }
+  else D.houses[bid] = r.data.houses || [];
+  renderMatchTriage();
+}
+function mtdWaitPass(gi, hi) {
+  var D = MT_DECK, g = D.groups[gi], list = g && D.houses[String(g.buyer_id)], h = list && list[hi];
+  if (!h) { reportError('waiting-pass', new Error('no house at ' + gi + '/' + hi), { toast: false }); return; }
+  D.wcard = h; D.sheet = { verdict: 'pass', positive: false, picked: {}, typed: [], showAll: false }; D.ft = '';
+  renderMatchTriage();
+}
+async function mtdRelease(gi, hi) {
+  var D = MT_DECK, g = D.groups[gi], list = g && D.houses[String(g.buyer_id)], h = list && list[hi];
+  if (!h) { reportError('waiting-release', new Error('no house at ' + gi + '/' + hi), { toast: false }); return; }
+  var mid = String(h.match_id);
+  if (D.relBusy[mid]) { toast('Still adding that one'); return; }
+  D.relBusy[mid] = 1; renderMatchTriage();
+  var r = await withTimeout(sb.rpc('fn_pull_release', { p_match_id: h.match_id }), 20000, { timedOut: true });
+  delete D.relBusy[mid];
+  if (r && r.timedOut) { renderMatchTriage(); await reportUnconfirmedWrite(); return; }
+  if (!r || r.error) { renderMatchTriage(); saveFailed((r && r.error) || 'release returned nothing', 'waiting-release'); return; }
+  if (!r.data || r.data.ok !== true) {
+    var why = (r.data && r.data.error) || 'not ok';
+    reportError('waiting-release', new Error('release refused: ' + why), { toast: false });
+    toast('Couldn’t add that one: ' + String(why).slice(0, 60));
+    renderMatchTriage(); return;
+  }
+  var at = list.indexOf(h); if (at >= 0) list.splice(at, 1);
+  g.count = Math.max(0, (g.count | 0) - 1); D.waitTotal = Math.max(0, D.waitTotal - 1);
+  if (g.count === 0) { D.groups.splice(D.groups.indexOf(g), 1); delete D.open[String(g.buyer_id)]; }
+  var card = Object.assign({}, r.data.card || h, { released: true });
+  var p = D.i + (D.sheet && !D.wcard ? 1 : 0);
+  while (p < D.cards.length && D.cards[p].released) p++;
+  D.cards.splice(Math.min(p, D.cards.length), 0, card);
+  toast('Added to today');
+  renderMatchTriage();
+  await loadAll(false);   /* a parked or capped row is now suggested: refresh the counts and the List view */
 }
 function mtdVerdict(v) {
-  if (!MT_DECK.cards[MT_DECK.i]) return;
+  if (!MT_DECK.cards[MT_DECK.i]) return;   /* silent-ok: a verdict button with no card on screen is a no-op, not a failed call */
+  MT_DECK.wcard = null;
   if (v === 'maybe') { mtdCommit('maybe', [], null); return; }
   MT_DECK.sheet = { verdict: v, positive: (v === 'love' || v === 'show'), picked: {}, typed: [], showAll: false };
   MT_DECK.ft = ''; renderMatchTriage();   /* deliberately no autofocus: the keyboard would cover the chips and Save */
@@ -2078,7 +2178,7 @@ function mtdAddTyped() {
   var el = document.getElementById('mtd-ft'); if (el) el.focus();
 }
 function mtdFtKey(e) { if (e.key === 'Enter') { e.preventDefault(); mtdAddTyped(); } }
-function mtdCancel() { MT_DECK.sheet = null; MT_DECK.ft = ''; renderMatchTriage(); }
+function mtdCancel() { MT_DECK.sheet = null; MT_DECK.wcard = null; MT_DECK.ft = ''; renderMatchTriage(); }
 function mtdSkip() { var S = MT_DECK.sheet; if (!S) return; MT_DECK.sheet = null; MT_DECK.ft = ''; mtdCommit(S.verdict, [], null); }
 function mtdSave() {
   var S = MT_DECK.sheet; if (!S) return;
@@ -2087,14 +2187,31 @@ function mtdSave() {
   MT_DECK.sheet = null; MT_DECK.ft = '';
   mtdCommit(v, codes, note);
 }
+function mtdCommitWait(verdict, codes, note) {
+  var D = MT_DECK, h = D.wcard; if (!h) { reportError('waiting-commit', new Error('no waiting house open'), { toast: false }); return; }
+  var row = { cid: h.match_id + ':' + Date.now(), match_id: h.match_id, verdict: verdict, reason_codes: codes || [], note: note || null, client_ts: new Date().toISOString() };
+  var q = mtdQueue(); q.push(row); mtdSetQueue(q);
+  var bid = String(h.buyer_id), list = D.houses[bid] || [], pos = list.indexOf(h), gi = -1;
+  D.groups.forEach(function (g, i) { if (String(g.buyer_id) === bid) gi = i; });
+  var g = D.groups[gi], gone = null;
+  if (pos >= 0) list.splice(pos, 1);
+  if (g) { g.count = Math.max(0, (g.count | 0) - 1); if (g.count === 0) { gone = { gi: gi, g: g }; D.groups.splice(gi, 1); delete D.open[bid]; } }
+  D.waitTotal = Math.max(0, D.waitTotal - 1);
+  D.last = { wait: true, row: row, house: h, pos: pos, bid: bid, gone: gone, g: g };
+  D.wcard = null; D.sheet = null; D.ft = '';
+  toastUndo(verdict === 'never' ? 'Marked never' : 'Passed', mtdUndo);
+  renderMatchTriage();
+  clearTimeout(D.flushTimer); D.flushTimer = setTimeout(mtdFlush, 6000);
+}
 function mtdCommit(verdict, codes, note) {
+  if (MT_DECK.wcard) { mtdCommitWait(verdict, codes, note); return; }
   var D = MT_DECK, c = D.cards[D.i]; if (!c) return;
   var row = { cid: c.match_id + ':' + Date.now(), match_id: c.match_id, verdict: verdict, reason_codes: codes || [], note: note || null, client_ts: new Date().toISOString() };
   var q = mtdQueue(); q.push(row); mtdSetQueue(q);
-  D.session.done++; mtdSetDayCount(mtdDayCount() + 1); D.waiting = Math.max(0, D.waiting - 1);
+  D.session.done++; if (!c.released) mtdSetDayCount(mtdDayCount() + 1);   /* a house N released does not use up the 5 */
   if (/^First verdict for/.test(c.why || '')) D.session.newBuyers[c.buyer] = 1;
   if ((codes || []).length || note) D.session.reasonsGiven++;
-  D.last = { row: row, index: D.i, hadReason: !!((codes || []).length || note), newBuyer: /^First verdict for/.test(c.why || '') ? c.buyer : null };
+  D.last = { row: row, index: D.i, released: !!c.released, hadReason: !!((codes || []).length || note), newBuyer: /^First verdict for/.test(c.why || '') ? c.buyer : null };
   D.i++; D.sheet = null;
   toastUndo(verdict === 'never' ? 'Marked never' : verdict === 'pass' ? 'Passed' : verdict === 'maybe' ? 'Left as maybe' : verdict === 'show' ? 'Queued to show' : 'Loved', mtdUndo);
   renderMatchTriage();
@@ -2103,7 +2220,15 @@ function mtdCommit(verdict, codes, note) {
 function mtdUndo() {
   var D = MT_DECK, L = D.last; if (!L) return;
   mtdSetQueue(mtdQueue().filter(function (x) { return x.cid !== L.row.cid; }));
-  D.session.done = Math.max(0, D.session.done - 1); mtdSetDayCount(mtdDayCount() - 1); D.waiting += 1;
+  if (L.wait) {
+    var lst = D.houses[L.bid] || (D.houses[L.bid] = []);
+    lst.splice(Math.max(0, Math.min(L.pos, lst.length)), 0, L.house);
+    if (L.gone) { L.g.count = 1; D.groups.splice(Math.min(L.gone.gi, D.groups.length), 0, L.g); D.open[L.bid] = true; }
+    else if (L.g) L.g.count = (L.g.count | 0) + 1;
+    D.waitTotal += 1; D.last = null; clearTimeout(D.flushTimer);
+    renderMatchTriage(); return;
+  }
+  D.session.done = Math.max(0, D.session.done - 1); if (!L.released) mtdSetDayCount(mtdDayCount() - 1);
   if (L.hadReason) D.session.reasonsGiven = Math.max(0, D.session.reasonsGiven - 1);
   if (L.newBuyer) delete D.session.newBuyers[L.newBuyer];
   D.i = L.index; D.last = null; clearTimeout(D.flushTimer);
@@ -2138,19 +2263,13 @@ async function mtdFlush() {
   if (applied) await loadAll(false);   /* matches changed server-side: refresh counts and the List view */
   else if (MT_VIEW === 'deck') renderMatchTriage();
 }
-async function mtdMore() {
-  var D = MT_DECK; D.extra = true; D.stopped = false;
-  if (D.i < D.cards.length) { renderMatchTriage(); return; }
-  D.loaded = false; await mtdLoad(30);   /* mtdLoad sends what is queued first, so the next deck excludes it */
-}
-function mtdStop() { MT_DECK.stopped = true; renderMatchTriage(); }
 function mtdMove() { var c = MT_DECK.cards[MT_DECK.i]; if (c && !MT_DECK.sheet) mtMove(String(c.match_id)); }
 function mtdDrop(matchId) {
   var D = MT_DECK, at = -1;
   D.cards.forEach(function (c, idx) { if (String(c.match_id) === String(matchId)) at = idx; });
   if (at < 0) return;
   D.cards.splice(at, 1); if (at < D.i) D.i--;
-  D.waiting = Math.max(0, D.waiting - 1); D.last = null; D.sheet = null;
+  D.last = null; D.sheet = null;
 }
 window.addEventListener('online', function () { if (mtdQueue().length) mtdFlush(); });
 function mtGateHtml() { var g = BELIEFS_G && BELIEFS_G.ai_autonomy_ready; if (!g || !g.value) return ''; var v = g.value; return '<div class="hint" style="margin:0 0 8px;">AI pre-flag agrees with you ' + Math.round((v.agreement || 0) * 100) + '% over ' + (v.decisions_21d || 0) + ' decisions (21d) · ' + (v.ready ? '<b>ready to act on its own</b>' : 'needs 85% over 50 to act alone') + '</div>'; }
@@ -3093,6 +3212,24 @@ async function hydrateFromCache() {
    then saves again.
    Every call takes a ticket; only the newest ticket is allowed to write into DATA. */
 var loadToken = 0;
+/* BUYER COMPLETENESS (Packet F, 2026-11-07). N's standing rule: new buyer input must audit for missing info so a buyer
+   never silently fails to match. The server (fn_buyer_completeness_all) reads exactly what the matcher reads; this only
+   shows the result under the buyer with a Fix button that opens the edit form. Detect and report: it never blocks a save. */
+var BUYER_GAPS = {};
+async function loadBuyerGaps() {
+  var r = await withTimeout(sb.rpc('fn_buyer_completeness_all'), 15000, { timedOut: true });
+  if (r && r.timedOut) { reportError('buyer-gaps', new Error('fn_buyer_completeness_all timed out'), { toast: false }); return; }
+  if (!r || r.error || !Array.isArray(r.data)) { reportError('buyer-gaps', (r && r.error) || new Error('unexpected completeness reply'), { toast: false }); return; }
+  var m = {};
+  r.data.forEach(function (g) { if (g && g.buyer_id) m[String(g.buyer_id)] = (g.required_missing || []).map(function (x) { return x.why || x.item; }); });
+  BUYER_GAPS = m;
+  if (typeof renderBrowse === 'function' && browseTab === 'buyers' && PANEL_HOME && PANEL_HOME.id === 'records-card') renderBrowse();
+}
+function buyerGapText(x) { var g = BUYER_GAPS[String(x.id)]; return g && g.length ? 'Missing: ' + g.join(' ') : ''; }
+function buyerGapBtn(x) {
+  if (!BUYER_GAPS[String(x.id)]) return '';
+  return '<button class="qbtn" style="color:var(--clay);border-color:var(--clay);" onclick="event.stopPropagation();openEdit(\'buyers\',\'' + escJs(String(x.id)) + '\')">Fix</button>';
+}
 async function loadAll(manual) {
   var myToken = ++loadToken;
   var t = document.getElementById('today-line');
@@ -3231,6 +3368,7 @@ async function loadAll(manual) {
      open silently presents a snapshot with some tables missing as though it were whole. */
   if (!lastLoadPartial) saveBootCache(false);
   fetchPhotoLinks(manual); /* fire-and-forget; re-renders Records when thumbnails arrive */
+  loadBuyerGaps();   /* fire-and-forget: which buyers cannot match, and why (Packet F) */
   fetchBrief(false);       /* cached per-day; only calls AI once each morning */
   fetchAiFocus(false);     /* cached per-day; skips the AI call entirely if there's nothing to triage */
   fetchMarket();           /* cheap reads; renders the Market tab when it's active */
@@ -15985,7 +16123,7 @@ function renderBrowse() {
          Budget: build with filter+join instead of string concatenation -- the old version rendered
          a bare " – $650,000" (stray leading dash) whenever only budget_max was set. */
       nm = x.name; side = [x.budget_min, x.budget_max].map(function (v) { return v ? money(v) : ''; }).filter(Boolean).join(' – ');
-      sub = [x.areas, x.timeline].filter(Boolean).join(' · ');
+      sub = [x.areas, x.timeline, buyerGapText(x)].filter(Boolean).join(' · ');
       det = [x.contact ? 'Contact: ' + x.contact : '', x.must_haves ? 'Must-haves: ' + x.must_haves : '', x.notes || ''].filter(Boolean).join(NL2);
     } else if (rowTable === 'offmarket') {
       nm = x.address_area; side = money(x.price); hot = x.priority === 'Hot';
@@ -16050,7 +16188,7 @@ function renderBrowse() {
       det = [x.connection ? 'Connection: ' + x.connection : '', x.target_owner ? 'Target: ' + x.target_owner + (x.target_reason ? ' — ' + x.target_reason : '') : '', x.owner_contact ? 'Owner: ' + x.owner_contact : '', x.notes || ''].filter(Boolean).join(NL2);
     }
     if (q && (String(nm) + ' ' + sub + ' ' + det).toLowerCase().indexOf(q) === -1) return '';
-    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) : ''));
+    return rowHtml(nm, side, sub, det, hot, x.id, rowTable === 'prospects' ? (sellerSignalBadgeHtml(e) + ' ' + triageButtons(x)) : (rowTable === 'buyers' ? buyerVipBtn(x) + buyerGapBtn(x) : ''));
   }
   var dupBanner = (browseTab === 'offmarket' || browseTab === 'prospects' || rowTable === 'listings') ? duplicatesBannerHtml() : '';
   document.getElementById('browse').innerHTML = dupBanner + chip + (h || '<div class="empty">Nothing here.</div>');
