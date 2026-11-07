@@ -646,6 +646,7 @@ button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; f
             <a href="javascript:void(0)" onclick="menuShowFarming()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Farming <span id="more-menu-farming-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowReviewQueue()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Review queue <span id="more-menu-rq-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <a href="javascript:void(0)" onclick="menuShowMatchTriage()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Match Triage <span id="more-menu-triage-n" style="color:var(--muted);font-size:12.5px;"></span></a>
+            <a href="javascript:void(0)" onclick="menuShowReportCard()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Buyer check-in</a>
             <a href="javascript:void(0)" onclick="menuShowLearning()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">What Spiro&rsquo;s learned</a>
             <a href="javascript:void(0)" onclick="menuShowArchitectRegistry()" style="display:flex;justify-content:space-between;padding:11px 12px;border-radius:var(--radius);color:var(--ink);font-size:14.5px;text-decoration:none;">Architect Registry <span id="more-menu-archreg-n" style="color:var(--muted);font-size:12.5px;"></span></a>
             <div style="border-top:1px solid var(--line);margin:4px 2px;"></div>
@@ -872,6 +873,12 @@ button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; f
       <div id="mt-viewbar" style="display:flex;gap:8px;align-items:center;margin:0 0 10px;"></div>
       <div id="mt-bulkbar" style="display:none;position:sticky;top:0;background:var(--panel);z-index:5;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:8px;"></div>
       <div id="mt-body"><div class="empty">Loading&hellip;</div></div>
+    </div>
+
+    <!-- Buyer Report Card (Packet I): triage inverted. N tells the OS about buyers; the OS shows what it already knows and asks only what it cannot infer. -->
+    <div class="card" id="report-card-card" style="display:none;">
+      <h2>Buyer check-in</h2>
+      <div id="rc-body"><div class="empty">Loading&hellip;</div></div>
     </div>
 
     <!-- What Spiro's learned (2026-07-31): the verdict loop, made visible. Penalties are derived
@@ -1241,6 +1248,7 @@ function panelBack() {
 }
 window.addEventListener('popstate', function () { if (PANEL_HOME) closePanel(); });
 function closePanel() {
+  var rcLeft = PANEL_HOME && PANEL_HOME.id;
   if (FORM_IN_PAGE) { try { closeForm(); } catch (e) { unhostForm(); } }
   /* Neutralize our history entry when the panel is closed programmatically (jumpToRecord etc.)
      so a later Back doesn't consume a press on a stale state. silent-ok: history can throw. */
@@ -1260,9 +1268,10 @@ function closePanel() {
        screen after one open/close). PANEL_HOME.wasHidden, recorded at open, covers any card
        the list forgets; the list is kept for cards that are shown on home by a render function
        but must still rest hidden. */
-    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'learning-card', 'form-card', 'architect-registry-card', 'listing-card', 'house-card', 'content-card', 'photos-card'].indexOf(PANEL_HOME.id) !== -1 || PANEL_HOME.wasHidden) card.style.display = 'none';
+    if (['intel-card', 'portal-card', 'share-links-card', 'activity-card', 'coverage-card', 'brief-card', 'farming-card', 'pricing-preview-card', 'calendar-suggestions-card', 'market-card', 'climate-card', 'tc-templates-card', 'ask-card', 'review-queue-card', 'match-triage-card', 'report-card-card', 'learning-card', 'form-card', 'architect-registry-card', 'listing-card', 'house-card', 'content-card', 'photos-card'].indexOf(PANEL_HOME.id) !== -1 || PANEL_HOME.wasHidden) card.style.display = 'none';
   }
   PANEL_HOME = null;
+  if (rcLeft === 'match-triage-card') setTimeout(rcOfferOnLeave, 0);   /* Buyer Report Card: offered once, only after at least one verdict */
   if (RECORDS_HEAD) { RECORDS_HEAD = ''; renderTabs(); }
   document.getElementById('panel-view').style.display = 'none';
   document.getElementById('home-view').style.display = '';
@@ -2035,7 +2044,7 @@ function mtdHtml() {
     else { head = 'Nothing for today.'; sum = ''; }
     sum += (sum ? ' ' : '') + (D.waitTotal ? 'Release anything from Waiting below to add it to today.' : 'New matches land in Waiting as they come in.');
     return pendHtml + sh + '<div style="padding:18px 0 8px;"><div style="font-family:var(--serif);font-size:26px;">' + esc(head) + '</div>'
-      + '<div class="hint" style="margin:6px 0 6px;">' + esc(sum) + '</div></div>' + mtdWaitingHtml();
+      + '<div class="hint" style="margin:6px 0 6px;">' + esc(sum) + '</div></div>' + rcOfferInline() + mtdWaitingHtml();
   }
   var k = D.base + D.i + 1, of = D.base + D.cards.length;
   var pct = (D.base + D.i) / Math.max(1, of) * 100;
@@ -2191,6 +2200,7 @@ function mtdCommitWait(verdict, codes, note) {
   var D = MT_DECK, h = D.wcard; if (!h) { reportError('waiting-commit', new Error('no waiting house open'), { toast: false }); return; }
   var row = { cid: h.match_id + ':' + Date.now(), match_id: h.match_id, verdict: verdict, reason_codes: codes || [], note: note || null, client_ts: new Date().toISOString() };
   var q = mtdQueue(); q.push(row); mtdSetQueue(q);
+  rcNote(h.buyer_id);
   var bid = String(h.buyer_id), list = D.houses[bid] || [], pos = list.indexOf(h), gi = -1;
   D.groups.forEach(function (g, i) { if (String(g.buyer_id) === bid) gi = i; });
   var g = D.groups[gi], gone = null;
@@ -2208,6 +2218,7 @@ function mtdCommit(verdict, codes, note) {
   var D = MT_DECK, c = D.cards[D.i]; if (!c) return;
   var row = { cid: c.match_id + ':' + Date.now(), match_id: c.match_id, verdict: verdict, reason_codes: codes || [], note: note || null, client_ts: new Date().toISOString() };
   var q = mtdQueue(); q.push(row); mtdSetQueue(q);
+  rcNote(c.buyer_id);
   D.session.done++; if (!c.released) mtdSetDayCount(mtdDayCount() + 1);   /* a house N released does not use up the 5 */
   if (/^First verdict for/.test(c.why || '')) D.session.newBuyers[c.buyer] = 1;
   if ((codes || []).length || note) D.session.reasonsGiven++;
@@ -2272,6 +2283,163 @@ function mtdDrop(matchId) {
   D.last = null; D.sheet = null;
 }
 window.addEventListener('online', function () { if (mtdQueue().length) mtdFlush(); });
+/* BUYER REPORT CARD (Packet I). Triage inverted: after a triage session the OS asks about the buyers just judged, plus any
+   active buyer quiet 21+ days. Shows what it already knows; asks only what data cannot infer. Every question is optional,
+   the whole thing is skippable, and it is offered once per app session (inline when the deck ends, or a banner when N
+   leaves triage after at least one verdict). Writes go through fn_report_card_save; nothing is ever deleted. */
+var RC = { judged: {}, n: 0, offered: false, inline: false, dismissed: false, list: [], i: 0, loading: false, err: null,
+  ans: {}, busy: false, saveErr: '', saved: 0, skipped: 0, fin: false, started: false, sumLines: [] };
+var RC_HEAT = [['hot', 'Hot'], ['cooling', 'Cooling'], ['paused', 'Paused'], ['gone', 'Gone']];
+var RC_TLC = [['up', 'Moved up'], ['same', 'Same'], ['back', 'Pushed back'], ['waiting', 'Waiting on a sale/lease']];
+var RC_TL = ['ASAP', '3-6 months', '6-12 months', 'Always looking', 'Just looking'];
+var RC_LC = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['longer', 'Longer']];
+var RC_PAUSE = ['Out of town', 'Waiting on a sale', 'Taking a break', 'Sorting financing'];
+function rcNote(bid) { if (bid == null) return; RC.judged[String(bid)] = 1; RC.n++; }
+function rcOfferInline() {
+  if (!RC.n || RC.dismissed || RC.started || (RC.offered && !RC.inline)) return '';
+  RC.offered = true; RC.inline = true;
+  return '<div role="region" aria-label="Buyer check-in" style="margin:14px 0 6px;padding:12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2);">'
+    + '<div style="font-family:var(--serif);font-size:19px;">Quick check on the buyers you just judged?</div>'
+    + '<div class="hint" style="margin:4px 0 10px;">A few taps each. Skip any time.</div>'
+    + '<div style="display:flex;gap:8px;"><button class="qbtn done" style="min-height:44px;padding:0 18px;font-weight:600;" onclick="rcStart()">Start</button>'
+    + '<button class="qbtn" style="min-height:44px;padding:0 18px;" onclick="rcDismiss()">Not now</button></div></div>';
+}
+function rcDismiss() { RC.dismissed = true; var b = document.getElementById('rc-banner'); if (b) b.remove(); if (MT_VIEW === 'deck') renderMatchTriage(); }
+function rcOfferOnLeave() {
+  if (!RC.n || RC.offered || RC.dismissed || RC.started) return;
+  RC.offered = true;
+  var old = document.getElementById('rc-banner'); if (old) old.remove();
+  var b = document.createElement('div'); b.id = 'rc-banner'; b.setAttribute('role', 'region'); b.setAttribute('aria-label', 'Buyer check-in');
+  b.style.cssText = 'position:fixed;left:12px;right:12px;bottom:72px;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px;box-shadow:0 4px 18px rgba(0,0,0,.18);';
+  b.innerHTML = '<div style="font-family:var(--serif);font-size:17px;">Quick check on the buyers you just judged?</div>'
+    + '<div style="display:flex;gap:8px;margin-top:10px;"><button class="qbtn done" style="min-height:44px;padding:0 18px;font-weight:600;" onclick="rcStart()">Start</button>'
+    + '<button class="qbtn" style="min-height:44px;padding:0 18px;" onclick="rcDismiss()">Not now</button></div>';
+  document.body.appendChild(b);
+  setTimeout(function () { var x = document.getElementById('rc-banner'); if (x) x.remove(); }, 20000);
+}
+function menuShowReportCard() {
+  var b = document.getElementById('rc-banner'); if (b) b.remove();
+  openPanel('report-card-card');
+  if (!RC.started || RC.fin) rcLoad(); else renderReportCard();
+}
+function rcStart() { var b = document.getElementById('rc-banner'); if (b) b.remove(); openPanel('report-card-card'); rcLoad(); }
+async function rcLoad() {
+  if (RC.loading) return;
+  RC.started = true; RC.loading = true; RC.err = null; RC.fin = false; RC.list = []; RC.i = 0; RC.ans = {}; RC.saved = 0; RC.skipped = 0; RC.sumLines = []; RC.saveErr = '';
+  renderReportCard();
+  var r = await withTimeout(sb.rpc('fn_report_card_candidates', { p_buyers: Object.keys(RC.judged), p_quiet_days: 21 }), 20000, { timedOut: true });
+  RC.loading = false;
+  if (r && r.timedOut) { RC.err = 'It took too long to answer.'; reportError('report-card-load', new Error('fn_report_card_candidates timed out'), { toast: false }); renderReportCard(); return; }
+  if (!r || r.error || !Array.isArray(r.data)) { RC.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('report-card-load', (r && r.error) || new Error('unexpected candidates reply'), { toast: false }); renderReportCard(); return; }
+  RC.list = r.data; renderReportCard();
+}
+function rcA() { var c = RC.list[RC.i]; if (!c) return null; var k = String(c.buyer_id); return RC.ans[k] || (RC.ans[k] = {}); }
+function rcHeat(idx) { var a = rcA(), v = RC_HEAT[idx] && RC_HEAT[idx][0]; if (!a || !v) return; a.heat = (a.heat === v) ? null : v; a.confirm = false; if (v !== 'paused') a.reason = ''; renderReportCard(); }
+function rcReasonChip(idx) { var a = rcA(); if (!a || !RC_PAUSE[idx]) return; a.reason = RC_PAUSE[idx]; renderReportCard(); }
+function rcReasonText(v) { var a = rcA(); if (a) { a.reason = String(v || '').slice(0, 200); rcSaveBtnSync(); } }
+function rcConfirmGone() { var a = rcA(); if (a) { a.confirm = true; renderReportCard(); } }
+function rcTlc(idx) { var a = rcA(), v = RC_TLC[idx] && RC_TLC[idx][0]; if (!a || !v) return; a.tlc = (a.tlc === v) ? null : v; a.tl = ''; if (v !== 'waiting') a.waiting = ''; renderReportCard(); }
+function rcTlLabel(idx) { var a = rcA(); if (a && RC_TL[idx]) { a.tl = RC_TL[idx]; renderReportCard(); } }
+function rcWaitText(v) { var a = rcA(); if (a) { a.waiting = String(v || '').slice(0, 200); rcSaveBtnSync(); } }
+function rcLc(idx) { var a = rcA(), v = RC_LC[idx] && RC_LC[idx][0]; if (!a || !v) return; a.lc = (a.lc === v) ? null : v; renderReportCard(); }
+function rcEditCriteria() {
+  var c = RC.list[RC.i]; if (!c) return;
+  toast('Back in More, Buyer check-in, to carry on');
+  openEdit('buyers', String(c.buyer_id));
+}
+function rcPayload(a) {
+  var p = {};
+  if (!a) return p;
+  if (a.heat) p.heat = a.heat;
+  if (a.heat === 'paused' && a.reason && String(a.reason).trim()) p.paused_reason = String(a.reason).trim();
+  if (a.heat === 'gone' && a.confirm) p.confirm = true;
+  if (a.tlc === 'same' || ((a.tlc === 'up' || a.tlc === 'back') && a.tl)) { p.timeline_change = a.tlc; if (a.tl) p.timeline = a.tl; }
+  if (a.tlc === 'waiting' && a.waiting && String(a.waiting).trim()) { p.timeline_change = 'waiting'; p.waiting_on = String(a.waiting).trim(); }
+  if (a.lc) p.last_contact = a.lc;
+  return p;
+}
+function rcReady(a) {
+  var p = rcPayload(a);
+  if (a && a.heat === 'paused' && !p.paused_reason) return false;
+  if (a && a.heat === 'gone' && !p.confirm) return false;
+  if (a && (a.tlc === 'up' || a.tlc === 'back') && !a.tl) return false;
+  if (a && a.tlc === 'waiting' && !p.waiting_on) return false;
+  return Object.keys(p).length > 0;
+}
+function rcSaveBtnSync() { var b = document.getElementById('rc-save'); if (b) b.disabled = !rcReady(rcA()); }
+function rcSkipBuyer() { RC.skipped++; RC.saveErr = ''; rcAdvance(); }
+function rcAdvance() { RC.i++; if (RC.i >= RC.list.length) RC.fin = true; renderReportCard(); window.scrollTo(0, 0); }
+async function rcSave() {
+  var c = RC.list[RC.i], a = rcA(); if (!c || RC.busy || !rcReady(a)) return;
+  RC.busy = true; RC.saveErr = ''; renderReportCard();
+  var r = await withTimeout(sb.rpc('fn_report_card_save', { p_buyer: c.buyer_id, p_payload: rcPayload(a) }), 20000, { timedOut: true });
+  RC.busy = false;
+  if (r && r.timedOut) { RC.saveErr = 'Couldn’t confirm that saved. Tap Save to try again.'; renderReportCard(); await reportUnconfirmedWrite(); return; }
+  if (!r || r.error) { RC.saveErr = 'Couldn’t save. Tap Save to try again.'; renderReportCard(); saveFailed((r && r.error) || 'report card save returned nothing', 'report-card-save'); return; }
+  if (!r.data || r.data.ok !== true) { RC.saveErr = 'Couldn’t save: ' + String((r.data && r.data.error) || 'not accepted').slice(0, 120); renderReportCard(); saveFailed((r.data && r.data.error) || 'report card not ok', 'report-card-save'); return; }
+  RC.saved++; RC.sumLines.push(String(c.name || '') + ': ' + (r.data.saved || []).join(', '));
+  if (a && a.heat === 'gone') toast('Archived. Restore from Archived any time.'); else toast('Saved');
+  loadAll(false); loadBuyerGaps();
+  rcAdvance();
+}
+function rcDate(t) { if (!t) return 'No verdict yet'; var d = new Date(t); return isNaN(d) ? 'No verdict yet' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+function rcBtns(items, cur, fn, sel) {
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px;">' + items.map(function (it, idx) {
+    var v = Array.isArray(it) ? it[0] : it, l = Array.isArray(it) ? it[1] : it, on = (cur === v);
+    return '<button class="qbtn' + (on ? ' done' : '') + '" style="min-height:44px;padding:0 14px;font-size:14px;" aria-pressed="' + on + '" onclick="' + fn + '(' + idx + ')">' + esc(l) + '</button>';
+  }).join('') + '</div>';
+}
+function rcQ(title) { return '<div style="font-weight:600;font-size:14.5px;margin:18px 0 8px;">' + esc(title) + '</div>'; }
+function renderReportCard() {
+  var body = document.getElementById('rc-body'); if (!body) return;
+  if (RC.loading) { body.innerHTML = '<div class="empty">Loading&hellip;</div>'; return; }
+  if (RC.err) { body.innerHTML = '<div class="empty" role="alert">Couldn&rsquo;t load the buyers. ' + esc(RC.err) + '</div><button class="qbtn" style="min-height:44px;padding:0 18px;" onclick="rcLoad()">Retry</button>'; return; }
+  if (!RC.list.length) { body.innerHTML = '<div class="empty">Nobody to check on right now.</div>'; return; }
+  if (RC.fin) {
+    body.innerHTML = '<div style="padding:10px 0;"><div style="font-family:var(--serif);font-size:26px;">That’s everyone.</div>'
+      + '<div class="hint" style="margin:6px 0 10px;">' + esc(RC.saved + (RC.saved === 1 ? ' buyer updated' : ' buyers updated') + (RC.skipped ? ', ' + RC.skipped + ' skipped.' : '.')) + '</div>'
+      + RC.sumLines.map(function (l) { return '<div class="hint" style="margin:3px 0;">' + esc(l) + '</div>'; }).join('')
+      + '<button class="qbtn done" style="min-height:44px;padding:0 18px;margin-top:12px;" onclick="panelBack()">Done</button></div>';
+    return;
+  }
+  var c = RC.list[RC.i], a = rcA() || {}, comp = c.completeness || {};
+  var miss = (comp.required_missing || []).map(function (x) { return x.why || x.item; });
+  var rec = (comp.recommended_missing || []).map(function (x) { return x.why || x.item; });
+  var known = [];
+  known.push('Last verdict: ' + rcDate(c.last_verdict_at));
+  known.push(Number(c.days_quiet) + ' days quiet');
+  known.push(Number(c.waiting_count) + ' waiting');
+  if (c.timeline) known.push('Timeline: ' + c.timeline);
+  if (c.paused_reason) known.push('Paused: ' + c.paused_reason);
+  var h = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;"><div style="font-family:var(--serif);font-size:22px;">' + esc(c.name || '—') + '</div>'
+    + '<span class="hint" style="margin:0;white-space:nowrap;">' + (RC.i + 1) + ' of ' + RC.list.length + '</span></div>'
+    + '<div class="hint" style="margin:6px 0 0;">' + known.map(esc).join(' &middot; ') + '</div>'
+    + (miss.length ? '<div role="note" style="margin:8px 0 0;padding:8px 11px;border:1px solid var(--clay);border-radius:var(--radius);color:var(--clay);font-size:13px;line-height:1.35;"><b>Missing:</b> ' + esc(miss.join(' ')) + '</div>' : '')
+    + (!miss.length && rec.length ? '<div class="hint" style="margin:6px 0 0;">Nice to have: ' + esc(rec.join(' ')) + '</div>' : '');
+  h += rcQ('How are they?') + rcBtns(RC_HEAT, a.heat, 'rcHeat');
+  if (a.heat === 'paused') {
+    h += '<div class="hint" style="margin:10px 0 6px;">Why paused?</div>' + rcBtns(RC_PAUSE, a.reason, 'rcReasonChip')
+      + '<input id="rc-reason" type="text" autocomplete="off" enterkeyhint="done" placeholder="Or say it in your own words" aria-label="Why paused" value="' + esc(a.reason || '') + '" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:44px;" oninput="rcReasonText(this.value)">';
+  }
+  if (a.heat === 'gone') {
+    h += a.confirm ? '<div class="hint" style="margin:10px 0 0;">Will be archived on Save. You can restore from Archived.</div>'
+      : '<div role="alert" style="margin:10px 0 0;padding:10px 12px;border:1px solid var(--clay);border-radius:var(--radius);"><div style="font-size:14px;margin-bottom:8px;">Archive ' + esc(c.name || 'this buyer') + '? They stop matching and leave the active list. You can restore them later.</div>'
+        + '<button class="qbtn" style="min-height:44px;padding:0 16px;color:var(--clay);border-color:var(--clay);" onclick="rcConfirmGone()">Yes, archive</button> '
+        + '<button class="qbtn" style="min-height:44px;padding:0 16px;" onclick="rcHeat(3)">Cancel</button></div>';
+  }
+  h += rcQ('Timeline') + rcBtns(RC_TLC, a.tlc, 'rcTlc');
+  if (a.tlc === 'up' || a.tlc === 'back') h += '<div class="hint" style="margin:10px 0 6px;">New timeline?</div>' + rcBtns(RC_TL, a.tl, 'rcTlLabel');
+  if (a.tlc === 'waiting') h += '<input id="rc-wait" type="text" autocomplete="off" enterkeyhint="done" placeholder="Waiting on what?" aria-label="Waiting on what" value="' + esc(a.waiting || '') + '" style="width:100%;box-sizing:border-box;margin-top:10px;min-height:44px;" oninput="rcWaitText(this.value)">';
+  h += rcQ('Budget, areas or type changed?')
+    + '<button class="qbtn" style="min-height:44px;padding:0 16px;" onclick="rcEditCriteria()">Open their criteria</button>';
+  h += rcQ('Last contact') + rcBtns(RC_LC, a.lc, 'rcLc');
+  h += (RC.saveErr ? '<div role="alert" style="margin:14px 0 0;color:var(--clay);font-size:14px;">' + esc(RC.saveErr) + '</div>' : '')
+    + '<div style="display:flex;gap:8px;margin-top:20px;">'
+    + '<button id="rc-save" class="qbtn done" style="min-height:44px;flex:1;font-weight:600;" onclick="rcSave()"' + (RC.busy || !rcReady(a) ? ' disabled' : '') + '>' + (RC.busy ? 'Saving&hellip;' : 'Save and next') + '</button>'
+    + '<button class="qbtn" style="min-height:44px;padding:0 16px;" onclick="rcSkipBuyer()">Skip</button></div>'
+    + '<div style="margin-top:10px;"><a href="javascript:void(0)" onclick="panelBack()" style="display:inline-flex;align-items:center;min-height:44px;font-size:14px;color:var(--muted);">Stop for now</a></div>';
+  body.innerHTML = h;
+}
 function mtGateHtml() { var g = BELIEFS_G && BELIEFS_G.ai_autonomy_ready; if (!g || !g.value) return ''; var v = g.value; return '<div class="hint" style="margin:0 0 8px;">AI pre-flag agrees with you ' + Math.round((v.agreement || 0) * 100) + '% over ' + (v.decisions_21d || 0) + ' decisions (21d) · ' + (v.ready ? '<b>ready to act on its own</b>' : 'needs 85% over 50 to act alone') + '</div>'; }
 function renderMatchTriage() {
   mtSeedAi();
