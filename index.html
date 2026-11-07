@@ -1473,7 +1473,7 @@ function archIgCopy(regId) {
 async function archIgSaveDraft(regId) {
   var text = ARCH_IG_DRAFT[String(regId)] || '';
   var r = await sb.from('architect_registry').update({ ig_status: 'queued', ig_caption: text, ig_queued_at: nowStamp() }).eq('id', regId).select('id,ig_status,ig_caption,ig_queued_at');
-  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data[0]) { saveFailed(r.error || new Error('no row returned'), 'archIgSaveDraft'); return; }
   var saved = r.data[0];
   (DATA.architect_registry || []).forEach(function (x) { if (String(x.id) === String(regId)) { x.ig_status = saved.ig_status; x.ig_caption = saved.ig_caption; x.ig_queued_at = saved.ig_queued_at; } });
   logEvent('architect_registry', regId, 'archig.queued', 'Queued an Instagram post draft');
@@ -2364,7 +2364,7 @@ async function confirmCalendarSuggestion(id) {
   if (s.event_type === 'open_house' && lst) {
     var ohRow = { listing_key: String(lst.id), start_ts: s.start_ts, end_ts: s.end_ts || null, oh_type: 'Public', remarks: s.title || null };
     var rOh = await sb.from('open_houses').insert(ohRow).select('*');
-    if (rOh.error) { toast('Could not save — try again'); return; }
+    if (rOh.error) { saveFailed(rOh.error, 'confirmCalendarSuggestion'); return; }
     if (rOh.data && rOh.data[0]) DATA.open_houses.push(rOh.data[0]);
     var r2oh = await sb.from('calendar_suggestions').update({ status: 'confirmed' }).eq('id', id).select('id');
     if (r2oh.error) { toast('Open house added, but couldn’t clear the suggestion — try again'); }
@@ -2406,7 +2406,7 @@ async function dismissCalendarSuggestion(id) {
   var s = calendarSuggestionById(id); if (!s) return;
   s.status = 'dismissed'; renderCalendarSuggestionsCard();
   var r = await sb.from('calendar_suggestions').update({ status: 'dismissed' }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); s.status = 'pending'; renderCalendarSuggestionsCard(); return; }
+  if (r.error) { saveFailed(r.error, 'dismissCalendarSuggestion'); s.status = 'pending'; renderCalendarSuggestionsCard(); return; }
   toast('Dismissed');
 }
 /* Reschedule/no-show review actions (2026-07-24) — for suggestions the sync flagged after they
@@ -2431,7 +2431,7 @@ async function clearSuggestionFlag(id) {
   var prevFlag = s.flag, prevNew = s.flag_new_start_ts;
   s.flag = null; s.flag_new_start_ts = null; renderCalendarSuggestionsCard();
   var r = await sb.from('calendar_suggestions').update({ flag: null, flag_new_start_ts: null, flag_detected_at: null }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); s.flag = prevFlag; s.flag_new_start_ts = prevNew; renderCalendarSuggestionsCard(); return; }
+  if (r.error) { saveFailed(r.error, 'clearSuggestionFlag'); s.flag = prevFlag; s.flag_new_start_ts = prevNew; renderCalendarSuggestionsCard(); return; }
   toast('Got it');
 }
 async function cancelFlaggedShowing(id) {
@@ -2596,7 +2596,7 @@ async function toggleBrokerConfirmed(templateKey, toConfirmed) {
   t.broker_confirmed = toConfirmed; t.broker_confirmed_at = toConfirmed ? nowStamp() : null;
   renderTcTemplates();
   var r = await sb.from('tc_task_templates').update({ broker_confirmed: toConfirmed, broker_confirmed_at: t.broker_confirmed_at }).eq('template_key', templateKey).select('template_key');
-  if (r.error) { t.broker_confirmed = prevConfirmed; t.broker_confirmed_at = prevAt; renderTcTemplates(); toast('Could not save — try again'); }
+  if (r.error) { t.broker_confirmed = prevConfirmed; t.broker_confirmed_at = prevAt; renderTcTemplates(); saveFailed(r.error, 'toggleBrokerConfirmed'); }
   else logEvent('tc_task_templates', templateKey, toConfirmed ? 'tc_template.broker_confirmed' : 'tc_template.broker_unconfirmed', t.label || templateKey);
 }
 /* Piece E (2026-07-26): free-text notes against a template -- groundwork for Phase 5a (see
@@ -2621,7 +2621,7 @@ async function saveTcTemplateNote(templateKey, taId) {
   var note = (ta.value || '').trim();
   if (!note) { toast('Enter a note first'); return; }
   var r = await sb.from('tc_template_feedback').insert({ template_key: templateKey, note: note, source: 'nick' }).select('*');
-  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data[0]) { saveFailed(r.error || new Error('no row returned'), 'saveTcTemplateNote'); return; }
   DATA.tc_template_feedback = [r.data[0]].concat(DATA.tc_template_feedback || []);
   logEvent('tc_task_templates', templateKey, 'tc_template.note_added', note.slice(0, 80));
   renderTcTemplates();
@@ -3777,7 +3777,7 @@ function neighborhoodVelocityHtml() {
 function buyersToCallRows() {
   var byBuyer = {};
   (DATA.matches || []).forEach(function (m) {
-    if (m.status === 'dismissed') return;
+    if (m.status === 'dismissed' || m.status === 'parked') return;   /* parked = explicitly 'not now' (over the open-match ceiling); confirmed still counts as a reason to call */
     var x = byBuyer[m.buyer_id] || (byBuyer[m.buyer_id] = { count: 0, best: 0, bestOnMarket: 0, urgency: 4 });
     x.count++; if ((m.score || 0) > x.best) x.best = (m.score || 0);
     if (m.target_type !== 'prospects' && (m.score || 0) > x.bestOnMarket) x.bestOnMarket = (m.score || 0);
@@ -4350,7 +4350,7 @@ async function fuDone(btn) {
   var id = btn.getAttribute('data-id');
   btn.disabled = true;
   var r = await sb.from('followups').update({ status: 'resolved', updated_at: nowStamp() }).eq('id', id).select('id');
-  if (r.error || !r.data || !r.data.length) { btn.disabled = false; toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data.length) { btn.disabled = false; saveFailed(r.error || new Error('no row returned'), 'fuDone'); return; }
   var f = findFu(id);
   logEvent('followups', id, 'followup.resolved', 'Done: ' + (f ? f.action_text : id));
   dropFu(id); renderQueue(); renderStats(); renderIntel(); toast('Done ✓');
@@ -4380,7 +4380,7 @@ function swipeCompleteFu(id) {
   dropFu(id); renderQueue(); renderStats(); renderIntel();
   var stamp = nowStamp();
   sb.from('followups').update({ status: 'resolved', updated_at: stamp }).eq('id', id).then(function (r) {
-    if (r.error) { toast('Could not save — try again'); putBackFu(f); return; }
+    if (r.error) { saveFailed(r.error, 'swipeCompleteFu'); putBackFu(f); return; }
     logEvent('followups', id, 'followup.resolved', 'Done (swipe): ' + (f ? f.action_text : id));
   });
   toastUndo('Done ✓' + (f && f.action_text ? ' — ' + f.action_text : ''), function () {
@@ -4465,7 +4465,7 @@ async function fuSnooze(btn, days) {
   var nextCount = (f.snooze_count || 0) + 1;
   var patch = { status: 'snoozed', snoozed_until: until, snooze_count: nextCount, updated_at: nowStamp() };
   var r = await sb.from('followups').update(patch).eq('id', id).select('id');
-  if (r.error || !r.data || !r.data.length) { btn.disabled = false; toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data.length) { btn.disabled = false; saveFailed(r.error || new Error('no row returned'), 'fuSnooze'); return; }
   f.status = 'snoozed'; f.snoozed_until = until; f.snooze_count = nextCount;
   logEvent('followups', id, 'followup.snoozed', 'Snoozed to ' + until + ': ' + f.action_text, { days: days, snooze_count: nextCount });
   renderQueue(); renderIntel(); toast('Snoozed to ' + fmtDate(until));
@@ -5682,28 +5682,28 @@ async function cardSave() {
   var box = document.getElementById('card-box'); if (box) box.innerHTML = '<div class="hint">Saving…</div>';
   if (c.kind === 'agent') {
     var aid = await resolveOrCreateAgent(name);
-    if (!aid) { cardRender(); toast('Could not save — try again'); return; }
+    if (!aid) { cardRender(); saveFailed(new Error('resolveOrCreateAgent returned no id'), 'cardSave'); return; }
     var a = null; (DATA.agents || []).forEach(function (x) { if (String(x.id) === String(aid)) a = x; });
     var upd = {}; if (c.company) upd.brokerage = c.company;
     var ex = Object.assign({}, (a && a.extra) || {});
     ['email', 'phone', 'website', 'title'].forEach(function (k) { if (c[k]) ex[k] = c[k]; });
     upd.extra = ex;
     var ru = await sb.from('agents').update(upd).eq('id', aid);
-    if (ru && ru.error) { cardRender(); toast('Could not save — try again'); return; }
+    if (ru && ru.error) { cardRender(); saveFailed(ru.error, 'cardSave'); return; }
     if (a) { if (c.company) a.brokerage = c.company; a.extra = ex; }
     logEvent('agents', aid, 'card.saved', 'Filed agent ' + name + ' from a business card');
     CARD_DATA = null; if (box) box.innerHTML = ''; render();
     toast('Saved agent ' + name + ' ✓');
   } else {
     var vid = await resolveOrCreateVendor(name);
-    if (!vid) { cardRender(); toast('Could not save — try again'); return; }
+    if (!vid) { cardRender(); saveFailed(new Error('resolveOrCreateVendor returned no id'), 'cardSave'); return; }
     var v = null; (DATA.contacts || []).forEach(function (x) { if (String(x.id) === String(vid)) v = x; });
     var vupd = {}; if (c.email) vupd.email = c.email; if (c.phone) vupd.phone = c.phone;
     var vex = Object.assign({}, (v && v.extra) || {});
     if (c.company) vex.company = c.company; if (c.title) vex.role = c.title; if (c.website) vex.website = c.website;
     vupd.extra = vex;
     var rv = await sb.from('contacts').update(vupd).eq('id', vid);
-    if (rv && rv.error) { cardRender(); toast('Could not save — try again'); return; }
+    if (rv && rv.error) { cardRender(); saveFailed(rv.error, 'cardSave'); return; }
     if (v) { if (c.email) v.email = c.email; if (c.phone) v.phone = c.phone; v.extra = vex; }
     logEvent('contacts', vid, 'card.saved', 'Filed vendor ' + name + ' from a business card');
     CARD_DATA = null; if (box) box.innerHTML = ''; render();
@@ -6124,7 +6124,7 @@ async function skipTracerfyProspect(id) {
   delete tracerfyBatch[id];
   renderCoverage(); /* optimistic */
   var r = await sb.from('prospects').update({ extra: p.extra }).eq('id', id).select('id');
-  if (r.error) { toast('Could not save — try again'); delete p.extra.tracerfy_skip; renderCoverage(); return; }
+  if (r.error) { saveFailed(r.error, 'skipTracerfyProspect'); delete p.extra.tracerfy_skip; renderCoverage(); return; }
   logEvent('prospects', id, 'prospect.tracerfy_skip', (p.address || p.owner_name || 'Prospect') + ' — ruled out for Tracerfy');
   toast('Skipped — won’t resurface here');
 }
@@ -6825,7 +6825,7 @@ async function saveCommissionItem(sid) {
     notes: notes || null,
   };
   var r = await sb.from('transaction_commission_items').insert(patch).select('*');
-  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data[0]) { saveFailed(r.error || new Error('no row returned'), 'saveCommissionItem'); return; }
   DATA.transaction_commission_items = (DATA.transaction_commission_items || []).concat(r.data);
   logEvent('transactions', sid, 'txn.commission_item_added', label);
   document.getElementById('ci-' + sid).innerHTML = '';
@@ -10541,7 +10541,7 @@ async function saveCriteria(id) {
   if (type) crit.property_type = type;
   r.extra = r.extra || {}; r.extra.criteria = crit;
   var res = await sb.from('buyers').update({ extra: r.extra }).eq('id', id).select('id');
-  if (res.error) { toast('Could not save — try again'); return; }
+  if (res.error) { saveFailed(res.error, 'saveCriteria'); return; }
   logEvent('buyers', String(id), 'criteria.set', (r.name || '') + ' — ' + areas.length + ' areas' + (beds ? ' · ' + beds + 'bd' : ''));
   toast(areas.length ? 'Criteria saved — this buyer is now matched to new listings' : 'Saved — add at least one neighborhood to enable matching');
   render();
@@ -14197,7 +14197,7 @@ async function permitLedgerAutoFill(table, id) {
   res.pulled_at = new Date().toISOString();
   x.extra = x.extra || {}; x.extra.permit_ledger = res;
   var sv = await sb.from(table).update({ extra: x.extra }).eq('id', id).select('id');
-  if (sv.error) { toast('Could not save — try again'); return; }
+  if (sv.error) { saveFailed(sv.error, 'permitLedgerAutoFill'); return; }
   logEvent(table, id, 'permit_ledger.pulled', (x.address || '') + ' — ' + (res.permit_count || 0) + ' permit(s) found');
   toast(res.permit_count ? res.permit_count + ' permit(s) found' : 'No permits found in LADBS public records');
   render();
@@ -14523,7 +14523,7 @@ async function fpSave() {
     accuracy: 'approximate', source: FP.source, floor_note: FP.floorNote, updated_at: nowStamp(),
   };
   var sv = await sb.from(FP.table).update({ extra: x.extra }).eq('id', FP.id).select('id');
-  if (sv.error) { toast('Could not save — try again'); return; }
+  if (sv.error) { saveFailed(sv.error, 'fpSave'); return; }
   logEvent(FP.table, FP.id, 'floor_plan.saved', (x.address || x.address_area || '') + ' — ' + FP.rooms.length + ' room(s), ' + FP.source);
   toast('Floor plan saved ✓');
   fpClose();
@@ -14706,7 +14706,7 @@ async function markMailed(id) {
   x.extra = x.extra || {};
   x.extra.outreach = { mailed_at: new Date().toISOString(), channel: 'mail' };
   var up = await sb.from('prospects').update({ extra: x.extra }).eq('id', id).select('id');
-  if (up.error) { toast('Could not save — try again'); return; }
+  if (up.error) { saveFailed(up.error, 'markMailed'); return; }
   var due = new Date(Date.now() + 14 * 86400000);
   var ds = due.getFullYear() + '-' + ('0' + (due.getMonth() + 1)).slice(-2) + '-' + ('0' + due.getDate()).slice(-2);
   var addr = x.address || 'this lead';
@@ -14739,7 +14739,7 @@ async function markResponded(id) {
   x.extra.outreach.responded_at = new Date().toISOString();
   if (x.extra.triage !== 'pursue') x.extra.triage = 'pursue';   // a responder is clearly worth pursuing
   var up = await sb.from('prospects').update({ extra: x.extra }).eq('id', id).select('id');
-  if (up.error) { toast('Could not save — try again'); return; }
+  if (up.error) { saveFailed(up.error, 'markResponded'); return; }
   // The "follow up on your mailer" nudge is moot now — they responded. Swap it for an active call-back.
   await sb.from('followups').delete().eq('source_key', 'mailfu:' + id);
   DATA.followups = (DATA.followups || []).filter(function (f) { return f.source_key !== 'mailfu:' + id; });
@@ -14783,7 +14783,7 @@ async function markOutcome(id, kind) {
   x.extra.outreach.outcome_at = new Date().toISOString();
   x.extra.triage = (kind === 'not_interested') ? 'pass' : 'pursue';
   var up = await sb.from('prospects').update({ extra: x.extra }).eq('id', id).select('id');
-  if (up.error) { toast('Could not save — try again'); return; }
+  if (up.error) { saveFailed(up.error, 'markOutcome'); return; }
   var addr = x.address || 'this lead';
   if (kind === 'appointment') {
     // Contact made — swap the call-back for a prep reminder.
@@ -14901,7 +14901,7 @@ async function engageSetFollowup(id, days) {
   var due = addDaysIso(todayIso(), days);
   var fu = { record_type: 'contacts', record_id: id, record_label: c.display_name || '', source_key: 'engagefu:' + id, manual: true, action_text: 'Check in with ' + (c.display_name || 'them'), due_date: due, urgency: '', status: 'open' };
   var r = await sb.from('followups').insert(fu).select('*');
-  if (r.error || !r.data || !r.data[0]) { toast('Could not save — try again'); return; }
+  if (r.error || !r.data || !r.data[0]) { saveFailed(r.error || new Error('no row returned'), 'engageSetFollowup'); return; }
   DATA.followups.push(r.data[0]);
   logEvent('contacts', id, 'engage.followup_set', 'Follow-up set for ' + fmtDate(due) + ': ' + (c.display_name || ''));
   renderQueue(); renderStats(); toast('Follow-up set for ' + fmtDate(due) + ' ✓');
