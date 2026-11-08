@@ -3340,7 +3340,7 @@ async function ilLoad() {
   var my = ++IL.seq; IL.loading = true; IL.err = null; ilRender();
   var params = IL.ll ? { lat: IL.ll.lat, lng: IL.ll.lng } : {};
   var r = await withTimeout(sb.rpc('fn_agent_invite_list', { p_listing_id: IL.id, p_mode: IL.mode, p_params: params }), 30000, { timedOut: true });
-  if (my !== IL.seq) return;
+  if (my !== IL.seq) return; // silent-ok: stale-response guard, a newer load superseded this one
   if (r && r.timedOut) { IL.loading = false; IL.err = 'It took too long to answer.'; reportError('invite-list-load', new Error('fn_agent_invite_list timed out'), { toast: false }); ilRender(); return; }
   if (!r || r.error || !Array.isArray(r.data)) { IL.loading = false; IL.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('invite-list-load', (r && r.error) || new Error('unexpected invite list reply'), { toast: false }); ilRender(); return; }
   IL.rows = r.data;
@@ -3440,7 +3440,7 @@ function clBack() { if (CL.view === 'list') { CL.view = 'index'; CL.cur = null; 
 async function clLoad() {
   var my = ++CL.seq; CL.loading = true; CL.err = null; clRender();
   var r = await withTimeout(sb.rpc('fn_lists_overview', {}), 20000, { timedOut: true });
-  if (my !== CL.seq) return;
+  if (my !== CL.seq) return; // silent-ok: stale-response guard, a newer load superseded this one
   CL.loading = false;
   if (r && r.timedOut) { CL.err = 'It took too long to answer.'; reportError('lists-load', new Error('fn_lists_overview timed out'), { toast: false }); clRender(); return; }
   if (!r || r.error || !Array.isArray(r.data)) { CL.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120); reportError('lists-load', (r && r.error) || new Error('unexpected lists reply'), { toast: false }); clRender(); return; }
@@ -3449,7 +3449,7 @@ async function clLoad() {
 async function clOpen(id) {
   var my = ++CL.seq; CL.view = 'list'; CL.loading = true; CL.err = null; CL.q = ''; CL.msg = ''; clRender();
   var r = await withTimeout(sb.rpc('fn_list_get', { p_list_id: id }), 20000, { timedOut: true });
-  if (my !== CL.seq) return;
+  if (my !== CL.seq) return; // silent-ok: stale-response guard, a newer load superseded this one
   CL.loading = false;
   if (!r || r.timedOut || r.error || !r.data) { CL.err = String((r && r.error && r.error.message) || (r && r.timedOut ? 'It took too long to answer.' : 'No reply.')).slice(0, 120); clRender(); return; }
   CL.cur = r.data; clRender();
