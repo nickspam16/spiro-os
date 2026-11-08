@@ -873,6 +873,7 @@ button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; f
     <div class="card" id="match-triage-card" style="display:none;">
       <h2>Match Triage</h2>
       <div class="hint" style="margin:-6px 0 10px;">Every suggested match in one list, oldest/strongest first. Select several and act on them together, or use the row actions one at a time -- same dismiss/confirm/shown as everywhere else in the app.</div>
+      <div id="df-host"></div>
       <div id="mt-viewbar" style="display:flex;gap:8px;align-items:center;margin:0 0 10px;"></div>
       <div id="mt-bulkbar" style="display:none;position:sticky;top:0;background:var(--panel);z-index:5;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:8px;"></div>
       <div id="mt-body"><div class="empty">Loading&hellip;</div></div>
@@ -1121,7 +1122,7 @@ button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; f
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.250.0';
+var APP_VERSION = 'v5.251.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2310,6 +2311,270 @@ function mtdDrop(matchId) {
   D.last = null; D.sheet = null;
 }
 window.addEventListener('online', function () { if (mtdQueue().length) mtdFlush(); });
+/* DIGEST TAP TRACKING (P9 L24/L25, 2026-11-08). The morning email's links carry ?src=digest&d=<digest key> and ?src=digest&lesson=<id>. On the first complete
+   load the app tells the server once (fn_digest_tap -> a digest.tap / digest.lesson signal), then strips the parameters so a refresh never counts twice. */
+var DIGEST_TAP_DONE = false;
+function digestLinkTap() {
+  if (DIGEST_TAP_DONE) { return; }   /* silent-ok: already handled this page load */
+  DIGEST_TAP_DONE = true;
+  var q; try { q = new URLSearchParams(location.search); } catch (e) { reportError('digest-link-parse', e, { toast: false }); return; }
+  if (q.get('src') !== 'digest') { return; }   /* silent-ok: not a digest visit, nothing to record */
+  var lesson = q.get('lesson'), d = q.get('d');
+  var kind = lesson ? 'lesson_open' : 'digest_tap', ref = String(lesson || d || '').slice(0, 80);
+  try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { reportError('digest-link-strip', e, { toast: false }); }
+  Promise.resolve(sb.rpc('fn_digest_tap', { p_kind: kind, p_ref: ref || null, p_meta: { via: 'email_link' } })).then(function (r) {
+    if (!r || r.error || !r.data || r.data.ok !== true) reportError('digest-tap', (r && r.error) || new Error('fn_digest_tap not ok'), { toast: false });
+  }, function (e) { reportError('digest-tap', e, { toast: false }); });
+}
+/* THE DAILY FIVE (P2, 2026-11-08). The "Today" section at the top of Match Triage: at most five decisions a day, chosen by the OS
+   (fn_daily_five: expected value x urgency, a guaranteed mix of house / follow-up / question / seller lead, and a "how did the showing go?"
+   whenever N has not reported one). Nothing here goes to a buyer: "pick, don't push" still holds. Every item resolves with one tap through the
+   SAME writes the rest of the app already uses (the deck's queued verdict -> fn_triage_apply_v2, the follow-up update, fn_prospect_verdict, the
+   showing outcome + signal), then fn_daily_five_act logs what he did and how long it took. Questions are answered by fn_daily_five_act itself.
+   Unanswered items resolve on their own (the server expires them the next day); "Done for today" closes the day and hands the rest to the OS.
+   Server side: p2_daily5/01_daily_five.sql. If that is not applied yet, this section says so quietly and the deck below is unaffected. */
+var DF = { loaded: false, loading: false, err: null, day: null, items: [], closed: false, closing: false, closeInfo: null,
+  busy: {}, msg: {}, pend: {}, typed: {}, pick: {}, autoT: null };
+var DF_LBL = { love: 'Loved it', show: 'Queued to show', maybe: 'Left as maybe', pass: 'Passed', never: 'Never', done: 'Done', snooze1: 'Back tomorrow',
+  snooze7: 'Back next week', pursue: 'Pursuing', park30: 'Parked 30 days', park90: 'Parked 90 days', kill: 'Archived', loved: 'Loved', fine: 'Fine',
+  no_show: 'Did not happen', answered: 'Answered', later: 'Not today', skip: 'Skipped', expired: 'Left to the OS', closed: 'Left to the OS',
+  done_elsewhere: 'Already handled' };
+var DF_KIND = { house: 'House', followup: 'Follow-up', prospect: 'Seller lead', showing: 'Showing', buyer_q: 'Question', walk_q: 'Question', deal_q: 'Question' };
+function dfEnsure() {
+  if (DF.loaded && DF.day && DF.day !== mtdToday() && !DF.loading) { DF.loaded = false; DF.closed = false; DF.closeInfo = null; DF.items = []; }   /* a new day starts a new five */
+  if (!DF.loaded && !DF.loading && !DF.err) dfLoad(); else dfRender();
+}
+async function dfLoad() {
+  if (DF.loading) { return; }   /* silent-ok: a load is already in flight; this call is a duplicate, not a failure */
+  DF.loading = true; DF.err = null; dfRender();
+  var r = await withTimeout(sb.rpc('fn_daily_five_open', {}), 25000, { timedOut: true });
+  DF.loading = false;
+  if (r && r.timedOut) { DF.err = 'It took too long to answer.'; reportError('daily-five-load', new Error('fn_daily_five_open timed out'), { toast: false }); dfRender(); return; }
+  if (!r || r.error || !r.data || r.data.ok !== true) {
+    DF.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120);
+    reportError('daily-five-load', (r && r.error) || new Error('empty daily five reply'), { toast: false }); dfRender(); return;
+  }
+  DF.items = r.data.items || []; DF.day = r.data.day; DF.closed = !!r.data.closed_at; DF.loaded = true; dfRender();
+}
+function dfRender() { var host = document.getElementById('df-host'); if (host) host.innerHTML = dfHtml(); }
+function dfDecided() { return DF.items.filter(function (it) { return !!it.action && !it.auto; }).length; }
+function dfLeft() { return DF.items.filter(function (it) { return !it.action; }).length; }
+function dfBtn(idx, aidx, label, cls, dis) {
+  return '<button type="button" class="qbtn' + (cls ? ' ' + cls : '') + '" style="flex:1 1 40%;min-height:44px;padding:10px 8px;font-weight:600;"' + (dis ? ' disabled' : '')
+    + ' onclick="' + esc('dfAct(' + (idx | 0) + ',' + (aidx | 0) + ')') + '">' + esc(label) + '</button>';
+}
+function dfItemHtml(it, idx) {
+  var k = it.item_key, p = it.payload || {}, busy = !!DF.busy[k], msg = DF.msg[k];
+  if (it.action) {
+    return '<div style="padding:9px 12px;border-top:1px solid var(--line);color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:10px;">'
+      + '<span style="min-width:0;overflow-wrap:anywhere;">&#10003; ' + esc(it.title || '') + '</span><span style="white-space:nowrap;">' + esc(DF_LBL[it.action] || it.action) + '</span></div>';
+  }
+  var acts = it.actions || [], isQ = (it.kind === 'buyer_q' || it.kind === 'walk_q' || it.kind === 'deal_q');
+  var btns = acts.map(function (a, ai) {
+    if (a.id === 'later') return '';
+    return dfBtn(idx, ai, a.label, (a.id === 'love' || a.id === 'pursue' || a.id === 'done') ? 'done' : '', busy);
+  }).join('');
+  var laterIdx = -1; acts.forEach(function (a, ai) { if (a.id === 'later') laterIdx = ai; });
+  var extra = '';
+  if (it.kind === 'deal_q') {
+    var bs = (DATA.buyers || []).filter(function (b) { return !b.archived; }).sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); });
+    extra = '<div style="display:flex;gap:8px;margin-top:8px;"><select id="' + esc('df-pick-' + idx) + '" aria-label="Pick the client" style="flex:1;min-height:44px;min-width:0;"'
+      + ' onchange="' + esc('DF.pick[' + (idx | 0) + ']=this.value') + '"><option value="">Pick the client&hellip;</option>'
+      + bs.map(function (b) { return '<option value="' + esc(b.id) + '"' + (DF.pick[idx] === String(b.id) ? ' selected' : '') + '>' + esc(b.name || 'Unnamed') + '</option>'; }).join('')
+      + '</select><button type="button" class="qbtn done" style="min-height:44px;padding:0 16px;"' + (busy ? ' disabled' : '') + ' onclick="' + esc('dfDealPick(' + (idx | 0) + ')') + '">Save</button></div>';
+    btns = '';
+  } else if (isQ && p.free_text) {
+    extra = '<div style="display:flex;gap:8px;margin-top:8px;"><input id="' + esc('df-ft-' + idx) + '" type="text" maxlength="120" autocomplete="off" enterkeyhint="done" placeholder="Something else, like 3.5M"'
+      + ' aria-label="Type your own answer" value="' + esc(DF.typed[idx] || '') + '" style="flex:1;min-width:0;min-height:44px;box-sizing:border-box;"'
+      + ' oninput="' + esc('DF.typed[' + (idx | 0) + ']=this.value') + '"><button type="button" class="qbtn" style="min-height:44px;padding:0 16px;"' + (busy ? ' disabled' : '')
+      + ' onclick="' + esc('dfTyped(' + (idx | 0) + ')') + '">Save</button></div>';
+  }
+  var thumb = (it.kind === 'house' && p.photo)
+    ? '<img src="' + esc(p.photo) + '" alt="" decoding="async" loading="lazy" style="width:64px;height:64px;object-fit:cover;border-radius:var(--radius);flex:0 0 auto;background:var(--panel2);" onerror="this.style.display=\'none\'">' : '';
+  return '<div style="padding:12px;border-top:1px solid var(--line);">'
+    + '<div style="display:flex;gap:12px;align-items:flex-start;">' + thumb + '<div style="min-width:0;flex:1;">'
+    + '<div class="hint" style="margin:0 0 2px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;">' + esc(DF_KIND[it.kind] || '') + '</div>'
+    + '<div style="font-family:var(--serif);font-size:19px;line-height:1.25;overflow-wrap:anywhere;">' + esc(it.title || '') + '</div>'
+    + (it.subtitle ? '<div style="font-size:14.5px;margin-top:2px;overflow-wrap:anywhere;">' + esc(it.subtitle) + '</div>' : '')
+    + (it.why ? '<div class="hint" style="margin:6px 0 0;font-size:13px;line-height:1.4;">' + esc(it.why) + '</div>' : '')
+    + '</div></div>'
+    + (btns ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">' + btns + '</div>' : '')
+    + extra
+    + (laterIdx >= 0 ? '<div style="margin-top:6px;"><button type="button" class="qbtn" style="border:0;background:none;min-height:40px;padding:0 4px;color:var(--muted);"' + (busy ? ' disabled' : '')
+      + ' onclick="' + esc('dfAct(' + (idx | 0) + ',' + laterIdx + ')') + '">Not today</button></div>' : '')
+    + (msg ? '<div role="alert" style="color:var(--clay);font-size:13px;margin-top:6px;">' + esc(msg) + '</div>' : '')
+    + '</div>';
+}
+function dfHtml() {
+  var wrap = function (inner) { return '<div id="df-card" style="margin:0 0 16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2);">' + inner + '</div>'; };
+  if (DF.loading || (!DF.loaded && !DF.err)) return wrap('<div class="hint" style="margin:0;padding:12px;">Loading today&hellip;</div>');
+  if (DF.err) return wrap('<div style="padding:12px;"><div class="hint" style="margin:0 0 8px;">Today isn&rsquo;t available yet (' + esc(DF.err) + '). The deck below still works.</div>'
+    + '<button type="button" class="qbtn" style="min-height:44px;padding:0 18px;" onclick="DF.err=null;dfLoad()">Retry</button></div>');
+  var n = DF.items.length, dec = dfDecided(), left = dfLeft();
+  if (!n) return wrap('<div style="padding:12px;"><div style="font-family:var(--serif);font-size:22px;">Today</div><div class="hint" style="margin:4px 0 0;">Nothing needs you today.</div></div>');
+  if (DF.closed) {
+    var ci = DF.closeInfo || {}, leftOs = DF.items.filter(function (it) { return it.auto; }).length;
+    var parts = [dec + (dec === 1 ? ' decision' : ' decisions')];
+    if (leftOs) parts.push(leftOs + ' left to the OS');
+    if (ci.seconds_total) parts.push(Math.max(1, Math.round(ci.seconds_total / 60)) + ' min');
+    return wrap('<div style="padding:12px;"><div style="font-family:var(--serif);font-size:22px;">Done for today.</div><div class="hint" style="margin:4px 0 0;">'
+      + esc(parts.join(' \u00b7 ')) + '. Back tomorrow.</div></div>');
+  }
+  var head = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 12px 8px;">'
+    + '<span style="font-family:var(--serif);font-size:22px;">Today</span><span class="hint" style="margin:0;white-space:nowrap;">' + dec + ' of ' + n + ' decided</span></div>';
+  var rows = DF.items.map(function (it, idx) { return dfItemHtml(it, idx); }).join('');
+  var foot = '<div style="padding:10px 12px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;">'
+    + '<span class="hint" style="margin:0;">' + (left ? left + ' left. Anything you skip, the OS handles.' : 'That&rsquo;s today&rsquo;s five.') + '</span>'
+    + '<button type="button" class="qbtn' + (left ? '' : ' done') + '" style="min-height:44px;padding:0 16px;white-space:nowrap;"' + (DF.closing ? ' disabled' : '') + ' onclick="dfClose()">' + (DF.closing ? 'Closing&hellip;' : 'Done for today') + '</button></div>';
+  return wrap(head + rows + foot);
+}
+function dfSet(it, action, auto) { it.action = action; it.auto = !!auto; it.acted_at = new Date().toISOString(); }
+/* The server logs the action (and applies a question's answer). Returns {ok, data, err}. */
+async function dfLog(it, action, value) {
+  var r = await withTimeout(sb.rpc('fn_daily_five_act', { p_item_key: it.item_key, p_action: action, p_value: value == null ? null : String(value), p_day: DF.day }), 20000, { timedOut: true });
+  if (r && r.timedOut) { reportError('daily-five-act', new Error('fn_daily_five_act timed out'), { toast: false }); return { ok: false, err: 'Couldn’t confirm that saved. Tap again.' }; }
+  if (!r || r.error) { reportError('daily-five-act', (r && r.error) || new Error('empty act reply'), { toast: false }); return { ok: false, err: 'Couldn’t save. Tap again to retry.' }; }
+  if (!r.data || r.data.ok !== true) { return { ok: false, data: r.data, err: String((r.data && r.data.error) || 'Not accepted').slice(0, 120) }; }
+  return { ok: true, data: r.data };
+}
+async function dfAct(idx, aidx, typed) {
+  var it = DF.items[idx];
+  if (!it || it.action || DF.busy[it.item_key]) { return; }   /* silent-ok: a tap on an item already settled or in flight is a double tap, not a failure */
+  if (typed != null) { await dfAnswer(it, typed); return; }
+  var a = (it.actions || [])[aidx] || {}, id = a.id;
+  if (!id) { reportError('daily-five-act', new Error('no action at ' + aidx), { toast: false }); return; }
+  if (id === 'pick_buyer') { DF.msg[it.item_key] = 'Pick the client below, then Save.'; dfRender(); return; }
+  if (id === 'later') { await dfSimple(it, 'later'); return; }
+  if (it.kind === 'house') { dfHouse(it, id); return; }
+  if (it.kind === 'followup') { await dfFollowup(it, id); return; }
+  if (it.kind === 'prospect') { await dfProspect(it, id); return; }
+  if (it.kind === 'showing') { await dfShowing(it, id); return; }
+  await dfAnswer(it, a.value);
+}
+async function dfSimple(it, action) {
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  var l = await dfLog(it, action, null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { DF.msg[it.item_key] = l.err; dfRender(); return; }
+  dfSet(it, action, false); dfRender(); dfMaybeAutoClose();
+}
+/* House: the verdict rides the deck's own queue (offline-safe, 6 s Undo, fn_triage_apply_v2); the daily-five log is written once the Undo window has passed. */
+function dfHouse(it, verdict) {
+  var p = it.payload || {};
+  var row = { cid: p.match_id + ':' + Date.now(), match_id: p.match_id, verdict: verdict, reason_codes: [], note: null, client_ts: new Date().toISOString() };
+  var q = mtdQueue(); q.push(row); mtdSetQueue(q);
+  rcNote(p.buyer_id);
+  mtdSetDayCount(mtdDayCount() + 1);      /* the deck's five and Today's five are one attention budget */
+  mtdDrop(String(p.match_id));            /* if the Deck already dealt this card, it moves on */
+  dfSet(it, verdict, false);
+  DF.pend[it.item_key] = { row: row, timer: setTimeout(function () { dfHouseCommit(it, verdict); }, 6000) };
+  toastUndo(verdict === 'pass' ? 'Passed' : verdict === 'maybe' ? 'Left as maybe' : verdict === 'show' ? 'Queued to show' : 'Loved', function () { dfHouseUndo(it); });
+  dfRender(); renderMatchTriage();
+}
+async function dfHouseCommit(it, verdict) {
+  delete DF.pend[it.item_key];
+  await mtdFlush();
+  var l = await dfLog(it, verdict, null);
+  if (!l.ok) { DF.msg[it.item_key] = ''; reportError('daily-five-log', new Error(l.err || 'house log failed'), { toast: false }); }
+  dfRender(); dfMaybeAutoClose();
+}
+function dfHouseUndo(it) {
+  var pd = DF.pend[it.item_key]; if (!pd) { toast('Too late to undo'); return; }
+  clearTimeout(pd.timer); delete DF.pend[it.item_key];
+  mtdSetQueue(mtdQueue().filter(function (x) { return x.cid !== pd.row.cid; }));
+  mtdSetDayCount(mtdDayCount() - 1);
+  it.action = null; it.auto = false; it.acted_at = null;
+  dfRender();
+}
+async function dfFollowup(it, id) {
+  var p = it.payload || {}, fid = p.followup_id, f = findFu(fid), patch, until = null;
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  if (id === 'done') patch = { status: 'resolved', updated_at: nowStamp() };
+  else {
+    until = addDaysIso(todayIso(), id === 'snooze7' ? 7 : 1);
+    patch = { status: 'snoozed', snoozed_until: until, snooze_count: ((f && f.snooze_count) || p.snooze_count || 0) + 1, updated_at: nowStamp() };
+  }
+  var u = await withTimeout(sb.from('followups').update(patch).eq('id', fid).select('id'), 20000, { timedOut: true });
+  if (u && u.timedOut) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t confirm that saved. Tap again.'; dfRender(); await reportUnconfirmedWrite(); return; }
+  if (!u || u.error || !u.data || !u.data.length) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save. Tap again to retry.'; dfRender(); saveFailed((u && u.error) || new Error('no row returned'), 'daily-five-followup'); return; }
+  logEvent('followups', fid, id === 'done' ? 'followup.resolved' : 'followup.snoozed', (id === 'done' ? 'Done (Today): ' : 'Snoozed to ' + until + ' (Today): ') + (f ? f.action_text : it.title), id === 'done' ? {} : { snooze_count: patch.snooze_count });
+  if (id === 'done') dropFu(fid); else if (f) { f.status = 'snoozed'; f.snoozed_until = until; f.snooze_count = patch.snooze_count; }
+  renderQueue();
+  var l = await dfLog(it, id, null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { reportError('daily-five-log', new Error(l.err || 'followup log failed'), { toast: false }); }
+  dfSet(it, id, false); dfRender(); dfMaybeAutoClose();
+}
+async function dfProspect(it, id) {
+  var p = it.payload || {}, verdict = id === 'pursue' ? 'pursue' : id === 'kill' ? 'kill' : 'park', days = id === 'park30' ? 30 : id === 'park90' ? 90 : null;
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  var r = await withTimeout(sb.rpc('fn_prospect_verdict', { p_id: p.prospect_id, p_verdict: verdict, p_park_days: days, p_reason: null }), 20000, { timedOut: true });
+  if (r && r.timedOut) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t confirm that saved. Tap again.'; dfRender(); await reportUnconfirmedWrite(); return; }
+  if (!r || r.error || !r.data || r.data.ok !== true) {
+    delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save: ' + String((r && r.data && r.data.error) || 'try again').slice(0, 100); dfRender();
+    saveFailed((r && r.error) || (r && r.data && r.data.error) || 'prospect verdict not ok', 'daily-five-prospect'); return;
+  }
+  var l = await dfLog(it, id, null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { reportError('daily-five-log', new Error(l.err || 'prospect log failed'), { toast: false }); }
+  dfSet(it, id, false); ptRefreshSoon(); dfRender(); dfMaybeAutoClose();
+}
+async function dfShowing(it, outcome) {
+  var p = it.payload || {}, sid = p.showing_id;
+  if (!MTD_OUT_VERDICT[outcome]) { reportError('daily-five-showing', new Error('bad outcome ' + outcome), { toast: false }); return; }
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  /* The deck strip's exact write: claim only a buy-side row with no outcome, then one signal; undo the claim if the signal fails. */
+  var u = await withTimeout(sb.from('showings').update({ outcome: outcome, outcome_at: nowStamp() }).eq('id', sid).is('outcome', null).eq('side', 'buy').select('id,buyer_id,property_ref,showing_ts'), 20000, { timedOut: true });
+  if (u && u.timedOut) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t confirm that saved. Tap again.'; dfRender(); await reportUnconfirmedWrite(); return; }
+  if (!u || u.error) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save. Tap again to retry.'; dfRender(); saveFailed((u && u.error) || new Error('showing outcome returned nothing'), 'daily-five-showing'); return; }
+  if ((u.data || []).length) {
+    var c = u.data[0];
+    var sg = await sb.from('signals').insert({ actor: 'nick', subject_type: 'buyers', subject_id: c.buyer_id ? String(c.buyer_id) : null, object_type: 'showings', object_id: sid,
+      signal: 'showing.outcome', verdict: MTD_OUT_VERDICT[outcome], source: 'showing-followup', meta: { outcome: outcome, property_ref: p.property_ref || it.title, showing_ts: c.showing_ts } });
+    if (sg.error) {
+      var undoClaim = await sb.from('showings').update({ outcome: null, outcome_at: null }).eq('id', sid);
+      if (undoClaim.error) reportError('daily-five-showing-undo', undoClaim.error);
+      delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save. Tap again to retry.'; dfRender(); saveFailed(sg.error, 'daily-five-showing-signal'); return;
+    }
+  }
+  (DATA.showings || []).forEach(function (s) { if (String(s.id) === String(sid)) s.outcome = outcome; });
+  var l = await dfLog(it, outcome, null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { reportError('daily-five-log', new Error(l.err || 'showing log failed'), { toast: false }); }
+  dfSet(it, outcome, false); toast('Noted'); dfRender(); renderMatchTriage(); dfMaybeAutoClose();
+}
+async function dfAnswer(it, value) {
+  var v = String(value == null ? '' : value).trim();
+  if (!v) { DF.msg[it.item_key] = 'Type or pick an answer first.'; dfRender(); return; }
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  var l = await dfLog(it, 'answered', v);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { DF.msg[it.item_key] = l.err; dfRender(); return; }
+  dfSet(it, 'answered', false); toast('Saved'); dfRender(); dfMaybeAutoClose();
+  await loadAll(false);   /* the buyer or deal changed server-side: refresh what the rest of the app shows */
+}
+function dfTyped(idx) { var it = DF.items[idx]; if (!it) { reportError('daily-five-typed', new Error('no item ' + idx), { toast: false }); return; } dfAct(idx, (it.actions || []).length, DF.typed[idx]); }
+function dfDealPick(idx) {
+  var it = DF.items[idx], v = DF.pick[idx] || (document.getElementById('df-pick-' + idx) || {}).value || '';
+  if (!it) { reportError('daily-five-pick', new Error('no item ' + idx), { toast: false }); return; }
+  if (!v) { DF.msg[it.item_key] = 'Pick the client first.'; dfRender(); return; }
+  dfAnswer(it, v);
+}
+function dfMaybeAutoClose() {
+  clearTimeout(DF.autoT);
+  if (DF.closed || DF.closing || dfLeft() > 0) { return; }   /* silent-ok: nothing to do until every item is settled */
+  DF.autoT = setTimeout(function () { if (!DF.closed && !DF.closing && dfLeft() === 0 && !Object.keys(DF.pend).length) dfClose(); }, 7000);   /* just past the Undo window */
+}
+async function dfClose() {
+  if (DF.closing || DF.closed) { return; }   /* silent-ok: already closing or closed */
+  clearTimeout(DF.autoT); DF.closing = true; dfRender();
+  var r = await withTimeout(sb.rpc('fn_daily_five_close', { p_day: DF.day }), 20000, { timedOut: true });
+  DF.closing = false;
+  if (r && r.timedOut) { dfRender(); await reportUnconfirmedWrite(); DF.loaded = false; dfLoad(); return; }
+  if (!r || r.error || !r.data || r.data.ok !== true) { dfRender(); saveFailed((r && r.error) || new Error('close not ok'), 'daily-five-close'); return; }
+  DF.items.forEach(function (it) { if (!it.action) dfSet(it, 'closed', true); });
+  DF.closed = true; DF.closeInfo = r.data; toast('Done for today'); dfRender();
+}
 /* BUYER REPORT CARD (Packet I). Triage inverted: after a triage session the OS asks about the buyers just judged, plus any
    active buyer quiet 21+ days. Shows what it already knows; asks only what data cannot infer. Every question is optional,
    the whole thing is skippable, and it is offered once per app session (inline when the deck ends, or a banner when N
@@ -4060,6 +4325,7 @@ function renderMatchTriage() {
   mtSeedAi();
   var body = document.getElementById('mt-body'), bar = document.getElementById('mt-bulkbar');
   if (!body || !bar) return;
+  dfEnsure();   /* the Today section (Daily Five) sits above both views */
   var vb = document.getElementById('mt-viewbar');
   if (vb) vb.innerHTML = '<span class="hint" style="margin:0;">View</span>'
     + '<button class="qbtn' + (MT_VIEW === 'list' ? ' done' : '') + '" onclick="mtSetView(\'list\')" aria-pressed="' + (MT_VIEW === 'list') + '">List</button>'
@@ -5147,6 +5413,7 @@ async function loadAll(manual) {
   bootedFromCache = false;   /* live data on screen now; the staleness banner stands down */
   render();
   if (!MT_DEEP_DONE) { MT_DEEP_DONE = true; mtDeepLink(); }   /* #triage-deck: first complete load only */
+  digestLinkTap();   /* ?src=digest from the morning email: record the tap once (P9 L24/L25) */
   /* Only a COMPLETE load is worth caching. Persisting a partial one would mean a future cold
      open silently presents a snapshot with some tables missing as though it were whole. */
   if (!lastLoadPartial) saveBootCache(false);
@@ -8280,7 +8547,22 @@ function farmsNeedingTriageScan() {
   });
   return { rows: rows, byStreet: byStreet };
 }
+/* P2 (2026-11-08): the seller-lead list is ordered by v_seller_leads_ranked.lead_rank (P9: N's prospect verdicts layered over the permit-signal score;
+   parked and killed sink and stay labelled, nothing is dropped). Prospects with no row in the view keep their old order after the ranked ones. */
+var SLR = { loaded: false, loading: false, byProp: {}, err: null };
+async function slrLoad() {
+  if (SLR.loading) { return; }   /* silent-ok: a load is already in flight */
+  SLR.loading = true;
+  var r = await withTimeout(sb.from('v_seller_leads_ranked').select('property_id,lead_rank,score,why,verdict_label,est_value').eq('is_prospect', true).order('lead_rank', { ascending: true }).limit(500), 20000, { timedOut: true });
+  SLR.loading = false;
+  if (!r || r.timedOut || r.error || !Array.isArray(r.data)) { SLR.err = true; reportError('seller-leads-ranked', (r && r.error) || new Error('v_seller_leads_ranked unavailable'), { toast: false }); return; }
+  SLR.byProp = {}; r.data.forEach(function (x) { if (x.property_id) SLR.byProp[String(x.property_id)] = x; });
+  SLR.loaded = true; SLR.err = null;
+  var cov = document.getElementById('coverage-card'); if (cov && cov.style.display !== 'none') safeRender('coverage', renderCoverage);
+}
+function slrOf(p) { return (p && p.property_id && SLR.byProp[String(p.property_id)]) || null; }
 function leadsFarmsHtml() {
+  if (!SLR.loaded && !SLR.loading && !SLR.err) slrLoad();
   var leads = leadsNeedingTriageScan();
   var farms = farmsNeedingTriageScan();
   var h = '';
@@ -8288,13 +8570,14 @@ function leadsFarmsHtml() {
     var byPri = { Hot: [], Warm: [], Cold: [] };
     leads.forEach(function (p) { (byPri[p.priority] || byPri.Cold).push(p); }); /* unrecognized priority folds into Cold, not surfaced as urgent */
     var actionable = byPri.Hot.concat(byPri.Warm);
+    actionable.sort(function (a, b) { var x = slrOf(a), y = slrOf(b); return (x ? x.lead_rank : 1e9) - (y ? y.lead_rank : 1e9); });
     h += '<div class="hint" style="margin-bottom:4px;">' + leads.length + ' seller leads waiting on triage &mdash; '
       + byPri.Hot.length + ' Hot, ' + byPri.Warm.length + ' Warm, ' + byPri.Cold.length + ' Cold.'
       + (actionable.length ? ' Hot/Warm shown below; Cold stays a count &mdash; nothing there needs you today.' : '') + '</div>';
     h += actionable.map(function (p) {
       return '<div class="qi"><div class="txt"><div class="t1">'
         + '<span style="cursor:pointer;" onclick="event.stopPropagation();jumpToRecord(\'prospects\',\'' + escJs(p.id) + '\')">' + esc(p.address || p.owner_name || 'Unknown') + '</span> · ' + esc(p.priority) + '</div>'
-        + '<div class="t2">' + esc(p.type || '') + '</div></div>'
+        + '<div class="t2">' + esc(p.type || '') + (slrOf(p) ? ' &middot; #' + esc(slrOf(p).lead_rank) + (slrOf(p).why ? ' &middot; ' + esc(String(slrOf(p).why).slice(0, 110)) : '') : '') + '</div></div>'
         + '<div class="acts">' + triageButtons(p) + '</div></div>';
     }).join('');
   } else {
