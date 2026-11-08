@@ -1121,7 +1121,7 @@ button.primary { font-size: 16px; letter-spacing: .02em; text-transform: none; f
    anyone who loads the URL, logged in or not — Supabase RLS protects the *data*, nothing protects the
    *source*. Keep this to a bare version tag only. Full history now lives outside the shipped app
    (private docs), never here. */
-var APP_VERSION = 'v5.249.0';
+var APP_VERSION = 'v5.250.0';
 
 /* ---------- Spiro theme (light / lamplit-library night) ---------- */
 function applySpiroTheme(t) {
@@ -2764,7 +2764,7 @@ var RMG = (function () {
   function toPayload(plan, opts) {
     opts = opts || {};
     var p = {
-      name: plan.name || 'Plan', source: plan.source || 'manual', confidence: plan.confidence || null, notes: plan.notes || null, raw: plan.raw || {},
+      name: plan.name || 'Plan', source: plan.source || 'manual', confidence: plan.confidence || null, notes: plan.notes || null, raw: (plan.rawNew && !opts.noRaw) ? plan.raw : undefined,
       underlay: plan.underlay ? { mm_per_px: plan.underlay.mm_per_px, x_mm: Math.round(plan.underlay.x_mm), y_mm: Math.round(plan.underlay.y_mm), opacity: plan.underlay.opacity, w_px: plan.underlay.w_px, h_px: plan.underlay.h_px, name: plan.underlay.name || '' } : {},
       rooms: plan.rooms.map(function (r) {
         return {
@@ -2787,6 +2787,452 @@ var RMG = (function () {
     splitEdge: splitEdge, removeCorner: removeCorner, newId: newId, normalizePlan: normalizePlan, toPayload: toPayload, OPENING_DEFAULTS: OPENING_DEFAULTS, KINDS: KINDS, SWINGS: SWINGS };
 })();
 /* RMG:END */
+/* RMI:BEGIN */
+/* Scan import (room-model Phase 2): DXF (Polycam / Magicplan style layered plans) and Apple RoomPlan JSON (CapturedRoom / CapturedStructure) -> editor plan.
+   Pure functions, no DOM. Everything lands in integer mm, y pointing down, shifted so the plan starts at (0,0). Nothing is dropped silently:
+   whatever is not mapped is counted in summary.ignored and the untouched file is returned as plan.raw. */
+var RMI = (function () {
+  var TOL = 25;               /* snap / merge tolerance, mm */
+  var ATTACH = 350;           /* how far an opening symbol may sit from a room edge, mm */
+  var UNIT_MM = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000, 3: 1609344, 7: 1000000, 8: 0.0000254, 9: 0.0254, 10: 914.4, 14: 100, 15: 10000, 13: 0.001 };
+  var UNIT_NAME = { 1: 'inches', 2: 'feet', 4: 'millimetres', 5: 'centimetres', 6: 'metres', 10: 'yards', 14: 'decimetres' };
+  var RAW_TEXT_MAX = 2500000;
+
+  /* ---------- DXF tokenizer / parser ---------- */
+  function tokens(text) {
+    var L = String(text).replace(/\r\n?/g, '\n').split('\n'), out = [];
+    for (var i = 0; i + 1 < L.length; i += 2) { var c = parseInt(L[i].trim(), 10); if (isNaN(c)) continue; out.push([c, L[i + 1].replace(/^\s+|\s+$/g, '')]); }
+    return out;
+  }
+  function num(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+  function groupEntities(tk, from) {
+    /* groups pairs from index `from` into entity records [type, pairs[]] up to the next top-level ENDSEC/ENDBLK */
+    var ents = [], cur = null, i = from;
+    for (; i < tk.length; i++) {
+      var c = tk[i][0], v = tk[i][1];
+      if (c === 0) { if (v === 'ENDSEC' || v === 'ENDBLK') break; cur = { type: v, p: [] }; ents.push(cur); }
+      else if (cur) cur.p.push([c, v]);
+    }
+    return { ents: ents, end: i };
+  }
+  function get(p, code, d) { for (var i = 0; i < p.length; i++) if (p[i][0] === code) return p[i][1]; return d; }
+  function getAll(p, code) { var o = []; for (var i = 0; i < p.length; i++) if (p[i][0] === code) o.push(p[i][1]); return o; }
+  function bulgeArc(a, b, bulge) {
+    /* points along the arc between a and b (exclusive of a, inclusive of b) for a polyline bulge (positive = counter-clockwise) */
+    var theta = 4 * Math.atan(bulge), dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy); if (!d || !theta) return [b];
+    var r = d / (2 * Math.sin(Math.abs(theta) / 2)), h = r * Math.cos(Math.abs(theta) / 2), nx = -dy / d, ny = dx / d, sg = bulge > 0 ? 1 : -1;
+    var cx = (a.x + b.x) / 2 + nx * h * sg, cy = (a.y + b.y) / 2 + ny * h * sg, a0 = Math.atan2(a.y - cy, a.x - cx), steps = Math.max(2, Math.ceil(Math.abs(theta) / (Math.PI / 12))), pts = [];
+    for (var k = 1; k < steps; k++) { var t = a0 + theta * k / steps; pts.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t) }); }
+    pts.push(b); return pts;
+  }
+  function polyPoints(verts, closed) {
+    var pts = [];
+    for (var i = 0; i < verts.length; i++) {
+      var a = verts[i], b = verts[(i + 1) % verts.length];
+      pts.push({ x: a.x, y: a.y });
+      if (a.bulge && (i < verts.length - 1 || closed)) { var arc = bulgeArc(a, b, a.bulge); arc.pop(); pts = pts.concat(arc); }
+    }
+    return pts;
+  }
+  function parseDxf(text) {
+    var tk = tokens(text), res = { insunits: 0, measurement: null, layers: {}, blocks: {}, entities: [], counts: {}, warnings: [] }, i = 0;
+    if (!tk.length || !tk.some(function (t) { return t[0] === 0 && t[1] === 'SECTION'; })) throw new Error('That doesn’t look like a DXF file.');
+    while (i < tk.length) {
+      if (tk[i][0] === 0 && tk[i][1] === 'SECTION' && tk[i + 1] && tk[i + 1][0] === 2) {
+        var sec = tk[i + 1][1]; i += 2;
+        if (sec === 'HEADER') {
+          for (; i < tk.length && !(tk[i][0] === 0 && tk[i][1] === 'ENDSEC'); i++) {
+            if (tk[i][0] === 9 && tk[i][1] === '$INSUNITS' && tk[i + 1]) res.insunits = parseInt(tk[i + 1][1], 10) || 0;
+            if (tk[i][0] === 9 && tk[i][1] === '$MEASUREMENT' && tk[i + 1]) res.measurement = parseInt(tk[i + 1][1], 10);
+          }
+        } else if (sec === 'TABLES') {
+          var inLayer = false;
+          for (; i < tk.length && !(tk[i][0] === 0 && tk[i][1] === 'ENDSEC'); i++) { if (tk[i][0] === 0) inLayer = tk[i][1] === 'LAYER'; else if (inLayer && tk[i][0] === 2) { res.layers[tk[i][1]] = true; inLayer = false; } }
+        } else if (sec === 'BLOCKS') {
+          while (i < tk.length && !(tk[i][0] === 0 && tk[i][1] === 'ENDSEC')) {
+            if (tk[i][0] === 0 && tk[i][1] === 'BLOCK') {
+              /* the BLOCK record's own pairs come before the first entity */
+              var bp = [], j = i + 1; for (; j < tk.length && tk[j][0] !== 0; j++) bp.push(tk[j]);
+              var name = get(bp, 2, get(bp, 3, '')), base = { x: num(get(bp, 10, 0)), y: num(get(bp, 20, 0)) };
+              var g2 = groupEntities(tk, j); res.blocks[name] = { base: base, ents: finishEntities(g2.ents, res) }; i = g2.end;
+            }
+            i++;
+          }
+        } else if (sec === 'ENTITIES') {
+          var ge = groupEntities(tk, i); res.entities = finishEntities(ge.ents, res); i = ge.end;
+        } else { for (; i < tk.length && !(tk[i][0] === 0 && tk[i][1] === 'ENDSEC'); i++); }
+      } else i++;
+    }
+    res.entities.forEach(function (e) { res.counts[e.type] = (res.counts[e.type] || 0) + 1; });
+    return res;
+  }
+  function finishEntities(list, res) {
+    var out = [], poly = null;
+    list.forEach(function (e) {
+      var p = e.p, layer = get(p, 8, '0'), t = e.type;
+      if (poly && t === 'VERTEX') { poly.verts.push({ x: num(get(p, 10, 0)), y: num(get(p, 20, 0)), bulge: num(get(p, 42, 0)) }); return; }
+      if (poly && t === 'SEQEND') { out.push({ type: 'POLY', layer: poly.layer, pts: polyPoints(poly.verts, poly.closed), closed: poly.closed, src: 'POLYLINE' }); poly = null; return; }
+      if (poly) { out.push({ type: 'POLY', layer: poly.layer, pts: polyPoints(poly.verts, poly.closed), closed: poly.closed, src: 'POLYLINE' }); poly = null; }
+      if (t === 'LINE') out.push({ type: 'LINE', layer: layer, a: { x: num(get(p, 10, 0)), y: num(get(p, 20, 0)) }, b: { x: num(get(p, 11, 0)), y: num(get(p, 21, 0)) } });
+      else if (t === 'LWPOLYLINE') {
+        var verts = [], cur = null;
+        p.forEach(function (q) { if (q[0] === 10) { cur = { x: num(q[1]), y: 0, bulge: 0 }; verts.push(cur); } else if (q[0] === 20 && cur) cur.y = num(q[1]); else if (q[0] === 42 && cur) cur.bulge = num(q[1]); });
+        var closed = (parseInt(get(p, 70, 0), 10) & 1) === 1; out.push({ type: 'POLY', layer: layer, pts: polyPoints(verts, closed), closed: closed, src: 'LWPOLYLINE' });
+      } else if (t === 'POLYLINE') poly = { layer: layer, verts: [], closed: (parseInt(get(p, 70, 0), 10) & 1) === 1 };
+      else if (t === 'ARC') { var r = num(get(p, 40, 0)), cx = num(get(p, 10, 0)), cy = num(get(p, 20, 0)), s = num(get(p, 50, 0)) * Math.PI / 180, en = num(get(p, 51, 360)) * Math.PI / 180; out.push({ type: 'ARC', layer: layer, c: { x: cx, y: cy }, r: r, a0: s, a1: en }); }
+      else if (t === 'INSERT') out.push({ type: 'INSERT', layer: layer, name: get(p, 2, ''), at: { x: num(get(p, 10, 0)), y: num(get(p, 20, 0)) }, sx: num(get(p, 41, 1)) || 1, sy: num(get(p, 42, 1)) || 1, rot: num(get(p, 50, 0)) * Math.PI / 180 });
+      else if (t === 'TEXT') out.push({ type: 'TEXT', layer: layer, at: { x: num(get(p, 10, 0)), y: num(get(p, 20, 0)) }, text: get(p, 1, ''), h: num(get(p, 40, 0)) });
+      else if (t === 'MTEXT') out.push({ type: 'TEXT', layer: layer, at: { x: num(get(p, 10, 0)), y: num(get(p, 20, 0)) }, text: getAll(p, 3).join('') + get(p, 1, ''), h: num(get(p, 40, 0)), src: 'MTEXT' });
+      else out.push({ type: 'OTHER', kind: t, layer: layer });
+    });
+    if (poly) out.push({ type: 'POLY', layer: poly.layer, pts: polyPoints(poly.verts, poly.closed), closed: poly.closed, src: 'POLYLINE' });
+    return out;
+  }
+  function cleanText(s) {
+    return String(s || '').replace(/\\P/gi, ' ').replace(/\{?\\[A-Za-z][^;{}]*;/g, '').replace(/[{}]/g, '').replace(/\\U\+([0-9A-F]{4})/gi, function (_, h) { return String.fromCharCode(parseInt(h, 16)); }).replace(/%%[a-z]/gi, '').replace(/\s+/g, ' ').trim();
+  }
+
+  /* ---------- layer / name classification ---------- */
+  function classifyLayer(name) {
+    var n = String(name || '').toLowerCase().replace(/[_\-.:|$ ]+/g, ' ');
+    if (/\b(door|porte|tuer|dr)\b|door/.test(n)) return 'door';
+    if (/window|fenetre|glaz|\bwin\b|\bwdw\b/.test(n)) return 'window';
+    if (/opening|archway|\barch\b|cased|passage|doorway/.test(n)) return 'opening';
+    if (/wall|mur|wand/.test(n)) return 'wall';
+    if (/label|text|name|annot|note/.test(n)) return 'label';
+    if (/\broom|space|zone|\barea\b|boundary|outline|floor ?plan area/.test(n)) return 'room';
+    if (/dim|measure/.test(n)) return 'dimension';
+    if (/fixture|furn|cabinet|plumb|appliance|stair|equip|object|sanit|casework|counter/.test(n)) return 'fixture';
+    return 'unknown';
+  }
+  function kindForBlock(name) { var c = classifyLayer(name); return c === 'door' || c === 'window' || c === 'opening' ? c : null; }
+  var TYPE_GUESS = [[/primary.*bath|master.*bath|main.*bath|ensuite|en suite/i, 'primary_bath'], [/primary|master|main bed/i, 'primary_bed'], [/powder|half bath|wc|toilet/i, 'powder'], [/bath|shower|restroom/i, 'bath'], [/kitchen|kitchenette/i, 'kitchen'],
+    [/dining/i, 'dining'], [/family|great room|den|media|rec/i, 'family'], [/living|lounge|sitting|salon/i, 'living'], [/bed|guest|nursery|suite/i, 'bedroom'], [/office|study|library/i, 'office'], [/laundry|utility|mud/i, 'laundry'],
+    [/closet|wardrobe|walk.?in|pantry|storage/i, 'closet'], [/hall|corridor|landing|foyer vestibule/i, 'hall'], [/entry|foyer|vestibule/i, 'entry'], [/garage|carport/i, 'garage'], [/patio|deck|balcon|terrace|porch|yard|outdoor/i, 'outdoor']];
+  function guessType(name) { for (var i = 0; i < TYPE_GUESS.length; i++) if (TYPE_GUESS[i][0].test(name)) return TYPE_GUESS[i][1]; return 'other'; }
+  function isDimText(t) { return !t || /^[\d\s.,'"\/\-xX×]+(ft|in|mm|cm|m|sf|sq\.? ?ft)?\.?$/i.test(t) || /^[\d.,]+\s*(m2|m²|sf|sqft|sq ft)$/i.test(t); }
+
+  /* ---------- geometry helpers ---------- */
+  function d2(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function segLen(s) { return d2(s.a, s.b); }
+  function bboxOf(pts) { var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; pts.forEach(function (p) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }); return { x0: x0, y0: y0, x1: x1, y1: y1 }; }
+  function distSeg(p, a, b) { return RMG.distToSeg(p, a, b); }
+  function mkMat(tx, ty, sx, sy, rot) { var c = Math.cos(rot), s = Math.sin(rot); return { a: c * sx, b: s * sx, c: -s * sy, d: c * sy, e: tx, f: ty }; }
+  function applyM(m, p) { return { x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f }; }
+  function mulM(m, n) { return { a: m.a * n.a + m.c * n.b, b: m.b * n.a + m.d * n.b, c: m.a * n.c + m.c * n.d, d: m.b * n.c + m.d * n.d, e: m.a * n.e + m.c * n.f + m.e, f: m.b * n.e + m.d * n.f + m.f }; }
+  var IDM = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  function arcPoints(e, m, n) { var out = [], a0 = e.a0, a1 = e.a1; if (a1 <= a0) a1 += Math.PI * 2; n = n || 12; for (var k = 0; k <= n; k++) { var t = a0 + (a1 - a0) * k / n; out.push(applyM(m, { x: e.c.x + e.r * Math.cos(t), y: e.c.y + e.r * Math.sin(t) })); } return out; }
+  /* Flatten entities (expanding INSERTs) into drawables in drawing units. depth-limited. */
+  function flatten(ents, blocks, m, inheritLayer, depth, acc, tag) {
+    ents.forEach(function (e) {
+      var layer = (inheritLayer && (!e.layer || e.layer === '0')) ? inheritLayer : e.layer;
+      if (e.type === 'INSERT') {
+        var b = blocks[e.name];
+        if (!b) { acc.unknownBlocks[e.name] = (acc.unknownBlocks[e.name] || 0) + 1; return; }
+        if (depth >= 4) { acc.warn.push('Block "' + e.name + '" is nested too deeply; skipped.'); return; }
+        var bm = mulM(m, mulM(mkMat(e.at.x, e.at.y, e.sx, e.sy, e.rot), mkMat(-b.base.x, -b.base.y, 1, 1, 0)));
+        flatten(b.ents, blocks, bm, layer, depth + 1, acc, tag || { block: e.name, layer: layer });
+      } else if (e.type === 'LINE') acc.items.push({ t: 'seg', layer: layer, tag: tag, a: applyM(m, e.a), b: applyM(m, e.b) });
+      else if (e.type === 'POLY') acc.items.push({ t: 'poly', layer: layer, tag: tag, pts: e.pts.map(function (p) { return applyM(m, p); }), closed: e.closed });
+      else if (e.type === 'ARC') acc.items.push({ t: 'arc', layer: layer, tag: tag, pts: arcPoints(e, m) });
+      else if (e.type === 'TEXT') acc.items.push({ t: 'text', layer: layer, tag: tag, at: applyM(m, e.at), text: cleanText(e.text) });
+      else acc.items.push({ t: 'other', layer: layer, tag: tag, kind: e.kind || e.type });
+    });
+  }
+
+  /* collinear merge + endpoint snapping: segments [{a,b}] -> cleaned segments, plus how many were merged away */
+  function mergeSegments(segs, tol) {
+    var list = segs.filter(function (s) { return segLen(s) > tol / 2; }).map(function (s) { return { a: { x: s.a.x, y: s.a.y }, b: { x: s.b.x, y: s.b.y } }; }), merged = 0, changed = true;
+    function ang(s) { var a = Math.atan2(s.b.y - s.a.y, s.b.x - s.a.x); if (a < 0) a += Math.PI; if (a >= Math.PI - 1e-9) a -= Math.PI; return a; }
+    function off(p, s) { var l = segLen(s); return Math.abs(((p.x - s.a.x) * (s.b.y - s.a.y) - (p.y - s.a.y) * (s.b.x - s.a.x)) / l); }
+    while (changed) {
+      changed = false;
+      outer: for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length; j++) {
+        var A = list[i], B = list[j], da = Math.abs(ang(A) - ang(B)); da = Math.min(da, Math.PI - da);
+        if (da > 0.035) continue;
+        if (off(B.a, A) > tol || off(B.b, A) > tol) continue;
+        var ux = (A.b.x - A.a.x) / segLen(A), uy = (A.b.y - A.a.y) / segLen(A), ts = [A.a, A.b, B.a, B.b].map(function (p) { return (p.x - A.a.x) * ux + (p.y - A.a.y) * uy; });
+        var a0 = Math.min(ts[0], ts[1]), a1 = Math.max(ts[0], ts[1]), b0 = Math.min(ts[2], ts[3]), b1 = Math.max(ts[2], ts[3]);
+        if (b0 > a1 + tol || a0 > b1 + tol) continue;                               /* disjoint with a real gap */
+        var lo = Math.min(a0, b0), hi = Math.max(a1, b1);
+        list[i] = { a: { x: A.a.x + ux * lo, y: A.a.y + uy * lo }, b: { x: A.a.x + ux * hi, y: A.a.y + uy * hi } }; list.splice(j, 1); merged++; changed = true; break outer;
+      }
+    }
+    return { segs: list, merged: merged };
+  }
+  /* planar faces of a segment soup. returns closed polygons (arrays of points), CCW in the input orientation. */
+  function faces(segs, tol) {
+    var pts = [];
+    function vid(p) { for (var i = 0; i < pts.length; i++) if (d2(pts[i], p) <= tol) return i; pts.push({ x: p.x, y: p.y }); return pts.length - 1; }
+    /* snap endpoints onto other segments (T junctions) and split at crossings */
+    var S = segs.map(function (s) { return { a: { x: s.a.x, y: s.a.y }, b: { x: s.b.x, y: s.b.y }, cuts: [] }; });
+    S.forEach(function (s, i) {
+      [s.a, s.b].forEach(function (p) {
+        S.forEach(function (o, j) { if (i === j) return; var r = distSeg(p, o.a, o.b); if (r.d <= tol && r.t > 0 && r.t < 1 && d2(p, o.a) > tol && d2(p, o.b) > tol) { o.cuts.push({ x: r.x, y: r.y }); p.x = r.x; p.y = r.y; } });
+      });
+    });
+    for (var i = 0; i < S.length; i++) for (var j = i + 1; j < S.length; j++) {
+      var A = S[i], B = S[j], r = (A.b.x - A.a.x) * (B.b.y - B.a.y) - (A.b.y - A.a.y) * (B.b.x - B.a.x);
+      if (Math.abs(r) < 1e-9) continue;
+      var t = ((B.a.x - A.a.x) * (B.b.y - B.a.y) - (B.a.y - A.a.y) * (B.b.x - B.a.x)) / r, u = ((B.a.x - A.a.x) * (A.b.y - A.a.y) - (B.a.y - A.a.y) * (A.b.x - A.a.x)) / r;
+      var la = segLen(A), lb = segLen(B), et = tol / la, eu = tol / lb;
+      if (t > et && t < 1 - et && u > eu && u < 1 - eu) { var X = { x: A.a.x + t * (A.b.x - A.a.x), y: A.a.y + t * (A.b.y - A.a.y) }; A.cuts.push(X); B.cuts.push(X); }
+    }
+    var edges = {};
+    function addEdge(p, q) { var a = vid(p), b = vid(q); if (a === b) return; var k = Math.min(a, b) + '_' + Math.max(a, b); edges[k] = [Math.min(a, b), Math.max(a, b)]; }
+    S.forEach(function (s) {
+      var ux = s.b.x - s.a.x, uy = s.b.y - s.a.y, l2 = ux * ux + uy * uy || 1, chain = [s.a].concat(s.cuts).concat([s.b]);
+      chain.sort(function (p, q) { return ((p.x - s.a.x) * ux + (p.y - s.a.y) * uy) / l2 - ((q.x - s.a.x) * ux + (q.y - s.a.y) * uy) / l2; });
+      for (var k = 0; k + 1 < chain.length; k++) addEdge(chain[k], chain[k + 1]);
+    });
+    var adj = pts.map(function () { return []; });
+    Object.keys(edges).forEach(function (k) { var e = edges[k]; adj[e[0]].push(e[1]); adj[e[1]].push(e[0]); });
+    /* prune dangling edges */
+    var changed = true; while (changed) { changed = false; for (var v = 0; v < adj.length; v++) if (adj[v].length === 1) { var w = adj[v][0]; adj[w].splice(adj[w].indexOf(v), 1); adj[v] = []; changed = true; } }
+    adj.forEach(function (list, v) { list.sort(function (p, q) { return Math.atan2(pts[p].y - pts[v].y, pts[p].x - pts[v].x) - Math.atan2(pts[q].y - pts[v].y, pts[q].x - pts[v].x); }); });
+    var used = {}, out = [];
+    for (var u0 = 0; u0 < adj.length; u0++) adj[u0].forEach(function (v0) {
+      if (used[u0 + '>' + v0]) return;
+      var loop = [], a = u0, b = v0, guard = 0;
+      while (!used[a + '>' + b] && guard++ < 5000) {
+        used[a + '>' + b] = true; loop.push(a);
+        var nb = adj[b], idx = nb.indexOf(a), nxt = nb[(idx - 1 + nb.length) % nb.length]; a = b; b = nxt;
+      }
+      if (loop.length >= 3) out.push(loop.map(function (k) { return { x: pts[k].x, y: pts[k].y }; }));
+    });
+    return out;
+  }
+  function signedArea(poly) { var s = 0; for (var i = 0; i < poly.length; i++) { var a = poly[i], b = poly[(i + 1) % poly.length]; s += a.x * b.y - b.x * a.y; } return s / 2; }
+  function simplifyPoly(poly, tol) {
+    var p = poly.slice(), changed = true;
+    while (changed && p.length > 3) {
+      changed = false;
+      for (var i = 0; i < p.length; i++) {
+        var a = p[(i + p.length - 1) % p.length], b = p[i], c = p[(i + 1) % p.length];
+        if (d2(a, b) <= tol || distSeg(b, a, c).d <= tol) { p.splice(i, 1); changed = true; break; }
+      }
+    }
+    return p;
+  }
+  function roomOk(poly) { var a = Math.abs(signedArea(poly)), per = 0; for (var i = 0; i < poly.length; i++) per += d2(poly[i], poly[(i + 1) % poly.length]); return a >= 500000 && (a / (per / 2)) >= 280; }
+
+  /* attach opening candidates (point clouds near a wall) to room edges */
+  function attachOpenings(rooms, cands, summary) {
+    cands.forEach(function (c) {
+      var hit = 0;
+      rooms.forEach(function (r) {
+        var best = null, n = r.polygon.length;
+        for (var i = 0; i < n; i++) {
+          var a = r.polygon[i], b = r.polygon[(i + 1) % n], L = d2(a, b), near = c.pts.filter(function (p) { return distSeg(p, a, b).d <= ATTACH; });
+          if (!near.length) continue;
+          var ts = near.map(function (p) { return distSeg(p, a, b).t * L; }), score = near.length - Math.min.apply(null, near.map(function (p) { return distSeg(p, a, b).d; })) / 1000;
+          if (!best || score > best.score) best = { i: i, L: L, lo: Math.min.apply(null, ts), hi: Math.max.apply(null, ts), score: score };
+        }
+        if (!best) return;
+        var width = best.hi - best.lo; if (width < 300) { if (c.width && c.width >= 300) { var mid = (best.lo + best.hi) / 2; best.lo = mid - c.width / 2; best.hi = mid + c.width / 2; width = c.width; } else return; }
+        var k = RMG.clampOpening(best.L, best.lo, width), d = RMG.OPENING_DEFAULTS[c.kind] || RMG.OPENING_DEFAULTS.door;
+        r.walls[best.i].openings.push({ id: RMG.newId(), kind: c.kind, offset_mm: k.offset, width_mm: k.width, height_mm: c.height || d.h, sill_mm: c.sill != null ? c.sill : d.sill, swing: null }); hit++;
+      });
+      if (hit) summary.openings.found++; else { summary.openings.unattached++; summary.ignored.push({ what: c.kind + ' not on any wall', layer: c.layer || '', n: 1 }); }
+    });
+  }
+  function emptyRoom(poly, name) {
+    var p = poly.map(function (q) { return { x: Math.round(q.x), y: Math.round(q.y) }; });
+    return { id: RMG.newId(), name: name || 'Room', room_type: 'other', ceiling_height_mm: 2438, floor_material: '', notes: '', raw: {}, polygon: p,
+      walls: p.map(function () { return { id: RMG.newId(), thickness_mm: null, is_exterior: false, is_load_bearing: null, openings: [] }; }) };
+  }
+  function normaliseOrigin(rooms, cands) {
+    var b = bboxOf([].concat.apply([], rooms.map(function (r) { return r.polygon; }))), dx = -b.x0, dy = -b.y0;
+    rooms.forEach(function (r) { r.polygon = r.polygon.map(function (p) { return { x: Math.round(p.x + dx), y: Math.round(p.y + dy) }; }); });
+    cands.forEach(function (c) { c.pts = c.pts.map(function (p) { return { x: p.x + dx, y: p.y + dy }; }); });
+  }
+  function bumpIgnored(map, key, layer) { var k = key + '|' + layer; map[k] = (map[k] || 0) + 1; }
+  function ignoredList(map) { return Object.keys(map).map(function (k) { var s = k.split('|'); return { what: s[0], layer: s[1], n: map[k] }; }).sort(function (a, b) { return b.n - a.n; }); }
+  function unitGuess(items) {
+    var pts = []; items.forEach(function (it) { if (it.t === 'seg') pts.push(it.a, it.b); else if (it.t === 'poly') pts = pts.concat(it.pts); });
+    if (!pts.length) return { factor: 1, name: 'millimetres', guessed: true };
+    var b = bboxOf(pts), ext = Math.max(b.x1 - b.x0, b.y1 - b.y0);
+    if (ext >= 2500) return { factor: 1, name: 'millimetres', guessed: true };
+    if (ext < 120) return { factor: 1000, name: 'metres', guessed: true };
+    return { factor: 10, name: 'centimetres', guessed: true };
+  }
+
+  /* ---------- DXF -> plan ---------- */
+  function importDxf(text, opts) {
+    opts = opts || {};
+    var d = parseDxf(text), acc = { items: [], unknownBlocks: {}, warn: [] }, summary = { format: 'dxf', units: '', units_guessed: false, rooms: 0, walls: 0, openings: { found: 0, unattached: 0 }, merged_segments: 0, labels: 0, ignored: [], warnings: d.warnings.slice(), layers: {} };
+    flatten(d.entities, d.blocks, IDM, null, 0, acc);
+    summary.warnings = summary.warnings.concat(acc.warn);
+    Object.keys(acc.unknownBlocks).forEach(function (n) { summary.ignored.push({ what: 'block "' + n + '" has no definition', layer: '', n: acc.unknownBlocks[n] }); });
+    var u;
+    if (opts.units && opts.units > 0) u = { factor: opts.units, name: opts.unitsName || 'custom', guessed: false };
+    else if (UNIT_MM[d.insunits]) u = { factor: UNIT_MM[d.insunits], name: UNIT_NAME[d.insunits] || ('unit ' + d.insunits), guessed: false };
+    else { u = unitGuess(acc.items); summary.warnings.push('The file does not say what units it uses; guessed ' + u.name + '. Change it below if the sizes look wrong.'); }
+    summary.units = u.name; summary.units_guessed = u.guessed; summary.units_factor = u.factor;
+    /* to mm, y down */
+    function T(p) { return { x: p.x * u.factor, y: -p.y * u.factor }; }
+    acc.items.forEach(function (it) { if (it.a) { it.a = T(it.a); it.b = T(it.b); } if (it.pts) it.pts = it.pts.map(T); if (it.at) it.at = T(it.at); });
+    var segs = [], roomPolys = [], cands = [], labels = [], ign = {}, otherClosed = [], allLine = [];
+    acc.items.forEach(function (it) {
+      var cls = classifyLayer(it.layer), blk = it.tag && it.tag.block ? kindForBlock(it.tag.block) : null, kind = blk || (cls === 'door' || cls === 'window' || cls === 'opening' ? cls : null);
+      summary.layers[it.layer] = (summary.layers[it.layer] || 0) + 1;
+      if (it.t === 'text') { if (isDimText(it.text)) bumpIgnored(ign, 'dimension text', it.layer); else labels.push({ text: it.text, at: it.at, layer: it.layer }); return; }
+      if (it.t === 'other') { bumpIgnored(ign, it.kind + ' entity', it.layer); return; }
+      var P = it.t === 'seg' ? [it.a, it.b] : it.pts;
+      if (kind) { cands.push({ kind: kind, layer: it.layer, block: it.tag && it.tag.block, pts: P, key: it.tag ? 'b:' + it.tag.block + '@' + (it.tag.layer || '') : 'l:' + it.layer }); return; }
+      if (cls === 'wall') {
+        if (it.t === 'seg') segs.push({ a: it.a, b: it.b });
+        else if (it.t === 'poly') for (var i = 0; i + 1 < it.pts.length + (it.closed ? 1 : 0); i++) segs.push({ a: it.pts[i], b: it.pts[(i + 1) % it.pts.length] });
+        else bumpIgnored(ign, 'arc on wall layer', it.layer);
+        return;
+      }
+      if (cls === 'room' && it.t === 'poly' && it.closed) { roomPolys.push(it.pts); return; }
+      if (cls === 'fixture' || cls === 'dimension' || cls === 'label') { bumpIgnored(ign, (cls === 'fixture' ? 'fixture' : cls) + ' ' + it.t, it.layer); return; }
+      if (it.t === 'poly' && it.closed) otherClosed.push(it); if (it.t === 'seg' || it.t === 'poly') allLine.push(it);
+      bumpIgnored(ign, 'unrecognised layer ' + it.t, it.layer);
+    });
+    /* cluster opening fragments (door leaf + frame + swing arc belong together) */
+    var clusters = [];
+    cands.forEach(function (c) {
+      var bb = bboxOf(c.pts), hit = [];
+      clusters.forEach(function (k) { if (k.kind === c.kind && k.key === c.key && bb.x0 <= k.bb.x1 + 60 && bb.x1 >= k.bb.x0 - 60 && bb.y0 <= k.bb.y1 + 60 && bb.y1 >= k.bb.y0 - 60) hit.push(k); });
+      var m = { kind: c.kind, layer: c.layer, key: c.key, pts: c.pts.slice(), bb: bb };
+      hit.forEach(function (k) { m.pts = m.pts.concat(k.pts); clusters.splice(clusters.indexOf(k), 1); }); m.bb = bboxOf(m.pts); clusters.push(m);
+    });
+    /* rooms */
+    var rooms = [], mergedInfo = { merged: 0 };
+    if (roomPolys.length) roomPolys.forEach(function (p) { var s = simplifyPoly(p, TOL); if (s.length >= 3) rooms.push(emptyRoom(s)); });
+    if (roomPolys.length && segs.length) summary.ignored.push({ what: 'wall lines not used because the rooms came from room outlines', layer: '', n: segs.length });
+    var usedFallback = false;
+    if (!rooms.length) {
+      var src = segs;
+      if (!src.length && otherClosed.length) { usedFallback = true; otherClosed.forEach(function (it) { it.pts.forEach(function (p, i) { src.push({ a: p, b: it.pts[(i + 1) % it.pts.length] }); }); }); summary.warnings.push('No wall layer found; used closed outlines on other layers as walls.'); }
+      else if (!src.length && allLine.length) { usedFallback = true; allLine.forEach(function (it) { if (it.t === 'seg') src.push({ a: it.a, b: it.b }); else for (var i = 0; i + 1 < it.pts.length; i++) src.push({ a: it.pts[i], b: it.pts[i + 1] }); }); summary.warnings.push('No wall layer found; treated all line work as walls.'); }
+      if (!src.length) { var e = new Error('No walls or room outlines found. Layers in this file: ' + (Object.keys(summary.layers).join(', ') || 'none') + '.'); e.summary = summary; throw e; }
+      var mg = mergeSegments(src, TOL); summary.merged_segments = Math.max(0, src.length - mg.segs.length);
+      summary.walls = mg.segs.length;
+      var fs = faces(mg.segs, TOL), slivers = 0;
+      fs.forEach(function (f) { if (signedArea(f) <= 0) return; /* outer face */ var s = simplifyPoly(f, TOL); if (s.length >= 3 && roomOk(s)) rooms.push(emptyRoom(s)); else slivers++; });
+      if (slivers) summary.ignored.push({ what: 'closed shapes too small or thin to be rooms (wall thickness, closets under 5 sq ft)', layer: '', n: slivers });
+      if (!rooms.length) { var e2 = new Error('Found ' + mg.segs.length + ' wall segments but they don’t close into any room. Check the wall layer for gaps bigger than 1 inch.'); e2.summary = summary; throw e2; }
+    }
+    /* name rooms from the labels inside them */
+    labels.forEach(function (lb) {
+      var inside = rooms.filter(function (r) { return RMG.pointInPoly(lb.at, r.polygon); }).sort(function (a, b) { return RMG.area(a.polygon) - RMG.area(b.polygon); })[0];
+      if (!inside) { summary.ignored.push({ what: 'label outside every room: "' + lb.text.slice(0, 30) + '"', layer: lb.layer, n: 1 }); return; }
+      if (inside._named) { summary.ignored.push({ what: 'extra label in "' + inside.name + '": "' + lb.text.slice(0, 30) + '"', layer: lb.layer, n: 1 }); return; }
+      inside.name = lb.text.slice(0, 40); inside.room_type = guessType(lb.text); inside._named = true; summary.labels++;
+    });
+    rooms.forEach(function (r, i) { if (!r._named) r.name = 'Room ' + (i + 1); delete r._named; });
+    normaliseOrigin(rooms, clusters);
+    /* walls count for room-layer imports */
+    if (!summary.walls) summary.walls = rooms.reduce(function (n, r) { return n + r.polygon.length; }, 0);
+    attachOpenings(rooms, clusters, summary);
+    summary.rooms = rooms.length; summary.ignored = summary.ignored.concat(ignoredList(ign));
+    var raw = { format: 'dxf', imported_at: new Date().toISOString(), filename: opts.filename || '', insunits: d.insunits, units_used: u.name, entity_counts: d.counts, layers: summary.layers, blocks: Object.keys(d.blocks) };
+    if (String(text).length <= RAW_TEXT_MAX) raw.text = String(text); else { raw.text = null; raw.text_omitted = 'file is ' + String(text).length + ' characters; over the ' + RAW_TEXT_MAX + ' limit'; summary.warnings.push('The file is large, so only its entity list (not the full text) is kept with the plan.'); }
+    return { plan: finalize(rooms, 'Scan: ' + (opts.filename || 'DXF'), raw), summary: summary };
+  }
+  function finalize(rooms, name, raw) {
+    return { id: null, rev: null, version: null, name: String(name).slice(0, 120), source: 'lidar', confidence: 'high', notes: '', underlay: null, raw: raw, rawNew: true, rooms: rooms };
+  }
+
+  /* ---------- RoomPlan JSON ---------- */
+  function flat16(t) {
+    if (!t) return null;
+    if (Array.isArray(t) && t.length === 16 && typeof t[0] === 'number') return t;
+    if (Array.isArray(t) && t.length === 4 && Array.isArray(t[0])) return [].concat.apply([], t);
+    if (t.columns && Array.isArray(t.columns)) return [].concat.apply([], t.columns);
+    return null;
+  }
+  function vec3(d) { if (Array.isArray(d)) return { x: Number(d[0]) || 0, y: Number(d[1]) || 0, z: Number(d[2]) || 0 }; if (d && typeof d === 'object') return { x: Number(d.x) || 0, y: Number(d.y) || 0, z: Number(d.z) || 0 }; return { x: 0, y: 0, z: 0 }; }
+  function catName(c) { if (typeof c === 'string') return c; if (c && typeof c === 'object') return Object.keys(c)[0] || ''; return ''; }
+  function surf(s) {
+    var t = flat16(s.transform), dm = vec3(s.dimensions);
+    if (!t) return null;
+    /* simd columns: [c0 c1 c2 c3], translation is c3. world x -> plan x, world z -> plan y (top-down), y is up */
+    return { id: s.identifier || '', cat: catName(s.category), w: dm.x * 1000, h: dm.y * 1000, th: dm.z * 1000, cx: t[12] * 1000, cy: t[13] * 1000, cz: t[14] * 1000, dir: { x: t[0], z: t[2] }, raw: s };
+  }
+  function importRoomPlan(obj, opts) {
+    opts = opts || {};
+    var rms = Array.isArray(obj.rooms) ? obj.rooms : [obj];
+    var summary = { format: 'roomplan', units: 'metres (RoomPlan)', units_guessed: false, rooms: 0, walls: 0, openings: { found: 0, unattached: 0 }, merged_segments: 0, labels: 0, ignored: [], warnings: [], layers: {} };
+    var ign = {}, rooms = [], cands = [];
+    rms.forEach(function (rm, ri) {
+      var walls = (rm.walls || []).map(surf).filter(Boolean), floors = (rm.floors || []).map(surf).filter(Boolean);
+      summary.walls += walls.length;
+      ['objects', 'sections', 'story'].forEach(function (k) { if (rm[k] != null) { var items = Array.isArray(rm[k]) ? rm[k] : [rm[k]]; if (k === 'objects') items.forEach(function (o) { bumpIgnored(ign, 'object: ' + (catName(o.category) || 'unknown'), ''); }); } });
+      var poly = null;
+      var fl = (rm.floors || []).filter(function (f) { return Array.isArray(f.polygonCorners) && f.polygonCorners.length >= 3; })[0];
+      if (fl) { var ft = flat16(fl.transform) || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; poly = fl.polygonCorners.map(function (c) { var v = vec3(c); /* corners are in the floor's local space: x, y(=0 or z), z */ var wx = ft[0] * v.x + ft[4] * v.y + ft[8] * v.z + ft[12], wz = ft[2] * v.x + ft[6] * v.y + ft[10] * v.z + ft[14]; return { x: wx * 1000, y: wz * 1000 }; }); }
+      if (!poly && walls.length >= 3) {
+        var segs = walls.map(function (w) { return { a: { x: w.cx - w.dir.x * w.w / 2, y: w.cz - w.dir.z * w.w / 2 }, b: { x: w.cx + w.dir.x * w.w / 2, y: w.cz + w.dir.z * w.w / 2 } }; });
+        /* chain walls into one loop using line intersections for the corners */
+        var used = {}, order = [0], cur = 0; used[0] = true;
+        for (var n = 1; n < segs.length; n++) {
+          var best = -1, bd = Infinity, endTo = null;
+          segs.forEach(function (s, j) { if (used[j]) return; [s.a, s.b].forEach(function (p) { [segs[cur].a, segs[cur].b].forEach(function (q) { var dd = d2(p, q); if (dd < bd) { bd = dd; best = j; } }); }); });
+          if (best < 0 || bd > 800) break; used[best] = true; order.push(best); cur = best;
+        }
+        if (order.length === segs.length) {
+          var cs = [];
+          for (var k = 0; k < order.length; k++) {
+            var A = segs[order[k]], B = segs[order[(k + 1) % order.length]], r = (A.b.x - A.a.x) * (B.b.y - B.a.y) - (A.b.y - A.a.y) * (B.b.x - B.a.x);
+            if (Math.abs(r) < 1e-6) { var best2 = [A.a, A.b].map(function (p) { return [B.a, B.b].map(function (q) { return { p: { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }, d: d2(p, q) }; }); }); var m = [].concat.apply([], best2).sort(function (a, b) { return a.d - b.d; })[0]; cs.push(m.p); continue; }
+            var t = ((B.a.x - A.a.x) * (B.b.y - B.a.y) - (B.a.y - A.a.y) * (B.b.x - B.a.x)) / r; cs.push({ x: A.a.x + t * (A.b.x - A.a.x), y: A.a.y + t * (A.b.y - A.a.y) });
+          }
+          poly = cs;
+        } else {
+          var mg = mergeSegments(segs, 100), fs = faces(mg.segs, 100).filter(function (f) { return Math.abs(signedArea(f)) > 1000000; }).sort(function (a, b) { return signedArea(b) - signedArea(a); });
+          /* the outer face has the opposite sign of all inner ones; keep the largest inner */
+          var pos = fs.filter(function (f) { return signedArea(f) > 0; }); poly = (pos.length ? pos[pos.length - 1] : null); if (poly) summary.warnings.push('Room ' + (ri + 1) + ': walls did not chain cleanly; rebuilt from wall intersections.');
+        }
+      }
+      if (!poly) { summary.warnings.push('Room ' + (ri + 1) + ': could not build an outline (needs a floor polygon or at least 3 connected walls).'); return; }
+      poly = simplifyPoly(poly, TOL);
+      var room = emptyRoom(poly, 'Room ' + (rooms.length + 1)); room.raw = { roomplan_identifier: rm.identifier || null };
+      var hs = walls.map(function (w) { return w.h; }).filter(function (h) { return h > 1500 && h < 6000; }); if (hs.length) room.ceiling_height_mm = Math.round(hs.reduce(function (a, b) { return a + b; }, 0) / hs.length);
+      rooms.push(room); room._ri = ri; room._rm = rm;
+      var floorY = walls.length ? Math.min.apply(null, walls.map(function (w) { return w.cy - w.h / 2; })) : 0;
+      [['doors', 'door'], ['windows', 'window'], ['openings', 'opening']].forEach(function (pair) {
+        (rm[pair[0]] || []).map(surf).filter(Boolean).forEach(function (o) {
+          var ax = o.dir.x * o.w / 2, az = o.dir.z * o.w / 2, kind = pair[1];
+          if (kind === 'opening' && /arch|slider/i.test(o.cat)) kind = 'opening';
+          cands.push({ kind: kind, layer: pair[0], width: Math.round(o.w), height: Math.round(o.h), sill: kind === 'window' ? Math.max(0, Math.round(o.cy - o.h / 2 - floorY)) : 0, pts: [{ x: o.cx - ax, y: o.cz - az }, { x: o.cx + ax, y: o.cz + az }], _room: room });
+        });
+      });
+      (rm.sections || []).forEach(function (sec) { var lb = catName(sec.label), c = sec.center ? vec3(sec.center) : null; if (!lb || !c) return; var p = { x: c.x * 1000, y: c.z * 1000 }; if (RMG.pointInPoly(p, poly)) { room.name = lb.replace(/([A-Z])/g, ' $1').replace(/^./, function (s) { return s.toUpperCase(); }).trim(); room.room_type = guessType(room.name); summary.labels++; } });
+    });
+    if (!rooms.length) { var e = new Error('No rooms could be built from that RoomPlan file.'); e.summary = summary; throw e; }
+    normaliseOrigin(rooms, cands);
+    /* only attach each opening to the room that owns it (rooms in a structure can touch) */
+    cands.forEach(function (c) {
+      var owner = c._room, tmp = { openings: { found: 0, unattached: 0 }, ignored: summary.ignored };
+      attachOpenings([owner], [c], tmp); summary.openings.found += tmp.openings.found; summary.openings.unattached += tmp.openings.unattached;
+    });
+    rooms.forEach(function (r) { delete r._ri; delete r._rm; });
+    summary.rooms = rooms.length; summary.ignored = summary.ignored.concat(ignoredList(ign));
+    var raw = { format: 'roomplan', imported_at: new Date().toISOString(), filename: opts.filename || '', json: obj };
+    return { plan: finalize(rooms, 'Scan: ' + (opts.filename || 'RoomPlan'), raw), summary: summary };
+  }
+
+  function detect(text) {
+    var t = String(text || '').trim();
+    if (/^0\s*\n\s*SECTION\b/.test(t) || /^999\b[\s\S]{0,200}\n\s*0\s*\n\s*SECTION/.test(t) || /\n\s*2\s*\n\s*ENTITIES\b/.test(t)) return 'dxf';
+    if (t[0] === '{' || t[0] === '[') {
+      try { var o = JSON.parse(t); if (o && o.format === 'spiro-room-model') return 'spiro'; if (o && (Array.isArray(o.walls) || (Array.isArray(o.rooms) && o.rooms[0] && (o.rooms[0].walls || o.rooms[0].floors)))) { if (o.rooms && o.rooms[0] && o.rooms[0].polygon) return 'spiro'; return 'roomplan'; } if (o && Array.isArray(o.rooms)) return 'spiro'; } catch (e) { return null; }
+    }
+    return null;
+  }
+  function importScan(text, opts) {
+    var kind = detect(text);
+    if (kind === 'dxf') return importDxf(text, opts);
+    if (kind === 'roomplan') return importRoomPlan(JSON.parse(text), opts);
+    var e = new Error(kind === 'spiro' ? 'That is a Spiro floor plan file; use Import JSON.' : 'Not a DXF or RoomPlan file. USDZ can’t be read here; export DXF or the RoomPlan JSON instead.'); throw e;
+  }
+  return { importScan: importScan, importDxf: importDxf, importRoomPlan: importRoomPlan, parseDxf: parseDxf, detect: detect, classifyLayer: classifyLayer, mergeSegments: mergeSegments, faces: faces, guessType: guessType, cleanText: cleanText, isDimText: isDimText, TOL: TOL };
+})();
+/* RMI:END */
 /* ---------- Floorplans (room-model core, Phase 1) ----------
    A property's floor plans: a list of saved versions and a phone-first 2D room editor. Geometry is stored in integer millimetres and
    shown in feet and inches; everything pure (units, snapping, underlay scale) lives in RMG above so it can be unit-tested on its own.
@@ -2832,9 +3278,9 @@ async function rmOpenPlan(id) {
   try { rmStartEditor(RMG.normalizePlan(r.data.plan)); } catch (e) { RM.err = e.message; reportError('floorplans-open', e, { toast: false }); rmRender(); }
 }
 function rmNewPlan() { var n = RM.plans.length; rmStartEditor(rmBlankPlan(n ? 'Proposed' : 'As is')); }
-function rmStartEditor(plan) {
-  RM.plan = plan; RM.view = 'edit'; RM.undo = []; RM.redo = []; RM.dirty = false; RM.saveErr = ''; RM.sel = { room: null, wall: null, op: null }; RM.tool = 'select'; RM.cal = null; RM.sheet = null; RM.img = null; RM.err = null;
-  try { var d = JSON.parse(localStorage.getItem('rm_draft_' + rmKey()) || 'null'); if (d && d.plan && d.ts && d.ts > (plan.updated_at ? Date.parse(plan.updated_at) : 0) && confirm('You have unsaved edits to this plan from earlier. Restore them?')) { RM.plan = RMG.normalizePlan(d.plan); RM.plan.id = plan.id; RM.plan.rev = plan.rev; RM.dirty = true; } } catch (e) { /* silent-ok: a bad draft is just ignored */ }
+function rmStartEditor(plan, fresh) {
+  RM.summary = null; RM.plan = plan; RM.view = 'edit'; RM.undo = []; RM.redo = []; RM.dirty = false; RM.saveErr = ''; RM.sel = { room: null, wall: null, op: null }; RM.tool = 'select'; RM.cal = null; RM.sheet = null; RM.img = null; RM.err = null;
+  try { var d = fresh ? null : JSON.parse(localStorage.getItem('rm_draft_' + rmKey()) || 'null'); if (d && d.plan && d.ts && d.ts > (plan.updated_at ? Date.parse(plan.updated_at) : 0) && confirm('You have unsaved edits to this plan from earlier. Restore them?')) { RM.plan = RMG.normalizePlan(d.plan); RM.plan.id = plan.id; RM.plan.rev = plan.rev; RM.dirty = true; } } catch (e) { /* silent-ok: a bad draft is just ignored */ }
   try { var u = localStorage.getItem('rm_ul_' + rmKey()); if (u && RM.plan.underlay) rmLoadImg(u); } catch (e) { /* silent-ok: underlay image is optional */ }
   rmRender(); setTimeout(function () { rmFit(); var bar = document.getElementById('rm-bar'); if (bar) window.scrollTo(0, Math.max(0, bar.getBoundingClientRect().top + window.scrollY - 8)); }, 30);
 }
@@ -2862,7 +3308,9 @@ function rmRender() {
   if (RM.loading || RM.busy) { body.innerHTML = h + '<div class="empty">Loading&hellip;</div>'; return; }
   if (RM.err) { body.innerHTML = h + '<div class="empty" role="alert">Couldn&rsquo;t load the floor plans. ' + esc(RM.err) + '</div><button class="qbtn" style="min-height:44px;padding:0 18px;" onclick="rmLoadPlans()">Retry</button>'; return; }
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;"><button class="qbtn done" style="min-height:44px;padding:0 16px;" onclick="rmNewPlan()">New plan</button>'
+    + '<button class="qbtn" style="min-height:44px;padding:0 16px;" id="rm-scan-btn" onclick="rmOpenScan()">Import scan</button>'
     + '<button class="qbtn" style="min-height:44px;padding:0 16px;" onclick="rmOpenImport()">Import JSON</button></div>';
+  if (RM.sheet === 'scan') h += rmScanSheet();
   if (RM.sheet === 'import') h += rmImportSheet();
   if (!RM.plans.length) h += '<div class="empty">No floor plans yet. Start one by typing room sizes, or trace over an MLS plan image.</div>';
   else h += RM.plans.map(function (p) {
@@ -2929,6 +3377,46 @@ function rmSetTool(t) { RM.tool = t; rmDrawBar(); }
 function rmField(label, html) { return '<label style="display:block;margin:8px 0 0;"><span class="hint" style="display:block;margin:0 0 2px;">' + label + '</span>' + html + '</label>'; }
 function rmIn(id, val, onchange, extra) { return '<input id="' + id + '" type="text" inputmode="' + ((extra && extra.mode) || 'text') + '" autocomplete="off" autocapitalize="off" value="' + esc(val) + '" style="width:100%;box-sizing:border-box;min-height:44px;" onchange="' + onchange + '"' + ((extra && extra.ph) ? ' placeholder="' + esc(extra.ph) + '"' : '') + '>'; }
 function rmSel(id, opts, cur, onchange) { return '<select id="' + id + '" style="width:100%;box-sizing:border-box;min-height:44px;" onchange="' + onchange + '">' + opts.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === cur ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>'; }
+/* ----- scan import (DXF / RoomPlan JSON) ----- */
+function rmOpenScan() { RM.sheet = RM.sheet === 'scan' ? null : 'scan'; rmRender(); }
+function rmScanSheet() {
+  return '<div id="rm-sheet-scan" style="margin:8px 0;padding:10px 12px;background:var(--panel2);border-radius:var(--radius);"><div class="hint" style="margin:0 0 6px;">Import a LiDAR scan: a DXF (Polycam, Magicplan) or a RoomPlan JSON. It becomes a new plan you can clean up before saving.</div>'
+    + '<input id="rm-scan-file" type="file" accept=".dxf,.json,application/json,text/plain,.txt" style="margin:0 0 8px;max-width:100%;" onchange="rmScanFile(this)">'
+    + '<textarea id="rm-scan-text" rows="3" placeholder="…or paste the file text here" style="width:100%;box-sizing:border-box;"></textarea>'
+    + '<div style="margin-top:6px;">' + rmBtn('Import', 'rmScanText(document.getElementById(\'rm-scan-text\').value, \'pasted\')', { id: 'rm-scan-go' }) + '</div><div id="rm-scan-err" role="alert" style="color:var(--clay);font-size:14px;margin-top:6px;"></div></div>';
+}
+function rmScanFile(inp) {
+  var f = inp.files && inp.files[0]; if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () { rmScanText(String(rd.result), f.name); };
+  rd.onerror = function () { var e = document.getElementById('rm-scan-err'); if (e) e.textContent = 'Couldn’t read that file.'; };
+  rd.readAsText(f);
+}
+function rmScanText(text, name, opts) {
+  var err = document.getElementById('rm-scan-err'), res;
+  try { res = RMI.importScan(String(text || ''), Object.assign({ filename: name || '' }, opts || {})); }
+  catch (e) { if (err) err.textContent = e.message; else toast(e.message); return; }
+  RM.scan = { text: String(text), name: name || '' };
+  rmStartEditor(res.plan, true); RM.summary = res.summary; RM.dirty = true; rmDrawSave(); rmDrawInsp(); rmDrawBar();
+  toast('Imported ' + res.summary.rooms + (res.summary.rooms === 1 ? ' room' : ' rooms') + ' — check it, then Save');
+}
+var RM_UNITS = [['mm', 'millimetres', 1], ['cm', 'centimetres', 10], ['m', 'metres', 1000], ['in', 'inches', 25.4], ['ft', 'feet', 304.8]];
+function rmScanUnits(v) {
+  var u = RM_UNITS.filter(function (x) { return x[0] === v; })[0]; if (!u || !RM.scan || !RM.plan) return;
+  var res; try { res = RMI.importScan(RM.scan.text, { filename: RM.scan.name, units: u[2], unitsName: u[1] }); } catch (e) { toast(e.message); return; }
+  rmSnap(); RM.plan.rooms = res.plan.rooms; RM.plan.raw = res.plan.raw; RM.plan.rawNew = true; RM.summary = res.summary; RM.sel = { room: null, wall: null, op: null }; rmFit(); rmDrawInsp();
+}
+function rmSummaryHtml() {
+  var s = RM.summary; if (!s) return '';
+  var ig = (s.ignored || []).slice(0, 10), more = (s.ignored || []).length - ig.length;
+  var units = s.format === 'dxf' ? '<div style="margin:8px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="hint" style="margin:0;">Units read as ' + esc(s.units) + (s.units_guessed ? ' (a guess)' : '') + '. Wrong?</span><select id="rm-scan-units" aria-label="Units" style="min-height:44px;" onchange="rmScanUnits(this.value)"><option value="">change…</option>' + RM_UNITS.map(function (u) { return '<option value="' + u[0] + '">' + esc(u[1]) + '</option>'; }).join('') + '</select></div>' : '';
+  return '<div id="rm-summary" role="status" style="margin:8px 0;padding:10px 12px;border:1px solid var(--green);border-radius:var(--radius);"><div style="font-family:var(--serif);font-size:20px;">Imported ' + (s.format === 'dxf' ? 'DXF' : 'RoomPlan') + ' scan</div>'
+    + '<div style="margin:4px 0 0;font-size:15px;"><b>' + esc(s.rooms) + '</b> room' + (s.rooms === 1 ? '' : 's') + ' &middot; <b>' + esc(s.walls) + '</b> wall' + (s.walls === 1 ? '' : 's') + ' &middot; <b>' + esc(s.openings.found) + '</b> opening' + (s.openings.found === 1 ? '' : 's') + ' placed'
+    + (s.openings.unattached ? ' (' + esc(s.openings.unattached) + ' not on a wall)' : '') + (s.merged_segments ? ' &middot; ' + esc(s.merged_segments) + ' overlapping wall pieces merged' : '') + (s.labels ? ' &middot; ' + esc(s.labels) + ' named from labels' : '') + '</div>'
+    + units + (s.warnings || []).map(function (w) { return '<div class="hint" style="margin:6px 0 0;color:var(--clay);">' + esc(w) + '</div>'; }).join('')
+    + (ig.length ? '<div class="hint" style="margin:8px 0 2px;">Not brought into the plan (still kept in the saved file):</div>' + ig.map(function (x) { return '<div class="hint" style="margin:0 0 0 10px;">' + esc(x.n) + ' &times; ' + esc(x.what) + (x.layer ? ' (layer ' + esc(x.layer) + ')' : '') + '</div>'; }).join('') + (more > 0 ? '<div class="hint" style="margin:0 0 0 10px;">…and ' + more + ' more kinds</div>' : '') : '<div class="hint" style="margin:8px 0 0;">Nothing was left out.</div>')
+    + '<div style="margin-top:10px;">' + rmBtn('Got it', 'RM.summary=null;rmDrawInsp()', { id: 'rm-summary-ok' }) + '</div></div>';
+}
 function rmImportSheet() {
   return '<div id="rm-sheet-import" style="margin:8px 0;padding:10px 12px;background:var(--panel2);border-radius:var(--radius);"><div class="hint" style="margin:0 0 6px;">Import a plan exported from here (JSON). Nothing is saved until you press Save.</div>'
     + '<input id="rm-import-file" type="file" accept=".json,application/json" style="margin:0 0 8px;max-width:100%;" onchange="rmImportFile(this)">'
@@ -2954,7 +3442,7 @@ function rmDrawInsp() {
   else if (w && r) h += rmWallInsp(r, w);
   else if (r) h += rmRoomInsp(r);
   else if (!RM.sheet && !RM.cal) h += '<div class="hint" style="margin:8px 0;">' + (p.rooms.length ? 'Tap a room or wall to edit it. Drag a selected room to move it; drag its corners to reshape. Two fingers to pan and zoom.' : 'Start with <b>+ Room</b> and type a size, or <b>Underlay</b> to trace over an MLS floor plan.') + '</div>';
-  el.innerHTML = h;
+  el.innerHTML = rmSummaryHtml() + h;
 }
 function rmUnderlaySheet() {
   var u = RM.plan.underlay;
@@ -3017,7 +3505,7 @@ function rmUndo() { if (!RM.undo.length) return; RM.redo.push(rmSnapshot()); rmR
 function rmRedo() { if (!RM.redo.length) return; RM.undo.push(rmSnapshot()); rmRestore(RM.redo.pop()); }
 function rmMarkDirty() {
   RM.dirty = true; var st = document.getElementById('rm-status'); if (st) st.textContent = 'Unsaved changes';
-  clearTimeout(RM._dt); RM._dt = setTimeout(function () { try { localStorage.setItem('rm_draft_' + rmKey(), JSON.stringify({ ts: Date.now(), plan: RMG.toPayload(RM.plan) })); } catch (e) { /* silent-ok: draft backup is best effort */ } }, 500);
+  clearTimeout(RM._dt); RM._dt = setTimeout(function () { try { if (RM.plan && RM.plan.rawNew) return; localStorage.setItem('rm_draft_' + rmKey(), JSON.stringify({ ts: Date.now(), plan: RMG.toPayload(RM.plan, { noRaw: true }) })); } catch (e) { /* silent-ok: draft backup is best effort */ } }, 500);
   var b = document.getElementById('rm-btn-undo'), c = document.getElementById('rm-btn-redo'); if (b) b.disabled = !RM.undo.length; if (c) c.disabled = !RM.redo.length;
 }
 
@@ -3301,7 +3789,7 @@ async function rmSave(asNew) {
   }
   var oldKey = rmKey(); try { localStorage.removeItem('rm_draft_' + oldKey); } catch (e) { /* silent-ok */ }
   var img = RM.img, undo = RM.undo, redo = RM.redo, sel = RM.sel, ul = RM.plan.underlay;
-  var fresh = RMG.normalizePlan(r.data.plan); fresh.underlay = fresh.underlay || ul; fresh.updated_at = r.data.plan.updated_at;
+  var fresh = RMG.normalizePlan(r.data.plan); fresh.underlay = fresh.underlay || ul; fresh.updated_at = r.data.plan.updated_at; fresh.raw = {};
   RM.plan = fresh; RM.img = img; RM.dirty = false; RM.saveErr = ''; RM.undo = asNew ? [] : undo; RM.redo = asNew ? [] : redo;
   if (!rmRoom()) RM.sel = { room: null, wall: null, op: null }; else RM.sel = sel;
   if (img) { try { localStorage.setItem('rm_ul_' + rmKey(), img.src); } catch (e) { /* silent-ok */ } }
@@ -3317,11 +3805,12 @@ function rmExport() {
 function rmOpenImport() { RM.sheet = RM.sheet === 'import' ? null : 'import'; rmRender(); }
 function rmImportFile(inp) { var f = inp.files && inp.files[0]; if (!f) return; var rd = new FileReader(); rd.onload = function () { rmImportText(String(rd.result)); }; rd.readAsText(f); }
 function rmImportText(txt) {
-  var err = document.getElementById('rm-import-err'), plan;
+  var err = document.getElementById('rm-import-err'), plan, kind = RMI.detect(txt);
+  if (kind === 'dxf' || kind === 'roomplan') { if (RM.view === 'edit') { if (err) err.textContent = 'That is a scan file. Import it from the plan list (Import scan); it becomes a new plan.'; return; } rmScanText(txt, '', {}); return; }
   try { plan = RMG.normalizePlan(JSON.parse(txt)); } catch (e) { if (err) err.textContent = e instanceof SyntaxError ? 'That isn’t valid JSON.' : e.message; return; }
   plan.id = null; plan.rev = null; plan.version = null; plan.raw = plan.raw && Object.keys(plan.raw).length ? plan.raw : { imported_at: new Date().toISOString() };
   if (RM.view === 'edit' && RM.plan) { rmSnap(); var keep = RM.plan; plan.id = keep.id; plan.rev = keep.rev; plan.version = keep.version; RM.plan = plan; RM.sheet = null; RM.sel = { room: null, wall: null, op: null }; rmFit(); rmDrawBar(); rmDrawInsp(); rmDrawSave(); toast('Imported — press Save to keep it'); }
-  else { rmStartEditor(plan); RM.dirty = true; rmDrawSave(); toast('Imported — press Save to keep it'); }
+  else { plan.rawNew = true; rmStartEditor(plan, true); RM.dirty = true; rmDrawSave(); toast('Imported — press Save to keep it'); }
 }
 /* INVITE LIST + LISTS (Packet K). Reads fn_agent_invite_list (ranked agents for a listing, preview or blast), saves picks with
    fn_save_invite_list (listing_preview_agents), and manages saved contact lists through the fn_list_* RPCs. Nothing here sends anything:
