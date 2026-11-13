@@ -2339,7 +2339,35 @@ var DF_LBL = { love: 'Loved it', show: 'Queued to show', maybe: 'Left as maybe',
   snooze7: 'Back next week', pursue: 'Pursuing', park30: 'Parked 30 days', park90: 'Parked 90 days', kill: 'Archived', loved: 'Loved', fine: 'Fine',
   no_show: 'Did not happen', answered: 'Answered', later: 'Not today', skip: 'Skipped', expired: 'Left to the OS', closed: 'Left to the OS',
   done_elsewhere: 'Already handled' };
-var DF_KIND = { house: 'House', followup: 'Follow-up', prospect: 'Seller lead', showing: 'Showing', buyer_q: 'Question', walk_q: 'Question', deal_q: 'Question' };
+var DF_KIND = { house: 'House', followup: 'Follow-up', prospect: 'Seller lead', showing: 'Showing', buyer_q: 'Question', walk_q: 'Question', deal_q: 'Question', deadline: 'Deadline' };
+/* Packet G (2026-11-12): the server can now send deal deadlines (kind 'deadline', or kind 'followup' with a deadline: key while its switch is off)
+   and paused follow-ups asked as "Still want this?". Anything else the server invents later is shown as a plain card with one "Got it". */
+var DF_KNOWN = { house: 1, followup: 1, prospect: 1, showing: 1, buyer_q: 1, walk_q: 1, deal_q: 1, deadline: 1 };
+function dfIsDeadline(it) { var p = (it && it.payload) || {}; return !!(it && (it.kind === 'deadline' || p.deadline_id || String(it.item_key || '').indexOf('deadline:') === 0)); }
+function dfIsStillWant(it) { return !!(it && it.kind === 'followup' && !dfIsDeadline(it) && /^Still want this\?/.test(String(it.why || ''))); }
+function dfIsUnknown(it) { return !!it && !DF_KNOWN[it.kind] && !dfIsDeadline(it); }
+function dfLate(it) {   /* days late for a deadline item, from its own due date; 0 when not late or not a deadline */
+  if (!dfIsDeadline(it)) return 0;
+  var due = String(((it && it.payload) || {}).due || '').slice(0, 10); if (!/^\d{4}-\d\d-\d\d$/.test(due)) return 0;
+  var t = mtdToday(); if (due >= t) return 0;
+  return Math.max(1, Math.round((Date.parse(t + 'T12:00:00Z') - Date.parse(due + 'T12:00:00Z')) / 86400000));
+}
+function dfKindLabel(it) { if (dfIsDeadline(it)) return 'Deadline'; if (dfIsStillWant(it)) return 'Still want this?'; if (dfIsUnknown(it)) return 'Note'; return DF_KIND[it.kind] || ''; }
+/* The buttons actually drawn. Known kinds keep the server's own list; the new kinds get buttons that map to writes that really exist. */
+function dfActions(it) {
+  if (dfIsDeadline(it)) return [{ id: 'handled', label: 'Handled' }, { id: 'tomorrow', label: 'Remind me tomorrow' }];
+  if (dfIsStillWant(it)) return [{ id: 'keep', label: 'Keep' }, { id: 'letgo', label: 'Let it go' }];
+  if (dfIsUnknown(it)) return [{ id: 'gotit', label: 'Got it' }];
+  return it.actions || [];
+}
+function dfDoneLabel(it) {
+  if (it.doneLbl) return it.doneLbl;
+  if (dfIsDeadline(it) && it.action === 'done') return 'Handled';
+  if (dfIsStillWant(it) && it.action === 'snooze7') return 'Kept';
+  if (dfIsStillWant(it) && it.action === 'kill') return 'Let go';
+  if (dfIsUnknown(it) && it.action === 'done') return 'Got it';
+  return DF_LBL[it.action] || it.action;
+}
 function dfEnsure() {
   if (DF.loaded && DF.day && DF.day !== mtdToday() && !DF.loading) { DF.loaded = false; DF.closed = false; DF.closeInfo = null; DF.items = []; }   /* a new day starts a new five */
   if (!DF.loaded && !DF.loading && !DF.err) dfLoad(); else dfRender();
@@ -2354,7 +2382,7 @@ async function dfLoad() {
     DF.err = String((r && r.error && r.error.message) || 'No reply.').slice(0, 120);
     reportError('daily-five-load', (r && r.error) || new Error('empty daily five reply'), { toast: false }); dfRender(); return;
   }
-  DF.items = r.data.items || []; DF.day = r.data.day; DF.closed = !!r.data.closed_at; DF.loaded = true; dfRender();
+  DF.items = (r.data.items || []).filter(function (x) { return x && typeof x === 'object'; }); DF.day = r.data.day; DF.closed = !!r.data.closed_at; DF.loaded = true; dfRender();
 }
 function dfRender() { var host = document.getElementById('df-host'); if (host) host.innerHTML = dfHtml(); }
 function dfDecided() { return DF.items.filter(function (it) { return !!it.action && !it.auto; }).length; }
@@ -2367,12 +2395,12 @@ function dfItemHtml(it, idx) {
   var k = it.item_key, p = it.payload || {}, busy = !!DF.busy[k], msg = DF.msg[k];
   if (it.action) {
     return '<div style="padding:9px 12px;border-top:1px solid var(--line);color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:10px;">'
-      + '<span style="min-width:0;overflow-wrap:anywhere;">&#10003; ' + esc(it.title || '') + '</span><span style="white-space:nowrap;">' + esc(DF_LBL[it.action] || it.action) + '</span></div>';
+      + '<span style="min-width:0;overflow-wrap:anywhere;">&#10003; ' + esc(it.title || it.subtitle || '') + '</span><span style="white-space:nowrap;">' + esc(dfDoneLabel(it)) + '</span></div>';
   }
-  var acts = it.actions || [], isQ = (it.kind === 'buyer_q' || it.kind === 'walk_q' || it.kind === 'deal_q');
+  var acts = dfActions(it), isQ = (it.kind === 'buyer_q' || it.kind === 'walk_q' || it.kind === 'deal_q');
   var btns = acts.map(function (a, ai) {
     if (a.id === 'later') return '';
-    return dfBtn(idx, ai, a.label, (a.id === 'love' || a.id === 'pursue' || a.id === 'done') ? 'done' : '', busy);
+    return dfBtn(idx, ai, a.label, (a.id === 'love' || a.id === 'pursue' || a.id === 'done' || a.id === 'handled' || a.id === 'keep') ? 'done' : '', busy);
   }).join('');
   var laterIdx = -1; acts.forEach(function (a, ai) { if (a.id === 'later') laterIdx = ai; });
   var extra = '';
@@ -2393,10 +2421,10 @@ function dfItemHtml(it, idx) {
     ? '<img src="' + esc(p.photo) + '" alt="" decoding="async" loading="lazy" style="width:64px;height:64px;object-fit:cover;border-radius:var(--radius);flex:0 0 auto;background:var(--panel2);" onerror="this.style.display=\'none\'">' : '';
   return '<div style="padding:12px;border-top:1px solid var(--line);">'
     + '<div style="display:flex;gap:12px;align-items:flex-start;">' + thumb + '<div style="min-width:0;flex:1;">'
-    + '<div class="hint" style="margin:0 0 2px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;">' + esc(DF_KIND[it.kind] || '') + '</div>'
-    + '<div style="font-family:var(--serif);font-size:19px;line-height:1.25;overflow-wrap:anywhere;">' + esc(it.title || '') + '</div>'
-    + (it.subtitle ? '<div style="font-size:14.5px;margin-top:2px;overflow-wrap:anywhere;">' + esc(it.subtitle) + '</div>' : '')
-    + (it.why ? '<div class="hint" style="margin:6px 0 0;font-size:13px;line-height:1.4;">' + esc(it.why) + '</div>' : '')
+    + '<div class="hint" style="margin:0 0 2px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;' + (dfLate(it) ? 'color:var(--clay);' : '') + '">' + esc(dfKindLabel(it)) + (dfLate(it) ? ' &middot; Overdue' : '') + '</div>'
+    + '<div style="font-family:var(--serif);font-size:19px;line-height:1.25;overflow-wrap:anywhere;">' + esc(it.title || it.subtitle || 'Something needs a look') + '</div>'
+    + (it.subtitle && it.title ? '<div style="font-size:14.5px;margin-top:2px;overflow-wrap:anywhere;">' + esc(it.subtitle) + '</div>' : '')
+    + (it.why ? '<div class="hint" style="margin:6px 0 0;font-size:13px;line-height:1.4;overflow-wrap:anywhere;">' + esc(dfIsStillWant(it) ? String(it.why).replace(/^Still want this\?\s*/, '') : it.why) + '</div>' : '')
     + '</div></div>'
     + (btns ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">' + btns + '</div>' : '')
     + extra
@@ -2422,7 +2450,10 @@ function dfHtml() {
   }
   var head = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 12px 8px;">'
     + '<span style="font-family:var(--serif);font-size:22px;">Today</span><span class="hint" style="margin:0;white-space:nowrap;">' + dec + ' of ' + n + ' decided</span></div>';
-  var rows = DF.items.map(function (it, idx) { return dfItemHtml(it, idx); }).join('');
+  var rows = DF.items.map(function (it, idx) {   /* one odd item must never blank the whole section */
+    try { return dfItemHtml(it, idx); }
+    catch (e) { reportError('daily-five-item', e, { toast: false }); return '<div style="padding:12px;border-top:1px solid var(--line);"><div class="hint" style="margin:0;">One item here couldn&rsquo;t be shown. The OS will handle it.</div></div>'; }
+  }).join('');
   var foot = '<div style="padding:10px 12px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;">'
     + '<span class="hint" style="margin:0;">' + (left ? left + ' left. Anything you skip, the OS handles.' : 'That&rsquo;s today&rsquo;s five.') + '</span>'
     + '<button type="button" class="qbtn' + (left ? '' : ' done') + '" style="min-height:44px;padding:0 16px;white-space:nowrap;"' + (DF.closing ? ' disabled' : '') + ' onclick="dfClose()">' + (DF.closing ? 'Closing&hellip;' : 'Done for today') + '</button></div>';
@@ -2441,8 +2472,11 @@ async function dfAct(idx, aidx, typed) {
   var it = DF.items[idx];
   if (!it || it.action || DF.busy[it.item_key]) { return; }   /* silent-ok: a tap on an item already settled or in flight is a double tap, not a failure */
   if (typed != null) { await dfAnswer(it, typed); return; }
-  var a = (it.actions || [])[aidx] || {}, id = a.id;
+  var a = dfActions(it)[aidx] || {}, id = a.id;
   if (!id) { reportError('daily-five-act', new Error('no action at ' + aidx), { toast: false }); return; }
+  if (dfIsDeadline(it)) { await dfDeadline(it, id); return; }
+  if (dfIsStillWant(it)) { await dfStillWant(it, id); return; }
+  if (dfIsUnknown(it)) { await dfGotIt(it); return; }
   if (id === 'pick_buyer') { DF.msg[it.item_key] = 'Pick the client below, then Save.'; dfRender(); return; }
   if (id === 'later') { await dfSimple(it, 'later'); return; }
   if (it.kind === 'house') { dfHouse(it, id); return; }
@@ -2457,6 +2491,59 @@ async function dfSimple(it, action) {
   delete DF.busy[it.item_key];
   if (!l.ok) { DF.msg[it.item_key] = l.err; dfRender(); return; }
   dfSet(it, action, false); dfRender(); dfMaybeAutoClose();
+}
+/* Deal deadline (Packet G). "Handled" does the same write as ticking the deadline on the deal (transaction_deadlines.status = 'done', same event),
+   then tells Today (fn_daily_five_act 'done'; the server never reads the kind, so this is accepted for any item). "Remind me tomorrow" only tells Today
+   (fn_daily_five_act 'snooze1'): a deadline that is still open and due within three days comes back on its own at the next open, so nothing is hidden. */
+async function dfDeadline(it, id) {
+  var p = it.payload || {}, did = p.deadline_id || String(it.item_key || '').replace(/^deadline:/, '');
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  if (id === 'tomorrow') {
+    var l0 = await dfLog(it, 'snooze1', null);
+    delete DF.busy[it.item_key];
+    if (!l0.ok) { DF.msg[it.item_key] = l0.err; dfRender(); return; }
+    dfSet(it, 'snooze1', false); it.doneLbl = 'Back tomorrow'; dfRender(); dfMaybeAutoClose(); return;
+  }
+  if (!did) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t find that deadline. Open the deal to mark it.'; dfRender(); reportError('daily-five-deadline', new Error('no deadline id on ' + it.item_key), { toast: false }); return; }
+  var u = await withTimeout(sb.from('transaction_deadlines').update({ status: 'done' }).eq('id', did).select('id,transaction_id,kind'), 20000, { timedOut: true });
+  if (u && u.timedOut) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t confirm that saved. Tap again.'; dfRender(); await reportUnconfirmedWrite(); return; }
+  if (!u || u.error || !u.data || !u.data.length) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save. Tap again to retry.'; dfRender(); saveFailed((u && u.error) || new Error('no row returned'), 'daily-five-deadline'); return; }
+  var d = u.data[0];
+  (DATA.transaction_deadlines || []).forEach(function (x) { if (String(x.id) === String(did)) x.status = 'done'; });
+  logEvent('transactions', d.transaction_id || p.transaction_id, 'txn.deadline_done', d.kind || p.kind || 'Deadline');
+  var l = await dfLog(it, 'done', null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { reportError('daily-five-log', new Error(l.err || 'deadline log failed'), { toast: false }); }
+  dfSet(it, 'done', false); it.doneLbl = 'Handled'; toast('Marked handled');
+  try { renderBrowse(); renderQueue(); } catch (e) { reportError('daily-five-deadline-refresh', e, { toast: false }); }
+  dfRender(); dfMaybeAutoClose();
+}
+/* "Still want this?" (Packet G): a follow-up of N's own that the OS paused after three pushes. Keep brings it back open in a week; Let it go moves it to the
+   Graveyard (Restore is there). Both are the same follow-up writes the rest of the app uses; Today is told 'snooze7' / 'kill' (both accepted by the server). */
+async function dfStillWant(it, id) {
+  var p = it.payload || {}, fid = p.followup_id, f = findFu(fid), patch, until = null;
+  if (!fid) { DF.msg[it.item_key] = 'Couldn’t find that follow-up.'; dfRender(); reportError('daily-five-stillwant', new Error('no followup id on ' + it.item_key), { toast: false }); return; }
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  if (id === 'keep') { until = addDaysIso(todayIso(), 7); patch = { status: 'open', due_date: until, snoozed_until: null, updated_at: nowStamp() }; }
+  else patch = { status: 'archived', updated_at: nowStamp() };
+  var u = await withTimeout(sb.from('followups').update(patch).eq('id', fid).select('id'), 20000, { timedOut: true });
+  if (u && u.timedOut) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t confirm that saved. Tap again.'; dfRender(); await reportUnconfirmedWrite(); return; }
+  if (!u || u.error || !u.data || !u.data.length) { delete DF.busy[it.item_key]; DF.msg[it.item_key] = 'Couldn’t save. Tap again to retry.'; dfRender(); saveFailed((u && u.error) || new Error('no row returned'), 'daily-five-stillwant'); return; }
+  logEvent('followups', fid, id === 'keep' ? 'followup.snoozed' : 'followup.resolved', (id === 'keep' ? 'Kept, back ' + until + ' (Still want this?): ' : 'Let go (Still want this?): ') + (f ? f.action_text : it.subtitle || it.title), { still_want: id });
+  if (id === 'keep') { if (f) { f.status = 'open'; f.due_date = until; f.snoozed_until = null; } } else dropFu(fid);
+  try { renderQueue(); } catch (e) { reportError('daily-five-stillwant-refresh', e, { toast: false }); }
+  var l = await dfLog(it, id === 'keep' ? 'snooze7' : 'kill', null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { reportError('daily-five-log', new Error(l.err || 'still-want log failed'), { toast: false }); }
+  dfSet(it, id === 'keep' ? 'snooze7' : 'kill', false); it.doneLbl = id === 'keep' ? 'Kept' : 'Let go'; dfRender(); dfMaybeAutoClose();
+}
+/* A kind this app version does not know (the server may add new ones): show it plainly and let one tap acknowledge it. Nothing else is written. */
+async function dfGotIt(it) {
+  DF.busy[it.item_key] = 1; DF.msg[it.item_key] = ''; dfRender();
+  var l = await dfLog(it, 'done', null);
+  delete DF.busy[it.item_key];
+  if (!l.ok) { DF.msg[it.item_key] = l.err; dfRender(); return; }
+  dfSet(it, 'done', false); it.doneLbl = 'Got it'; dfRender(); dfMaybeAutoClose();
 }
 /* House: the verdict rides the deck's own queue (offline-safe, 6 s Undo, fn_triage_apply_v2); the daily-five log is written once the Undo window has passed. */
 function dfHouse(it, verdict) {
@@ -15568,7 +15655,7 @@ function prospectPassesFilters(x) {
   if (prios.length && prios.indexOf(x.priority) === -1) return false;
   return true;
 }
-function prospectControls(all) {
+function prospectControls(all, segOnly) {
   var c = { new: 0, pursue: 0, pass: 0 };
   all.forEach(function (x) { c[triageOf(x)]++; });
   function seg(key, label) {
@@ -15594,8 +15681,11 @@ function prospectControls(all) {
     + f.leads + ' leads &middot; ' + f.mailed + ' mailed &middot; ' + f.responded + ' responded'
     + (f.mailed ? ' (' + rate + '%)' : '') + ' &middot; ' + f.appt + ' appt &middot; ' + f.listed + ' listed</div>';
   var archN = (DATA.prospects_archived || []).length;
-  return funnel + '<div class="seg-row">' + seg('new', 'To review') + seg('pursue', 'Pursuing') + seg('pass', 'Passed')
-    + '<button class="tab' + (prospectSeg === 'archived' ? ' on' : '') + '" onclick="prospectSetSeg(\'archived\')">Archived ' + archN + '</button></div>'
+  var segRow = '<div class="seg-row">' + seg('new', 'To review') + seg('pursue', 'Pursuing') + seg('pass', 'Passed')
+    + '<button class="tab' + (prospectSeg === 'permits' ? ' on' : '') + '" onclick="prospectSetSeg(\'permits\')">Permit signals' + (PS.loaded ? ' ' + PS.rows.length : '') + '</button>'
+    + '<button class="tab' + (prospectSeg === 'archived' ? ' on' : '') + '" onclick="prospectSetSeg(\'archived\')">Archived ' + archN + '</button></div>';
+  if (segOnly) return funnel + segRow;
+  return funnel + segRow
     + '<div class="chip-row"><span class="chip-label">Priority</span>' + chip('Hot', 'Hot') + chip('Warm', 'Warm') + chip('Cold', 'Cold')
     + '<span class="chip-sep"></span><span class="chip-label">Only</span>' + chip('walk', 'Found on walks') + chip('underbuilt', 'Underbuilt') + chip('probate', 'Probate') + chip('absentee', 'Absentee') + chip('clean', 'Has clean phone') + '</div>' + exportBtn
     + '<button class="qbtn" onclick="scanUnderbuilt()" title="Estimate buildable potential across your farm and flag underbuilt lots">&#128506; Scan farm for underbuilt</button>'
@@ -15880,6 +15970,48 @@ async function triageProspect(id, val) {
   toast(val === 'pursue' ? 'Added to Pursuing ✓' : val === 'pass' ? 'Passed' : 'Back to review');
 }
 function prospectSetSeg(s) { prospectSeg = s; renderBrowse(); }
+/* PERMIT SIGNALS (Packet G, 2026-11-12). Houses with big finished permit work and no sale since, best first. They are no longer follow-ups: they live here,
+   read from v_permit_signals_ranked (same direct read the seller-lead ranking uses). Only an exceptional one is ever offered in Today. Until the list can
+   be read, or when it is empty, this shows a calm note and nothing else breaks. */
+var PS = { loaded: false, loading: false, err: null, rows: [] };
+async function psLoad() {
+  if (PS.loading) { return; }   /* silent-ok: a load is already in flight */
+  PS.loading = true; PS.err = null;
+  var r = await withTimeout(sb.from('v_permit_signals_ranked').select('permit_rank,prospect_id,address,score,why,biggest_permit,last_major,new_build,exceptional').order('permit_rank', { ascending: true }).limit(300), 20000, { timedOut: true });
+  PS.loading = false;
+  if (!r || r.timedOut || r.error || !Array.isArray(r.data)) { PS.err = true; reportError('permit-signals', (r && r.error) || new Error('permit signals unavailable'), { toast: false }); }
+  else { PS.rows = r.data; PS.loaded = true; }
+  if (browseTab === 'prospects' && prospectSeg === 'permits') renderBrowse();
+}
+function psRetry() { PS.err = null; PS.loaded = false; renderBrowse(); }
+function psOpen(pid) {
+  var pr = null; (DATA.prospects || []).forEach(function (x) { if (String(x.id) === String(pid)) pr = x; });
+  if (!pr) { toast('That one is not in your list right now'); return; }
+  prospectSeg = triageOf(pr); jumpToRecord('prospects', pr.id);
+}
+function permitSignalsHtml(q) {
+  if (!PS.loaded && !PS.loading && !PS.err) psLoad();
+  if (PS.err) return '<div class="empty" role="alert">Permit signals aren&rsquo;t available yet. Nothing is lost; they will appear here as soon as they can be read.</div>'
+    + '<button type="button" class="qbtn" style="min-height:44px;padding:0 18px;" onclick="psRetry()">Try again</button>';
+  if (!PS.loaded) return '<div class="empty">Loading&hellip;</div>';
+  var rows = PS.rows.filter(function (x) { return !q || String(x.address || '').toLowerCase().indexOf(q) !== -1; });
+  if (!PS.rows.length) return '<div class="empty">No permit signals right now. New ones are added as the city records finished work.</div>';
+  if (!rows.length) return '<div class="empty">None match that search.</div>';
+  var head = '<div class="hint" style="margin:0 0 8px;">' + rows.length + (rows.length === 1 ? ' house' : ' houses') + ' with major finished work and no sale since, best first. Only an exceptional one is offered in Today.</div>';
+  return head + rows.map(function (x) {
+    var bp = Number(x.biggest_permit), bits = [];
+    if (bp > 0) bits.push('Biggest permit ' + money(bp));
+    if (x.last_major) bits.push('finished ' + fmtDate(String(x.last_major).slice(0, 10)));
+    if (x.new_build) bits.push('new build');
+    return '<button type="button" onclick="psOpen(\'' + escJs(x.prospect_id) + '\')" style="display:block;width:100%;box-sizing:border-box;min-height:48px;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:12px 2px;color:inherit;cursor:pointer;font:inherit;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;"><span style="font-family:var(--serif);font-size:18px;line-height:1.25;min-width:0;overflow-wrap:anywhere;">' + esc(x.address || 'Unknown address') + '</span>'
+      + '<span class="hint" style="margin:0;white-space:nowrap;">' + (x.score == null ? 'Not scored yet' : 'Score ' + esc(x.score)) + '</span></div>'
+      + (x.exceptional ? '<div class="hint" style="margin:3px 0 0;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--green);">Exceptional</div>' : '')
+      + (x.why ? '<div style="font-size:14.5px;margin-top:3px;overflow-wrap:anywhere;">' + esc(x.why) + '</div>' : '')
+      + (bits.length ? '<div class="hint" style="margin:3px 0 0;font-size:13px;overflow-wrap:anywhere;">' + esc(bits.join(' \u00b7 ')) + '</div>' : '')
+      + '</button>';
+  }).join('');
+}
 function prospectToggleFilter(k) { prospectFilters[k] = !prospectFilters[k]; renderBrowse(); }
 
 /* ---------- Buildable / UnderBuilt — LA-scoped estimate. INFORMATIONAL only; verify with the City. ---------- */
@@ -18146,6 +18278,7 @@ function renderBrowse() {
     chip = propNav();
   }
   if (browseTab === 'prospects') {
+    if (prospectSeg === 'permits') { document.getElementById('browse').innerHTML = prospectControls(rows, true) + permitSignalsHtml(q); return; }
     chip = prospectControls(rows);
     /* Archived prospects (2026-07-24, swipe-to-archive safety net) -- own segment (like the
        existing new/pursue/pass triage segments) rather than a filter, since archived rows come
